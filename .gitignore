@@ -1,0 +1,13 @@
+# local daemon state / checkpoints
+state/
+*.pid
+*.log
+
+# gated third-party code (iSALE-Dellen) — do NOT redistribute
+iSALE2D/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
