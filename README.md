@@ -58,8 +58,18 @@ Outputs land in `state/`: `corridor.json` (full grid + summary),
 terminal-impact runs; the public repo is a stub — the real code is the
 iSALE-Dellen release tarball.
 
+## High-fidelity dynamics (`highfidelity/`)
+
+The rigorous counterpart to the stdlib sweep: REBOUND + **ASSIST** (JPL DE440
+ephemeris, Earth J2/J3/J4, Sun/Moon/planets, GR) in geocentric mode, with drag
+by operator-splitting. Validated (Kepler closure, J2 nodal regression vs.
+analytic, drag Δv vs. the stdlib model). Local-only (needs a venv + ephemeris
+download); the cloud routine stays pure stdlib. See `highfidelity/README.md`.
+
 ## Status
 
 Phase 1a: capture-corridor map (does km iron get captured, and where is the
-corridor?). Phase 1b: aerobraking-to-impact + 3D site selection. Phase 2:
-terminal oblique-impact hydrocode for the three targets.
+corridor?) — stdlib daemon, running. Phase 1b: high-fidelity engine **built +
+validated**; next is the multi-pass aerobraking sequence to test which captures
+survive the Moon and the J2-steered terminal great circle (Chimborazo/Cayambe).
+Phase 2: terminal oblique-impact hydrocode for the three targets.

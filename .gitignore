@@ -11,3 +11,6 @@ __pycache__/
 *.pyc
 .venv/
 .DS_Store
+
+# high-fidelity ephemeris binaries (downloaded, large)
+highfidelity/data/
