@@ -14,3 +14,6 @@ __pycache__/
 
 # high-fidelity ephemeris binaries (downloaded, large)
 highfidelity/data/
+
+# aerobraking run output (reproducible)
+highfidelity/state_aerobrake/
