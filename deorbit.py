@@ -110,7 +110,7 @@ def run():
                      f"@ v_inf={summ['widest_window_at_vinf_kms']:.2f} km/s\n"
                      f"updated: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
         json.dump({"name": name, "goal": goal, "metric": metric,
-                   "value": summ["v_inf_max_capture_kms"],
+                   "value": round(summ["v_inf_max_capture_kms"], 3),
                    "detail": (f"corridor: {summ['n_capture']} capture / "
                               f"{summ['n_impact']} impact / {summ['n_skip']} skip; "
                               f"window {summ['widest_window_km']:.0f} km"),
