@@ -48,6 +48,21 @@ def moon_geo_dist_m(t_days):
 
 HILL_M = 1.496e9            # Earth Hill radius ~1.5e6 km
 MOON_HILL_M = 6.6e7         # ~66,000 km; flag close lunar approaches
+GRAZING_FPA_DEG = 5.0       # |flight-path angle| below this = grazing impact
+
+
+def classify(outcome, rows):
+    """Map a run to a physical regime + the diagnostic row."""
+    imp = [r for r in rows if r.get("event") == "impact"]
+    if outcome == "impact" and imp:
+        m = imp[0]
+        regime = "grazing_impact" if abs(m["fpa_deg"]) < GRAZING_FPA_DEG else "steep_impact"
+        return regime, m
+    if outcome == "escaped":
+        return "ejected", None
+    if outcome == "lunar_encounter":
+        return "lunar_encounter", None
+    return "aerobraking", (rows[-1] if rows else None)   # budget/walltime: unresolved
 
 
 def run(vinf_kms, peri_km, inc_deg, max_passes, statedir,
@@ -150,11 +165,12 @@ def run(vinf_kms, peri_km, inc_deg, max_passes, statedir,
                     outcome = "escaped"; checkpoint(); break
                 if pass_count >= max_passes:
                     outcome = "budget"; checkpoint(); break
-            # drag-free coast: large adaptive step, shrink near interface
+            # drag-free coast: large adaptive step, shrink near interface so we
+            # never overshoot the atmosphere; big steps near slow apoapsis.
             if vr < 0:   # descending toward interface
-                dt_s = min(600.0, max(5.0, 0.25 * (alt - ENTRY_ALT) / (abs(vr) + 1.0)))
+                dt_s = min(1200.0, max(5.0, 0.25 * (alt - ENTRY_ALT) / (abs(vr) + 1.0)))
             else:        # ascending / near apoapsis
-                dt_s = min(600.0, max(20.0, 0.05 * alt / (abs(vr) + 1.0)))
+                dt_s = min(3600.0, max(20.0, 0.05 * alt / (abs(vr) + 1.0)))
             sim.integrate(sim.t + dt_s / DAY)
         steps += 1
         if max_walltime and (time.time() - wall0) > max_walltime:
@@ -191,6 +207,7 @@ if __name__ == "__main__":
         print(f"\n{'pass':>5} {'apo_alt_km':>12} {'peri_alt_km':>11} {'dv_ms':>8} "
               f"{'q_MPa':>7} {'inc':>6} {'raan':>7} {'t_days':>8}")
         idx = sorted(set([0, 1, 2] + list(range(0, len(passes), max(1, len(passes)//15))) + [len(passes)-1]))
+        idx = [i for i in idx if 0 <= i < len(passes)]
         for i in idx:
             r = passes[i]
             print(f"{r['pass_n']:>5} {r['apo_alt_km']:>12,.0f} {r['peri_alt_km']:>11.1f} "

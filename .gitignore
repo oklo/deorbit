@@ -17,3 +17,6 @@ highfidelity/data/
 
 # aerobraking run output (reproducible)
 highfidelity/state_aerobrake/
+
+# survival-map sweep output (reproducible)
+highfidelity/state_sweep/
