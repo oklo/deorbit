@@ -7,7 +7,8 @@
 
 int main() {
     System S;
-    S.eos.gamma = 1.4;
+    const double gamma = 1.4;
+    S.materials.push_back(Material::ideal(gamma));   // all particles -> mat 0
     S.alpha = 1.0; S.beta = 2.0;      // artificial viscosity (standard)
     S.alpha_u = 1.0;                  // artificial conductivity (Price 2008)
     S.eta = 1.3;                      // adaptive h = eta (m/rho)^(1/3)
@@ -22,8 +23,8 @@ int main() {
 
     const double rhoL = 1.0, rhoR = 0.125, PL = 1.0, PR = 0.1;
     const double m = rhoL * aL * aL * aL;
-    const double uL = PL / ((S.eos.gamma - 1.0) * rhoL);  // 2.5
-    const double uR = PR / ((S.eos.gamma - 1.0) * rhoR);  // 2.0
+    const double uL = PL / ((gamma - 1.0) * rhoL);  // 2.5
+    const double uR = PR / ((gamma - 1.0) * rhoR);  // 2.0
     const double xfix = 2.0 * S.h_init;   // freeze particles within ~2h of the ends
 
     // left block

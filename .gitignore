@@ -25,3 +25,5 @@ highfidelity/state_sweep/
 sph/sod
 sph/sod_out.txt
 *.o
+sph/eos_test
+sph/sod_run.log

@@ -26,18 +26,30 @@ Perf note: the adaptive-h Sod (≈29k particles, 3 ρ↔h iterations/step) took 
 Before large impact runs this needs optimization (persistent neighbour lists,
 fewer h-iterations, OpenMP).
 
-## What's implemented (`sph.hpp`)
+**Gate 1b — Tillotson EOS (DONE, `eos_test.cpp`).** Iron / basalt / water:
+P(ρ₀,0)=0 exactly, and the small-strain sound speed c₀=√(A/ρ₀) matches known
+bulk sound speeds (iron 4051, basalt 3145, **water 1485 vs. real 1481 m/s**);
+10%-compression pressures sensible (iron 13.9 GPa, basalt 2.9, water 0.32).
+
+**Optimization (DONE).** Density + force loops parallelised with `std::thread`;
+round-based cell rebuilds. Sod (≈29k particles) went **~407 s → 37 s (~11×)** on
+14 cores, identical accuracy.
+
+## What's implemented (`sph.hpp`, `eos.hpp`)
 
 - cubic-spline kernel (3D); per-dimension cell-list neighbours, periodic in y,z;
 - **adaptive smoothing length** (gather density with h_i; h̄-symmetrized,
   momentum-conserving forces);
 - Monaghan artificial viscosity + Price artificial conductivity;
 - KDK leapfrog with trapezoidal energy update;
-- pluggable EOS (`IdealGas` now; Tillotson next).
+- **multi-material EOS**: ideal gas + **Tillotson** (iron/basalt/water);
+- **`std::thread` parallelism** over particles (density + forces).
 
 ## Roadmap to the impact runs
 
-1. **Tillotson EOS** for iron / basalt / water (+ a von Mises strength model).
+1. **Strength model** — von Mises / elastic-perfectly-plastic deviatoric stress
+   (Jaumann rate), validated against the elastic longitudinal-wave speed. (EOS
+   done; this is the remaining physics before impacts.)
 2. **Gate 2 — vertical impact π-scaling**: reproduce crater-size scaling for a
    vertical impact before trusting oblique runs.
 3. **Oblique runs**: the Phase-1 terminal conditions (v≈7.4 km/s, γ≈1–4°) into
