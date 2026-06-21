@@ -12,11 +12,12 @@
 
 static void snapshot(System& S, const char* fn) {
     FILE* f = std::fopen(fn, "w");
-    std::fprintf(f, "x,y,z,vx,vy,vz,mat,u\n");
-    for (int i = 0; i < S.n; i += 8)
-        std::fprintf(f, "%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%d,%.3e\n",
+    // full state incl. rho and h, so the field can be kernel-reconstructed for viz
+    std::fprintf(f, "x,y,z,vx,vy,vz,mat,u,rho,h\n");
+    for (int i = 0; i < S.n; i += 2)
+        std::fprintf(f, "%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%d,%.3e,%.2f,%.2f\n",
                      S.pos[i].x, S.pos[i].y, S.pos[i].z, S.vel[i].x, S.vel[i].y, S.vel[i].z,
-                     S.mat[i], S.u[i]);
+                     S.mat[i], S.u[i], S.rho[i], S.hh[i]);
     std::fclose(f);
 }
 
