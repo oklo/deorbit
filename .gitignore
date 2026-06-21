@@ -27,3 +27,4 @@ sph/sod_out.txt
 *.o
 sph/eos_test
 sph/sod_run.log
+sph/strength_test

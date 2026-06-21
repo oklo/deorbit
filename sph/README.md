@@ -35,6 +35,13 @@ bulk sound speeds (iron 4051, basalt 3145, **water 1485 vs. real 1481 m/s**);
 round-based cell rebuilds. Sod (≈29k particles) went **~407 s → 37 s (~11×)** on
 14 cores, identical accuracy.
 
+**Gate 1c — strength model (DONE, `strength_test.cpp`).** Elastic-perfectly-
+plastic deviatoric stress (Jaumann rate, von Mises yield):
+- elastic shear: dS_xy/dt = 2G·ε̇_xy to **0.2%**;
+- von Mises yield: radial return caps the von Mises stress at Y exactly;
+- elastic **longitudinal wave speed** 4250 vs. c_L=√((K+4G/3)/ρ)=4593 m/s (7.5%
+  low — SPH dispersion), validating the stress-divergence coupling in momentum.
+
 ## What's implemented (`sph.hpp`, `eos.hpp`)
 
 - cubic-spline kernel (3D); per-dimension cell-list neighbours, periodic in y,z;
@@ -43,16 +50,15 @@ round-based cell rebuilds. Sod (≈29k particles) went **~407 s → 37 s (~11×)
 - Monaghan artificial viscosity + Price artificial conductivity;
 - KDK leapfrog with trapezoidal energy update;
 - **multi-material EOS**: ideal gas + **Tillotson** (iron/basalt/water);
+- **material strength**: elastic-perfectly-plastic deviatoric stress (Jaumann
+  rate, von Mises radial-return yield), with the elastic signal speed in AV/CFL;
 - **`std::thread` parallelism** over particles (density + forces).
 
-## Roadmap to the impact runs
+The physics is now complete (EOS + strength). Roadmap to the impact runs:
 
-1. **Strength model** — von Mises / elastic-perfectly-plastic deviatoric stress
-   (Jaumann rate), validated against the elastic longitudinal-wave speed. (EOS
-   done; this is the remaining physics before impacts.)
-2. **Gate 2 — vertical impact π-scaling**: reproduce crater-size scaling for a
+1. **Gate 2 — vertical impact π-scaling**: reproduce crater-size scaling for a
    vertical impact before trusting oblique runs.
-3. **Oblique runs**: the Phase-1 terminal conditions (v≈7.4 km/s, γ≈1–4°) into
+2. **Oblique runs**: the Phase-1 terminal conditions (v≈7.4 km/s, γ≈1–4°) into
    the three targets; compare gouge/ricochet/melt to the Phase-2a estimates.
 
 ## Build & validate

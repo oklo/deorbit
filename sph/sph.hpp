@@ -1,6 +1,10 @@
-// 3D SPH core (header-only): adaptive-h, multi-material EOS (eos.hpp),
-// Monaghan artificial viscosity + Price conductivity, KDK leapfrog.
-// Parallelised over particles with std::thread (density + forces).
+// 3D SPH core (header-only): adaptive-h, multi-material EOS (eos.hpp), material
+// STRENGTH (elastic-perfectly-plastic deviatoric stress, Jaumann rate, von Mises
+// yield), Monaghan artificial viscosity + Price conductivity, KDK leapfrog.
+// Parallelised over particles with std::thread.
+//
+// Total stress sigma_ab = -P delta_ab + S_ab (S = deviatoric). Strength refs:
+// Libersky & Petschek 1991; Benz & Asphaug 1995; Gray, Monaghan & Swift 2001.
 #pragma once
 #include <vector>
 #include <cmath>
@@ -22,6 +26,16 @@ inline double kdWdr(double r, double h) {
     return 0.0;
 }
 
+// symmetric 3x3 (deviatoric stress / strain rate)
+struct Sym3 {
+    double xx = 0, yy = 0, zz = 0, xy = 0, xz = 0, yz = 0;
+};
+inline Vec3 Sdot(const Sym3& s, const Vec3& g) {   // S . g
+    return {s.xx * g.x + s.xy * g.y + s.xz * g.z,
+            s.xy * g.x + s.yy * g.y + s.yz * g.z,
+            s.xz * g.x + s.yz * g.y + s.zz * g.z};
+}
+
 template <class F>
 static void parallel_for(int n, F f) {
     unsigned nt = std::thread::hardware_concurrency();
@@ -40,7 +54,8 @@ static void parallel_for(int n, F f) {
 
 struct System {
     std::vector<Vec3> pos, vel, acc;
-    std::vector<double> mass, rho, u, dudt, P, cs, hh;
+    std::vector<double> mass, rho, u, dudt, P, cs, csig, hh, eps_work;
+    std::vector<Sym3> S, dSdt;
     std::vector<int> mat;
     std::vector<char> fixed;
     std::vector<Material> materials;
@@ -56,7 +71,8 @@ struct System {
     void add(Vec3 p, Vec3 v, double m, double uu, bool fix = false) {
         pos.push_back(p); vel.push_back(v); acc.push_back({});
         mass.push_back(m); rho.push_back(0); u.push_back(uu); dudt.push_back(0);
-        P.push_back(0); cs.push_back(0); hh.push_back(h_init);
+        P.push_back(0); cs.push_back(0); csig.push_back(0); hh.push_back(h_init);
+        eps_work.push_back(0); S.push_back({}); dSdt.push_back({});
         mat.push_back(cur_mat); fixed.push_back(fix ? 1 : 0); n++;
     }
 
@@ -70,7 +86,6 @@ struct System {
     int ncx = 1, ncy = 1, ncz = 1;
     double cx = 1, cy = 1, cz = 1;
     std::vector<std::vector<int>> cells;
-
     int cidx(int ix, int iy, int iz) const {
         ix = std::min(std::max(ix, 0), ncx - 1);
         iy = ((iy % ncy) + ncy) % ncy;
@@ -107,8 +122,6 @@ struct System {
                     for (int j : cells[cidx(ix + dx, iy + dy, iz + dz)]) fn(j);
     }
 
-    // adaptive density: rebuild cells, iterate rho<->h; if h grew past the cell
-    // size, rebuild bigger and repeat. Density gather (uses h_i only) is parallel.
     void compute_density_h(int iters = 2) {
         for (int round = 0; round < 4; round++) {
             build_cells();
@@ -126,19 +139,73 @@ struct System {
             }
             double hm = 1e-30;
             for (int i = 0; i < n; i++) hm = std::max(hm, hh[i]);
-            if (hm <= hmax0 * 1.02) break;       // cell size covered the support
+            if (hm <= hmax0 * 1.02) break;
         }
         build_cells();
     }
 
+    // velocity gradient -> strain rate + spin -> hypoelastic dS/dt (Jaumann),
+    // and the deviatoric power S:eps_dot/rho. Per particle, parallel.
+    void compute_strain_stress() {
+        parallel_for(n, [&](int i) {
+            double G = materials[mat[i]].G;
+            if (G <= 0) { dSdt[i] = Sym3{}; eps_work[i] = 0; return; }
+            double L[3][3] = {{0, 0, 0}, {0, 0, 0}, {0, 0, 0}};
+            for_neighbors(i, [&](int j) {
+                if (j == i) return;
+                Vec3 rij = sep(pos[i], pos[j]);
+                double r = norm(rij);
+                double hbar = 0.5 * (hh[i] + hh[j]);
+                if (r >= 2.0 * hbar || r == 0) return;
+                Vec3 gW = rij * (kdWdr(r, hbar) / r);   // grad_i W
+                double Vj = mass[j] / rho[j];
+                Vec3 dv = vel[j] - vel[i];
+                double d[3] = {dv.x, dv.y, dv.z}, g[3] = {gW.x, gW.y, gW.z};
+                for (int a = 0; a < 3; a++)
+                    for (int bb = 0; bb < 3; bb++) L[a][bb] += Vj * d[a] * g[bb];
+            });
+            // strain rate (sym) and spin (antisym)
+            double exx = L[0][0], eyy = L[1][1], ezz = L[2][2];
+            double exy = 0.5 * (L[0][1] + L[1][0]), exz = 0.5 * (L[0][2] + L[2][0]),
+                   eyz = 0.5 * (L[1][2] + L[2][1]);
+            double Rxy = 0.5 * (L[0][1] - L[1][0]), Rxz = 0.5 * (L[0][2] - L[2][0]),
+                   Ryz = 0.5 * (L[1][2] - L[2][1]);
+            double tr = (exx + eyy + ezz) / 3.0;
+            const Sym3& s = S[i];
+            // Jaumann J = R*S - S*R  (R antisym with R[0][1]=Rxy, etc.)
+            double R[3][3] = {{0, Rxy, Rxz}, {-Rxy, 0, Ryz}, {-Rxz, -Ryz, 0}};
+            double Sm[3][3] = {{s.xx, s.xy, s.xz}, {s.xy, s.yy, s.yz}, {s.xz, s.yz, s.zz}};
+            double J[3][3];
+            for (int a = 0; a < 3; a++)
+                for (int bb = 0; bb < 3; bb++) {
+                    double rs = 0, sr = 0;
+                    for (int c = 0; c < 3; c++) { rs += R[a][c] * Sm[c][bb]; sr += Sm[a][c] * R[c][bb]; }
+                    J[a][bb] = rs - sr;
+                }
+            dSdt[i].xx = 2 * G * (exx - tr) + J[0][0];
+            dSdt[i].yy = 2 * G * (eyy - tr) + J[1][1];
+            dSdt[i].zz = 2 * G * (ezz - tr) + J[2][2];
+            dSdt[i].xy = 2 * G * exy + J[0][1];
+            dSdt[i].xz = 2 * G * exz + J[0][2];
+            dSdt[i].yz = 2 * G * eyz + J[1][2];
+            // deviatoric power S:eps_dot / rho
+            eps_work[i] = (s.xx * exx + s.yy * eyy + s.zz * ezz
+                           + 2 * (s.xy * exy + s.xz * exz + s.yz * eyz)) / rho[i];
+        });
+    }
+
     void compute_forces() {
         parallel_for(n, [&](int i) {
-            P[i] = materials[mat[i]].pressure(rho[i], u[i]);
-            cs[i] = materials[mat[i]].sound_speed(rho[i], u[i]);
+            const Material& m = materials[mat[i]];
+            P[i] = m.pressure(rho[i], u[i]);
+            cs[i] = m.sound_speed(rho[i], u[i]);
+            csig[i] = std::sqrt(cs[i] * cs[i] + (4.0 / 3.0) * m.G / std::max(rho[i], 1e-30));
         });
+        compute_strain_stress();
         parallel_for(n, [&](int i) {
             Vec3 a{}; double du = 0;
-            double Pi_over = P[i] / (rho[i] * rho[i]);
+            double iri2 = 1.0 / (rho[i] * rho[i]);
+            double Pi_over = P[i] * iri2;
             for_neighbors(i, [&](int j) {
                 if (j == i) return;
                 Vec3 rij = sep(pos[i], pos[j]);
@@ -151,30 +218,48 @@ struct System {
                 double Pij = 0, dvr = dot(vij, rij);
                 if (dvr < 0) {
                     double mu = hbar * dvr / (r * r + eps * hbar * hbar);
-                    double cbar = 0.5 * (cs[i] + cs[j]);
+                    double cbar = 0.5 * (csig[i] + csig[j]);
                     Pij = (-alpha * cbar * mu + beta * mu * mu) / rbar;
                 }
-                double term = Pi_over + P[j] / (rho[j] * rho[j]) + Pij;
+                double jrj2 = 1.0 / (rho[j] * rho[j]);
+                double term = Pi_over + P[j] * jrj2 + Pij;      // -P + AV (isotropic)
                 a -= gradW * (mass[j] * term);
                 du += 0.5 * mass[j] * term * dot(vij, gradW);
+                // deviatoric stress term: + m_j (S_i/rho_i^2 + S_j/rho_j^2).gradW
+                Vec3 sterm = Sdot(S[i], gradW) * iri2 + Sdot(S[j], gradW) * jrj2;
+                a += sterm * mass[j];
                 if (alpha_u > 0) {
                     double vsig = std::sqrt(std::abs(P[i] - P[j]) / rbar);
                     du += alpha_u * mass[j] * vsig * (u[i] - u[j]) * kdWdr(r, hbar) / rbar;
                 }
             });
-            acc[i] = a; dudt[i] = du;
+            acc[i] = a; dudt[i] = du + eps_work[i];
         });
+    }
+
+    void yield_limit(int i) {   // von Mises radial return
+        double Y = materials[mat[i]].Y;
+        Sym3& s = S[i];
+        if (Y <= 0) { s = Sym3{}; return; }
+        double J2 = 0.5 * (s.xx * s.xx + s.yy * s.yy + s.zz * s.zz)
+                    + (s.xy * s.xy + s.xz * s.xz + s.yz * s.yz);
+        double vm = std::sqrt(3.0 * J2);
+        if (vm > Y) {
+            double f = Y / vm;
+            s.xx *= f; s.yy *= f; s.zz *= f; s.xy *= f; s.xz *= f; s.yz *= f;
+        }
     }
 
     double timestep() {
         double dt = 1e30;
         for (int i = 0; i < n; i++)
-            dt = std::min(dt, cfl * hh[i] / (cs[i] * (1.0 + alpha) + 1e-30));
+            dt = std::min(dt, cfl * hh[i] / (csig[i] * (1.0 + alpha) + 1e-30));
         return dt;
     }
 
     void step(double dt) {
         std::vector<double> dudt_old = dudt;
+        std::vector<Sym3> dSdt_old = dSdt;
         for (int i = 0; i < n; i++) if (!fixed[i]) vel[i] += acc[i] * (0.5 * dt);
         for (int i = 0; i < n; i++) if (!fixed[i]) pos[i] += vel[i] * dt;
         compute_density_h();
@@ -183,6 +268,13 @@ struct System {
             vel[i] += acc[i] * (0.5 * dt);
             u[i] += 0.5 * dt * (dudt_old[i] + dudt[i]);
             if (u[i] < 1e-12) u[i] = 1e-12;
+            S[i].xx += 0.5 * dt * (dSdt_old[i].xx + dSdt[i].xx);
+            S[i].yy += 0.5 * dt * (dSdt_old[i].yy + dSdt[i].yy);
+            S[i].zz += 0.5 * dt * (dSdt_old[i].zz + dSdt[i].zz);
+            S[i].xy += 0.5 * dt * (dSdt_old[i].xy + dSdt[i].xy);
+            S[i].xz += 0.5 * dt * (dSdt_old[i].xz + dSdt[i].xz);
+            S[i].yz += 0.5 * dt * (dSdt_old[i].yz + dSdt[i].yz);
+            yield_limit(i);
         }
     }
 

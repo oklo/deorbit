@@ -9,6 +9,9 @@ sod: sod.cpp $(HDRS)
 eos_test: eos_test.cpp eos.hpp
 	$(CXX) $(CXXFLAGS) eos_test.cpp -o eos_test
 
+strength_test: strength_test.cpp $(HDRS)
+	$(CXX) $(CXXFLAGS) strength_test.cpp -o strength_test
+
 .PHONY: clean
 clean:
-	rm -f sod eos_test sod_out.txt
+	rm -f sod eos_test strength_test sod_out.txt
