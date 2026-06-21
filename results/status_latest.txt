@@ -1,0 +1,9 @@
+deorbit — capture corridor
+goal: km iron monolith: does low-v_inf grazing capture it (eps<0) or skip/impact? Map the corridor.
+beta: 5.200e+06 kg/m^2  (D=1000 m iron, Cd=1.0)
+resolution level: 8 (grid 60^2)
+cells done: 3600
+capture: 326  impact: 60  skip: 3214
+max v_inf with capture: 4.19 km/s
+widest peri window: 42.7 km @ v_inf=0.20 km/s
+updated: 2026-06-21 11:07:23
