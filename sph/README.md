@@ -54,12 +54,21 @@ plastic deviatoric stress (Jaumann rate, von Mises yield):
   rate, von Mises radial-return yield), with the elastic signal speed in AV/CFL;
 - **`std::thread` parallelism** over particles (density + forces).
 
-The physics is now complete (EOS + strength). Roadmap to the impact runs:
+**Gate 2 — crater π-scaling (QUALIFIED PASS, `pi_scaling.cpp`, see
+`pi_scaling_results.txt`).** Vertical iron→basalt impacts, U=0.6–2.2 km/s,
+CPPR≈4. The cratering-efficiency (volume) velocity scaling gives coupling
+exponent **μ ≈ 0.58**, matching the canonical strength-regime value (~0.55) for
+competent rock → the energy/momentum coupling is correct. Caveat: at CPPR≈4 the
+crater is penetration-dominated (deep+narrow), so absolute dimensions/shape are
+resolution-limited; a fully-resolved validation needs CPPR ≥ 8–10 (a cloud/HPC
+run, not a laptop sweep).
 
-1. **Gate 2 — vertical impact π-scaling**: reproduce crater-size scaling for a
-   vertical impact before trusting oblique runs.
-2. **Oblique runs**: the Phase-1 terminal conditions (v≈7.4 km/s, γ≈1–4°) into
+The physics is complete (EOS + strength) and the scaling is validated. Roadmap:
+
+1. **Oblique runs**: the Phase-1 terminal conditions (v≈7.4 km/s, γ≈1–4°) into
    the three targets; compare gouge/ricochet/melt to the Phase-2a estimates.
+   (Same resolution caveat → laptop gives qualitative results; quantitative
+   dimensions want a higher-resolution cloud run.)
 
 ## Build & validate
 

@@ -28,3 +28,5 @@ sph/sod_out.txt
 sph/eos_test
 sph/sod_run.log
 sph/strength_test
+sph/pi_scaling
+sph/pi_sweep.log

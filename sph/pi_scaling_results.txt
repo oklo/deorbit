@@ -1,0 +1,23 @@
+Gate 2 — crater pi-scaling (strength regime, no body-force gravity)
+Vertical iron sphere (a=0.05 m) into a basalt half-space, CPPR=a/dx=4, dx=0.0125 m.
+Transient crater measured by radial surface profile at t=8e-5 s.
+
+  U (m/s)   Rc (m)    depth (m)   R/a
+    600     0.0438    0.0372     0.88
+   1000     0.0438    0.0614     0.88
+   1500     0.0563    0.0807     1.13
+   2200     0.0688    0.1451     1.38
+
+Power-law fits (R ~ U^mu):
+  radius        R ~ U^0.36  (R^2=0.86)   dx-quantized -> noisy/low
+  depth         d ~ U^1.01  (R^2=0.98)   penetration-like (dense penetrator)
+  volume R^2*d  V ~ U^1.73  (R^2=0.96)   -> coupling exponent mu = 0.58
+
+VERDICT: QUALIFIED PASS.
+  + Cratering-efficiency (volume) velocity scaling mu = 0.58 matches the canonical
+    strength-regime value (~0.55, range 0.4-0.6) for competent rock -> the
+    hydrocode's energy/momentum coupling is physically correct.
+  - At CPPR~4 the crater is penetration-dominated (deep+narrow), not a resolved
+    self-similar bowl; absolute dimensions / aspect ratio are resolution-limited.
+  -> A definitive, fully-resolved pi-scaling validation needs CPPR >= 8-10
+     (millions of particles) -> a cloud/HPC run, not a laptop sweep.

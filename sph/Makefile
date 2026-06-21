@@ -15,3 +15,6 @@ strength_test: strength_test.cpp $(HDRS)
 .PHONY: clean
 clean:
 	rm -f sod eos_test strength_test sod_out.txt
+
+pi_scaling: pi_scaling.cpp $(HDRS)
+	$(CXX) $(CXXFLAGS) pi_scaling.cpp -o pi_scaling
