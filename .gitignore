@@ -20,3 +20,8 @@ highfidelity/state_aerobrake/
 
 # survival-map sweep output (reproducible)
 highfidelity/state_sweep/
+
+# C++ SPH build artifacts
+sph/sod
+sph/sod_out.txt
+*.o
