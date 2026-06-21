@@ -18,8 +18,7 @@ int main() {
     const int nyL = 16, nyR = 8;      // y,z layers; thick enough that the periodic
                                       // cell list has >=3 cells at 2*h_max
     S.h_init = S.eta * aL;            // seed (must precede add())
-    S.Ly = S.Lz = nyL * aL;           // = 0.08, periodic
-    S.xmin = -0.5; S.xmax = 0.5;
+    S.set_domain(-0.5, 0.5, false, 0, nyL * aL, true, 0, nyL * aL, true);  // y,z periodic
 
     const double rhoL = 1.0, rhoR = 0.125, PL = 1.0, PR = 0.1;
     const double m = rhoL * aL * aL * aL;

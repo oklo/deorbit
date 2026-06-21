@@ -20,8 +20,9 @@ int main(int argc, char** argv) {
     S.materials.push_back(Material::basalt());   // 0 = target
     S.materials.push_back(Material::iron());      // 1 = impactor
     S.eta = 1.3; S.h_init = S.eta * dx;
-    S.Ly = S.Lz = 0;                              // non-periodic (walled container)
-    S.xmin = -Lx; S.xmax = Lx;                    // x only used for cell extent
+    // non-periodic walled container; bounds cover target + impactor + ejecta headroom
+    S.set_domain(-Lx / 2 - 0.05, Lx / 2 + 0.05, false, -Lx / 2 - 0.05, Lx / 2 + 0.05, false,
+                 -Lz - 0.02, 0.3, false);
     double hb = 2.0 * S.h_init;
 
     // target half-space: x,y in [-Lx/2,Lx/2], z in [-Lz,0]; walls frozen

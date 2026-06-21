@@ -66,7 +66,15 @@ struct System {
     double h_init = 0.01, h_max = 0.01;
     double alpha = 1.0, beta = 2.0, eps = 0.01, alpha_u = 0.0;
     double cfl = 0.2;
-    double xmin = 0, xmax = 0, Ly = 0, Lz = 0;
+    // per-axis domain bounds [lo,hi] and periodicity (x,y,z)
+    double dlo[3] = {0, 0, 0}, dhi[3] = {0, 0, 0};
+    bool per[3] = {false, false, false};
+    void set_domain(double xl, double xh, bool px, double yl, double yh, bool py,
+                    double zl, double zh, bool pz) {
+        dlo[0] = xl; dhi[0] = xh; per[0] = px;
+        dlo[1] = yl; dhi[1] = yh; per[1] = py;
+        dlo[2] = zl; dhi[2] = zh; per[2] = pz;
+    }
 
     void add(Vec3 p, Vec3 v, double m, double uu, bool fix = false) {
         pos.push_back(p); vel.push_back(v); acc.push_back({});
@@ -78,48 +86,56 @@ struct System {
 
     Vec3 sep(const Vec3& a, const Vec3& b) const {
         Vec3 d = a - b;
-        if (Ly > 0) d.y -= Ly * std::round(d.y / Ly);
-        if (Lz > 0) d.z -= Lz * std::round(d.z / Lz);
+        if (per[0]) { double L = dhi[0] - dlo[0]; d.x -= L * std::round(d.x / L); }
+        if (per[1]) { double L = dhi[1] - dlo[1]; d.y -= L * std::round(d.y / L); }
+        if (per[2]) { double L = dhi[2] - dlo[2]; d.z -= L * std::round(d.z / L); }
         return d;
     }
 
-    int ncx = 1, ncy = 1, ncz = 1;
-    double cx = 1, cy = 1, cz = 1;
+    // proper 3D spatial cell list (cell size 2*h_max), per-axis periodicity
+    int nc[3] = {1, 1, 1};
+    double cw[3] = {1, 1, 1};
     std::vector<std::vector<int>> cells;
-    int cidx(int ix, int iy, int iz) const {
-        ix = std::min(std::max(ix, 0), ncx - 1);
-        iy = ((iy % ncy) + ncy) % ncy;
-        iz = ((iz % ncz) + ncz) % ncz;
-        return (ix * ncy + iy) * ncz + iz;
+    int binof(int ax, double c) const {
+        int i = (int)((c - dlo[ax]) / cw[ax]);
+        if (i < 0) i = 0; if (i >= nc[ax]) i = nc[ax] - 1;
+        return i;
     }
     void build_cells() {
         h_max = 1e-30;
         for (int i = 0; i < n; i++) h_max = std::max(h_max, hh[i]);
         double rc = 2.0 * h_max;
-        ncx = std::max(1, (int)((xmax - xmin) / rc));
-        ncy = (int)(Ly / rc); ncz = (int)(Lz / rc);
-        if (ncy < 3) ncy = 1;
-        if (ncz < 3) ncz = 1;
-        cx = (xmax - xmin) / ncx; cy = Ly / std::max(1, ncy); cz = Lz / std::max(1, ncz);
-        cells.assign((size_t)ncx * ncy * ncz, {});
-        for (int i = 0; i < n; i++) {
-            int ix = (int)((pos[i].x - xmin) / cx);
-            int iy = ncy > 1 ? (int)(pos[i].y / cy) : 0;
-            int iz = ncz > 1 ? (int)(pos[i].z / cz) : 0;
-            cells[cidx(ix, iy, iz)].push_back(i);
+        for (int a = 0; a < 3; a++) {
+            double ext = dhi[a] - dlo[a];
+            if (ext <= 0) ext = rc;
+            int m = std::max(1, (int)(ext / rc));
+            if (per[a] && m < 3) m = 1;        // periodic needs >=3 cells, else collapse
+            nc[a] = m; cw[a] = ext / m;
         }
+        cells.assign((size_t)nc[0] * nc[1] * nc[2], {});
+        for (int i = 0; i < n; i++)
+            cells[(binof(0, pos[i].x) * nc[1] + binof(1, pos[i].y)) * nc[2] + binof(2, pos[i].z)]
+                .push_back(i);
     }
     template <class F>
     void for_neighbors(int i, F fn) const {
-        int ix = (int)((pos[i].x - xmin) / cx);
-        int iy = ncy > 1 ? (int)(pos[i].y / cy) : 0;
-        int iz = ncz > 1 ? (int)(pos[i].z / cz) : 0;
-        int dyl = ncy > 1 ? -1 : 0, dyh = ncy > 1 ? 1 : 0;
-        int dzl = ncz > 1 ? -1 : 0, dzh = ncz > 1 ? 1 : 0;
-        for (int dx = -1; dx <= 1; dx++)
-            for (int dy = dyl; dy <= dyh; dy++)
-                for (int dz = dzl; dz <= dzh; dz++)
-                    for (int j : cells[cidx(ix + dx, iy + dy, iz + dz)]) fn(j);
+        int b0 = binof(0, pos[i].x), b1 = binof(1, pos[i].y), b2 = binof(2, pos[i].z);
+        int lo0 = nc[0] > 1 ? -1 : 0, hi0 = nc[0] > 1 ? 1 : 0;
+        int lo1 = nc[1] > 1 ? -1 : 0, hi1 = nc[1] > 1 ? 1 : 0;
+        int lo2 = nc[2] > 1 ? -1 : 0, hi2 = nc[2] > 1 ? 1 : 0;
+        for (int d0 = lo0; d0 <= hi0; d0++) {
+            int j0 = b0 + d0;
+            if (per[0]) j0 = ((j0 % nc[0]) + nc[0]) % nc[0]; else if (j0 < 0 || j0 >= nc[0]) continue;
+            for (int d1 = lo1; d1 <= hi1; d1++) {
+                int j1 = b1 + d1;
+                if (per[1]) j1 = ((j1 % nc[1]) + nc[1]) % nc[1]; else if (j1 < 0 || j1 >= nc[1]) continue;
+                for (int d2 = lo2; d2 <= hi2; d2++) {
+                    int j2 = b2 + d2;
+                    if (per[2]) j2 = ((j2 % nc[2]) + nc[2]) % nc[2]; else if (j2 < 0 || j2 >= nc[2]) continue;
+                    for (int jj : cells[(j0 * nc[1] + j1) * nc[2] + j2]) fn(jj);
+                }
+            }
+        }
     }
 
     void compute_density_h(int iters = 2) {

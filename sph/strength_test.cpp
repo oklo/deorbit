@@ -9,7 +9,7 @@
 static void basalt_block(System& S, double x0, double x1, double dx, double Lyz) {
     S.materials.push_back(Material::basalt());
     S.eta = 1.3; S.h_init = S.eta * dx;
-    S.xmin = x0; S.xmax = x1; S.Ly = S.Lz = Lyz;
+    S.set_domain(x0, x1, false, 0, Lyz, false, 0, Lyz, false);   // non-periodic by default
     double rho0 = Material::basalt().rho0, m = rho0 * dx * dx * dx;
     int nx = (int)std::round((x1 - x0) / dx), ny = (int)std::round(Lyz / dx);
     for (int i = 0; i < nx; i++)
@@ -20,9 +20,8 @@ static void basalt_block(System& S, double x0, double x1, double dx, double Lyz)
 }
 
 static int test_shear() {
-    System S; basalt_block(S, -0.2, 0.2, 0.02, 0.16);
-    S.Ly = S.Lz = 0;                              // NON-periodic: a linear shear
-                                                  // field is incompatible with y,z wrap
+    System S; basalt_block(S, -0.2, 0.2, 0.02, 0.16);   // non-periodic (a linear
+                                                  // shear field is incompatible with y,z wrap)
     double G = Material::basalt().G, k = 1.0;     // pure shear v=(k y, k x, 0)
     for (int i = 0; i < S.n; i++) S.vel[i] = {k * S.pos[i].y, k * S.pos[i].x, 0};
     S.init();                                     // density + h
@@ -63,6 +62,7 @@ static int test_wave() {
     // Well-resolved (w >> dx) small-amplitude Gaussian velocity pulse splits
     // into two elastic waves; track the right-going PEAK (noise-robust) -> c_L.
     System S; basalt_block(S, -0.6, 0.6, 0.01, 0.08);
+    S.per[1] = S.per[2] = true;                   // y,z periodic (pulse is y,z-uniform)
     Material b = Material::basalt();
     double cL = std::sqrt((b.A + 4.0 / 3.0 * b.G) / b.rho0);
     double v0 = 1.0, w = 0.06;

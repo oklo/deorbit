@@ -30,3 +30,6 @@ sph/sod_run.log
 sph/strength_test
 sph/pi_scaling
 sph/pi_sweep.log
+sph/cayambe
+sph/cayambe_snap*.csv
+sph/cayambe_run.log

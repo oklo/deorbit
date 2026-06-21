@@ -18,3 +18,6 @@ clean:
 
 pi_scaling: pi_scaling.cpp $(HDRS)
 	$(CXX) $(CXXFLAGS) pi_scaling.cpp -o pi_scaling
+
+cayambe: cayambe.cpp $(HDRS)
+	$(CXX) $(CXXFLAGS) cayambe.cpp -o cayambe
