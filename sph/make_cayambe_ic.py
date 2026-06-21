@@ -26,6 +26,8 @@ ap.add_argument("--yw", type=float, default=3000.0, help="half cross-range width
 ap.add_argument("--U", type=float, default=7400.0)
 ap.add_argument("--gamma", type=float, default=2.0, help="grazing angle (deg)")
 ap.add_argument("--a", type=float, default=500.0, help="impactor radius (m)")
+ap.add_argument("--shear", type=float, default=400.0,
+                help="depth below summit the impactor CENTER passes (m); it shears the top ~shear+a")
 ap.add_argument("--out", default="cayambe_ic.bin")
 A = ap.parse_args()
 
@@ -92,7 +94,9 @@ print(f"basalt particles: {basalt.shape[0]:,} ({len(xs)}x{len(ys)}x{nlev})")
 # --- iron impactor: bottom grazes the summit at x=0 ---
 g = np.radians(A.gamma); vh = A.U * np.cos(g); vn = A.U * np.sin(g)
 xb0 = -A.xw + A.a + dx                              # start just inside the upwind edge
-zb0 = z_s + A.a + np.tan(g) * (-xb0)                # so the bottom grazes summit (z_s) at x=0
+# aim the impactor CENTRE to pass A.shear below the summit at x=0, so it ploughs
+# through the upper cone (shears the top ~shear+a) instead of kissing the apex
+zb0 = (z_s - A.shear) + np.tan(g) * (-xb0)
 na = int(np.ceil(A.a / dx)) + 1
 ix, iy, iz = np.meshgrid(*(np.arange(-na, na + 1),) * 3, indexing="ij")
 xp = ix * dx; yp = iy * dx; zp = zb0 + iz * dx

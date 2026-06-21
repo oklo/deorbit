@@ -75,23 +75,26 @@ def photo(R, t, out):
     p = pv.Plotter(off_screen=True, window_size=(1700, 950))
     p.set_background("#0a0d12")
     # base material color: rock (warm grey) -> iron (steel), then glow by u
-    rgb = np.zeros((surf.n_points, 3))
-    irf = surf["iron"]; uu = surf["u"]
-    rock = np.array([0.42, 0.38, 0.34]); steel = np.array([0.6, 0.63, 0.68])
-    base = rock[None] * (1 - irf[:, None]) + steel[None] * irf[:, None]
-    glow = np.clip(uu / 6e6, 0, 1)[:, None]               # incandescence
-    hot = np.array([1.0, 0.55, 0.15])
-    rgb = base * (1 - glow) + hot[None] * glow
-    rgb = np.clip(rgb + glow * 0.4, 0, 1)                 # brighten hot
+    irf = surf["iron"]; uu = surf["u"]; zpts = surf.points[:, 2]
+    snow = np.clip((zpts - 5000.0) / 600.0, 0, 1)[:, None]   # glacier only on the high peak
+    rocklo = np.array([0.34, 0.28, 0.22]); snowc = np.array([0.90, 0.92, 0.97])
+    steel = np.array([0.55, 0.58, 0.64])
+    terrain = rocklo[None] * (1 - snow) + snowc[None] * snow
+    base = terrain * (1 - irf[:, None]) + steel[None] * irf[:, None]
+    glow = np.clip(uu / 3e6, 0, 1)[:, None]                  # incandescent melt (lower clim -> pops)
+    hot = np.array([1.0, 0.45, 0.10])
+    rgb = np.clip(base * (1 - glow) + hot[None] * glow + glow * 0.8, 0, 1)
     surf["rgb"] = (rgb * 255).astype(np.uint8)
-    p.add_mesh(surf, scalars="rgb", rgb=True, ambient=0.3, diffuse=0.8,
-               specular=0.4, specular_power=15, smooth_shading=True)
-    p.add_light(pv.Light(position=(-2, -3, 4), intensity=1.0))
-    p.add_light(pv.Light(position=(2, -2, 1), intensity=0.3, color="#9fb6ff"))
-    c = surf.center
-    p.camera.focal_point = (c[0], 0, c[2])
-    p.camera.position = (c[0], -3500, c[2] + 900)
+    p.add_mesh(surf, scalars="rgb", rgb=True, ambient=0.22, diffuse=0.9,
+               specular=0.2, specular_power=12, smooth_shading=True)
+    p.add_light(pv.Light(position=(-3, -4, 5), intensity=1.0))         # sun, windward
+    p.add_light(pv.Light(position=(3, -2, 2), intensity=0.3, color="#9fb6ff"))  # sky
+    b = surf.bounds
+    sx = 0.5 * (b[0] + b[1])
+    p.camera.focal_point = (sx * 0.3, 0, 0.7 * b[5])         # toward the summit/impact
+    p.camera.position = (b[0] - 3000, b[2] - 8000, b[5] + 3500)   # windward, front, above
     p.camera.up = (0, 0, 1)
+    p.camera.zoom(1.2)
     p.screenshot(out, scale=1); print("wrote", out)
 
 
