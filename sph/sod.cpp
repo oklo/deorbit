@@ -10,19 +10,21 @@ int main() {
     S.eos.gamma = 1.4;
     S.alpha = 1.0; S.beta = 2.0;      // artificial viscosity (standard)
     S.alpha_u = 1.0;                  // artificial conductivity (Price 2008)
+    S.eta = 1.3;                      // adaptive h = eta (m/rho)^(1/3)
     const double aL = 0.005;          // left lattice spacing
     const double aR = 2.0 * aL;       // right spacing (rho ratio 8 -> 2x in 3D)
     const int nxL = 100, nxR = 50;
-    const int nyL = 10, nyR = 5;      // y,z layers (right uses 2x spacing)
-    S.Ly = S.Lz = nyL * aL;           // = 0.05, periodic
+    const int nyL = 16, nyR = 8;      // y,z layers; thick enough that the periodic
+                                      // cell list has >=3 cells at 2*h_max
+    S.h_init = S.eta * aL;            // seed (must precede add())
+    S.Ly = S.Lz = nyL * aL;           // = 0.08, periodic
     S.xmin = -0.5; S.xmax = 0.5;
-    S.h = 1.6 * aL;
 
     const double rhoL = 1.0, rhoR = 0.125, PL = 1.0, PR = 0.1;
     const double m = rhoL * aL * aL * aL;
     const double uL = PL / ((S.eos.gamma - 1.0) * rhoL);  // 2.5
     const double uR = PR / ((S.eos.gamma - 1.0) * rhoR);  // 2.0
-    const double xfix = 2.0 * S.h;    // freeze particles within 2h of the ends
+    const double xfix = 2.0 * S.h_init;   // freeze particles within ~2h of the ends
 
     // left block
     for (int ix = 0; ix < nxL; ix++)
@@ -41,8 +43,10 @@ int main() {
                 S.add({x, y, z}, {0, 0, 0}, m, uR, x > 0.5 - xfix);
             }
 
-    printf("Sod: %d particles, h=%.4f, m=%.3e\n", S.n, S.h, m);
+    printf("Sod: %d particles, eta=%.2f (adaptive h), m=%.3e\n", S.n, S.eta, m);
     S.init();
+    { double hlo = 1e30, hhi = 0; for (int i = 0; i < S.n; i++) { hlo = std::min(hlo, S.hh[i]); hhi = std::max(hhi, S.hh[i]); }
+      printf("  converged h range: %.4f .. %.4f\n", hlo, hhi); }
 
     const double t_end = 0.2;
     double t = 0; int nstep = 0;
