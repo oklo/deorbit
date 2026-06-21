@@ -37,3 +37,5 @@ sph/run_ic
 sph/cayambe_ic*.bin
 sph/ic_snap*.csv
 sph/dem/
+sph/proto_*.png
+sph/offscreen_test.png
