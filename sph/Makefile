@@ -21,3 +21,6 @@ pi_scaling: pi_scaling.cpp $(HDRS)
 
 cayambe: cayambe.cpp $(HDRS)
 	$(CXX) $(CXXFLAGS) cayambe.cpp -o cayambe
+
+run_ic: run_ic.cpp $(HDRS)
+	$(CXX) $(CXXFLAGS) run_ic.cpp -o run_ic

@@ -33,3 +33,7 @@ sph/pi_sweep.log
 sph/cayambe
 sph/cayambe_snap*.csv
 sph/cayambe_run.log
+sph/run_ic
+sph/cayambe_ic*.bin
+sph/ic_snap*.csv
+sph/dem/
