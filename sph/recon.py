@@ -78,7 +78,7 @@ def photo(R, t, out):
     irf = surf["iron"]; uu = surf["u"]; zpts = surf.points[:, 2]
     snow = np.clip((zpts - 5000.0) / 600.0, 0, 1)[:, None]   # glacier only on the high peak
     rocklo = np.array([0.34, 0.28, 0.22]); snowc = np.array([0.90, 0.92, 0.97])
-    steel = np.array([0.55, 0.58, 0.64])
+    steel = np.array([0.40, 0.41, 0.43])        # neutral mid-grey iron (distinct from snow)
     terrain = rocklo[None] * (1 - snow) + snowc[None] * snow
     base = terrain * (1 - irf[:, None]) + steel[None] * irf[:, None]
     glow = np.clip(uu / 3e6, 0, 1)[:, None]                  # incandescent melt (lower clim -> pops)
