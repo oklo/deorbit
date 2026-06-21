@@ -43,3 +43,7 @@ sph/recon_*.png
 sph/ic_snap*.bin
 sph/edifice_*.png
 sph/edifice_preview.log
+sph/frames/
+sph/*.gif
+sph/latest_*.png
+sph/preimpact_*.png
