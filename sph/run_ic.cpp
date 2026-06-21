@@ -11,13 +11,19 @@
 #include "sph.hpp"
 
 static void snapshot(System& S, const char* fn) {
-    FILE* f = std::fopen(fn, "w");
-    // full state incl. rho and h, so the field can be kernel-reconstructed for viz
-    std::fprintf(f, "x,y,z,vx,vy,vz,mat,u,rho,h\n");
-    for (int i = 0; i < S.n; i += 2)
-        std::fprintf(f, "%.1f,%.1f,%.1f,%.1f,%.1f,%.1f,%d,%.3e,%.2f,%.2f\n",
-                     S.pos[i].x, S.pos[i].y, S.pos[i].z, S.vel[i].x, S.vel[i].y, S.vel[i].z,
-                     S.mat[i], S.u[i], S.rho[i], S.hh[i]);
+    // FULL-resolution binary dump (every particle) so the kernel field can be
+    // reconstructed at the simulation's true resolution h.
+    // Format: int64 n, then n*[x y z vx vy vz u rho h mat] as float64.
+    FILE* f = std::fopen(fn, "wb");
+    long n = S.n; std::fwrite(&n, sizeof(long), 1, f);
+    std::vector<double> buf((size_t)n * 10);
+    for (int i = 0; i < S.n; i++) {
+        double* r = &buf[(size_t)i * 10];
+        r[0] = S.pos[i].x; r[1] = S.pos[i].y; r[2] = S.pos[i].z;
+        r[3] = S.vel[i].x; r[4] = S.vel[i].y; r[5] = S.vel[i].z;
+        r[6] = S.u[i]; r[7] = S.rho[i]; r[8] = S.hh[i]; r[9] = (double)S.mat[i];
+    }
+    std::fwrite(buf.data(), sizeof(double), buf.size(), f);
     std::fclose(f);
 }
 
@@ -76,14 +82,14 @@ int main(int argc, char** argv) {
             fflush(stdout);
         }
         if (t >= next_snap) {
-            char fn[64]; std::snprintf(fn, 64, "ic_snap_%03d.csv", isnap++);
+            char fn[64]; std::snprintf(fn, 64, "ic_snap_%03d.bin", isnap++);
             snapshot(S, fn); next_snap += 0.05;
         }
         if (std::chrono::duration<double>(std::chrono::steady_clock::now() - wall0).count() > walltime) {
             stop = "walltime"; break;
         }
     }
-    snapshot(S, "ic_snap_final.csv");
+    snapshot(S, "ic_snap_final.bin");
     printf("done (%s): %d steps to t=%.4f (+%d checkpoints)\n", stop, nstep, t, isnap);
     return 0;
 }

@@ -17,12 +17,16 @@ pv.OFF_SCREEN = True
 
 
 def load(path):
+    if path.endswith('.bin'):     # int64 n, then n*[x y z vx vy vz u rho h mat]
+        with open(path, 'rb') as f:
+            n = int(np.fromfile(f, dtype='<i8', count=1)[0])
+            a = np.fromfile(f, dtype='<f8', count=n * 10).reshape(n, 10)
+        return a[:, :3], a[:, 6], a[:, 9].astype(int)
     x, y, z, u, mat = [], [], [], [], []
     for r in csv.DictReader(open(path)):
         x.append(float(r['x'])); y.append(float(r['y'])); z.append(float(r['z']))
         u.append(float(r['u'])); mat.append(int(r['mat']))
-    P = np.column_stack([x, y, z]); u = np.array(u); mat = np.array(mat)
-    return P, u, mat
+    return np.column_stack([x, y, z]), np.array(u), np.array(mat)
 
 
 def frame_camera(p, P, mat):

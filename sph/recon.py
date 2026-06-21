@@ -23,15 +23,20 @@ ETA = 1.3
 
 
 def load(path):
-    cols = {k: [] for k in ("x", "y", "z", "u", "mat", "rho", "h")}
+    if path.endswith(".bin"):     # full-res binary: int64 n, then n*[x y z vx vy vz u rho h mat]
+        with open(path, "rb") as f:
+            n = int(np.fromfile(f, dtype="<i8", count=1)[0])
+            a = np.fromfile(f, dtype="<f8", count=n * 10).reshape(n, 10)
+        return dict(x=a[:, 0], y=a[:, 1], z=a[:, 2], u=a[:, 6], rho=a[:, 7],
+                    h=a[:, 8], mat=a[:, 9].astype(int))
+    cols = {k: [] for k in ("x", "y", "z", "u", "mat", "rho", "h")}   # CSV (baseline)
     rdr = csv.DictReader(open(path)); has = rdr.fieldnames
     for r in rdr:
         for k in ("x", "y", "z", "u"): cols[k].append(float(r[k]))
         cols["mat"].append(int(r["mat"]))
         cols["rho"].append(float(r["rho"]) if "rho" in has else np.nan)
         cols["h"].append(float(r["h"]) if "h" in has else np.nan)
-    d = {k: np.array(v) for k, v in cols.items()}
-    return d
+    return {k: np.array(v) for k, v in cols.items()}
 
 
 def reconstruct(d, dx, downsample, dz, pad=4):
@@ -113,7 +118,7 @@ def tufte(R, t, out):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("snap"); ap.add_argument("--dx", type=float, default=30.0)
-    ap.add_argument("--downsample", type=int, default=2)
+    ap.add_argument("--downsample", type=int, default=1)   # 1 for full-res .bin snapshots
     ap.add_argument("--dz", type=float, default=18.0); ap.add_argument("--time", type=float, default=0.0)
     ap.add_argument("--out", default="recon"); ap.add_argument("--style", default="both")
     a = ap.parse_args()

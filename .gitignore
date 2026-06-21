@@ -40,3 +40,4 @@ sph/dem/
 sph/proto_*.png
 sph/offscreen_test.png
 sph/recon_*.png
+sph/ic_snap*.bin
