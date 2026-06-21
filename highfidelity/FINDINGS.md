@@ -48,6 +48,31 @@ but only in a narrow, demanding corner: **low v∞** (slow encounter) AND a
 Above that, the Moon pumps periapsis into a steep impact or ejects the body. This
 quantifies the qualitative worry that "the Moon is creating an issue here."
 
+## 4. Site selection: the bulge steers grazing impacts to the equatorial Andes
+
+(`../site_selection.py`, pure stdlib: exact WGS84 ellipsoid + a curated table of
+the highest-geocentric-radius summits.)
+
+- **Pipeline validation:** ranking the world's high summits by geocentric radius
+  reproduces the known fact — **Chimborazo is the global maximum** (6384.39 km),
+  beating Everest (6382.31 km) by ~2.1 km; Huascarán essentially tied; Cayambe
+  top-tier (6383.93 km). All leaders are equatorial-ish high mountains.
+- **Bulge dominance:** equator→pole geocentric drop is 21.4 km vs ≤9 km topo. A
+  grazing body (fpa 1–4°) descends slowly enough that a 6 km surface rise is
+  reached over 86–344 km along-track — so it is drawn to nearby high terrain.
+- **Result (slow decay + J2 precession of ω, Ω samples the |lat|≤i band):** the
+  body impacts at the global geocentric-radius maximum within its latitude band:
+    - i ≈ 1°  → Cotopaxi/Cayambe (lat ~0, the equator crossing over the Andes)
+    - i ≈ 2–5° → **Chimborazo** (the global optimum)
+    - i ≈ 10–23° → Huascarán Sur (tied geocentric radius at higher lat)
+  A near-equatorial track with its node over the Andes impacts at **Cayambe**
+  (lat 0.00, lon −78.0). So the equatorial bulge + Andes topography make
+  **Chimborazo/Cayambe the bullseye** — validating the target choice as a
+  geometric consequence, not an arbitrary pick.
+- **Caveat to stress-test:** assumes nodal/apsidal precession samples the band
+  faster than periapsis decays (true for slow aerobraking, to be confirmed); and
+  topography is a peak-table stand-in, not a full DEM.
+
 ## Open / next
 
 - Distinguish *captured-then-aerobraked* grazing impacts (many passes, ~7.4 km/s)

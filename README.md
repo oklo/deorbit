@@ -72,4 +72,8 @@ Phase 1a: capture-corridor map (does km iron get captured, and where is the
 corridor?) — stdlib daemon, running. Phase 1b: high-fidelity engine **built +
 validated**; next is the multi-pass aerobraking sequence to test which captures
 survive the Moon and the J2-steered terminal great circle (Chimborazo/Cayambe).
-Phase 2: terminal oblique-impact hydrocode for the three targets.
+Phase 1c: site selection (`site_selection.py`) — the equatorial bulge dominates
+geocentric radius, so a slowly-decaying grazing body is steered to the global
+geocentric-radius maximum in its latitude band: **Chimborazo/Cayambe** (validated
+against the known "farthest point from Earth's center" ranking). Phase 2:
+terminal oblique-impact hydrocode for the three targets.
