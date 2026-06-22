@@ -24,3 +24,7 @@ cayambe: cayambe.cpp $(HDRS)
 
 run_ic: run_ic.cpp $(HDRS)
 	$(CXX) $(CXXFLAGS) run_ic.cpp -o run_ic
+
+# separate binary name so we can rebuild while a run_ic process is live
+run_ic2: run_ic.cpp $(HDRS)
+	$(CXX) $(CXXFLAGS) run_ic.cpp -o run_ic2

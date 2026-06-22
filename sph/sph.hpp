@@ -10,6 +10,7 @@
 #include <cmath>
 #include <algorithm>
 #include <thread>
+#include <random>
 #include "vec3.hpp"
 #include "eos.hpp"
 
@@ -35,6 +36,22 @@ inline Vec3 Sdot(const Sym3& s, const Vec3& g) {   // S . g
             s.xy * g.x + s.yy * g.y + s.yz * g.z,
             s.xz * g.x + s.yz * g.y + s.zz * g.z};
 }
+// largest eigenvalue of a symmetric 3x3 (Smith 1961 trig method) -- used for the
+// max principal stress (damage) without needing eigenvectors.
+inline double eig_max(const Sym3& s) {
+    double p1 = s.xy * s.xy + s.xz * s.xz + s.yz * s.yz;
+    double q = (s.xx + s.yy + s.zz) / 3.0;
+    if (p1 < 1e-30) return std::max({s.xx, s.yy, s.zz});
+    double p2 = (s.xx - q) * (s.xx - q) + (s.yy - q) * (s.yy - q) + (s.zz - q) * (s.zz - q) + 2 * p1;
+    double p = std::sqrt(p2 / 6.0);
+    // r = det((A-qI)/p)/2
+    double a = (s.xx - q) / p, b = (s.yy - q) / p, c = (s.zz - q) / p;
+    double d = s.xy / p, e = s.xz / p, f = s.yz / p;
+    double r = (a * (b * c - f * f) - d * (d * c - f * e) + e * (d * f - b * e)) / 2.0;
+    r = std::max(-1.0, std::min(1.0, r));
+    double phi = std::acos(r) / 3.0;
+    return q + 2.0 * p * std::cos(phi);            // largest eigenvalue
+}
 
 template <class F>
 static void parallel_for(int n, F f) {
@@ -55,6 +72,10 @@ static void parallel_for(int n, F f) {
 struct System {
     std::vector<Vec3> pos, vel, acc;
     std::vector<double> mass, rho, u, dudt, P, cs, csig, hh, eps_work;
+    // fracture/tensile-stability: D=damage[0,1], eps_act=Weibull flaw strain,
+    // sigmax=max principal (tensile) stress, Pf=damaged pressure, Rart=Monaghan
+    // artificial-stress coeff, dscale=(1-D) deviatoric scale.
+    std::vector<double> D, eps_act, sigmax, Pf, Rart, dscale;
     std::vector<Sym3> S, dSdt;
     std::vector<int> mat;
     std::vector<char> fixed;
@@ -66,6 +87,9 @@ struct System {
     double h_init = 0.01, h_max = 0.01;
     double alpha = 1.0, beta = 2.0, eps = 0.01, alpha_u = 0.0;
     double cfl = 0.2;
+    double eps_as = 0.0;        // Monaghan artificial-stress coeff (0 = off)
+    int    as_n = 4;            // artificial-stress kernel exponent
+    bool   damage_on = false;   // Benz-Asphaug brittle damage (off by default)
     // per-axis domain bounds [lo,hi] and periodicity (x,y,z)
     double dlo[3] = {0, 0, 0}, dhi[3] = {0, 0, 0};
     bool per[3] = {false, false, false};
@@ -81,7 +105,26 @@ struct System {
         mass.push_back(m); rho.push_back(0); u.push_back(uu); dudt.push_back(0);
         P.push_back(0); cs.push_back(0); csig.push_back(0); hh.push_back(h_init);
         eps_work.push_back(0); S.push_back({}); dSdt.push_back({});
+        D.push_back(0); eps_act.push_back(1e30); sigmax.push_back(0);
+        Pf.push_back(0); Rart.push_back(0); dscale.push_back(1.0);
         mat.push_back(cur_mat); fixed.push_back(fix ? 1 : 0); n++;
+    }
+
+    // Benz-Asphaug (1995) flaw seeding: each brittle particle (material wk>0) gets
+    // a first-flaw activation strain drawn from the Weibull distribution
+    // n(<eps)=k*V*eps^m, i.e. eps_act = (rank/(k*V))^(1/m) with random rank. For
+    // one flaw/particle and V_i=dx^3 this is (u/(k*dx^3))^(1/m), u~Uniform(0,1].
+    void seed_damage(double dx, unsigned seed = 12345) {
+        std::mt19937 rng(seed);
+        std::uniform_real_distribution<double> U(1e-9, 1.0);
+        double V = dx * dx * dx;
+        for (int i = 0; i < n; i++) {
+            const Material& m = materials[mat[i]];
+            if (m.wk > 0 && m.wm > 0)
+                eps_act[i] = std::pow(U(rng) / (m.wk * V), 1.0 / m.wm);
+            else
+                eps_act[i] = 1e30;     // ductile / non-brittle: never flaw-fractures
+        }
     }
 
     Vec3 sep(const Vec3& a, const Vec3& b) const {
@@ -220,12 +263,22 @@ struct System {
             P[i] = m.pressure(rho[i], u[i]);
             cs[i] = m.sound_speed(rho[i], u[i]);
             csig[i] = std::sqrt(cs[i] * cs[i] + (4.0 / 3.0) * m.G / std::max(rho[i], 1e-30));
+            double pf = P[i], dsc = 1.0;
+            if (damage_on) {
+                sigmax[i] = -P[i] + eig_max(S[i]);      // max principal stress (+ = tension)
+                dsc = 1.0 - D[i];
+                if (P[i] < 0) pf = dsc * P[i];          // damaged material sheds tension
+            }
+            Pf[i] = pf; dscale[i] = dsc;
+            // Monaghan artificial-stress coeff: repulsive only under tension (pf<0)
+            Rart[i] = (eps_as > 0 && pf < 0) ? eps_as * (-pf) / (rho[i] * rho[i]) : 0.0;
         });
         compute_strain_stress();
         parallel_for(n, [&](int i) {
             Vec3 a{}; double du = 0;
             double iri2 = 1.0 / (rho[i] * rho[i]);
-            double Pi_over = P[i] * iri2;
+            double Pi_over = Pf[i] * iri2;
+            double di = dscale[i];
             for_neighbors(i, [&](int j) {
                 if (j == i) return;
                 Vec3 rij = sep(pos[i], pos[j]);
@@ -242,18 +295,25 @@ struct System {
                     Pij = (-alpha * cbar * mu + beta * mu * mu) / rbar;
                 }
                 double jrj2 = 1.0 / (rho[j] * rho[j]);
-                double term = Pi_over + P[j] * jrj2 + Pij;      // -P + AV (isotropic)
-                a -= gradW * (mass[j] * term);
-                du += 0.5 * mass[j] * term * dot(vij, gradW);
-                // deviatoric stress term: + m_j (S_i/rho_i^2 + S_j/rho_j^2).gradW
-                Vec3 sterm = Sdot(S[i], gradW) * iri2 + Sdot(S[j], gradW) * jrj2;
+                double term = Pi_over + Pf[j] * jrj2 + Pij;     // -P (damaged) + AV
+                du += 0.5 * mass[j] * term * dot(vij, gradW);    // energy: physical + AV only
+                double mterm = term;
+                if (eps_as > 0) {       // + Monaghan artificial stress (momentum only, no work)
+                    double wdp = kW(hbar / eta, hbar);           // kernel at the particle spacing
+                    double fr = (wdp > 0 ? kW(r, hbar) / wdp : 0.0);
+                    double fn = fr * fr; fn *= fn;               // (W/W_dp)^4
+                    mterm += (Rart[i] + Rart[j]) * fn;
+                }
+                a -= gradW * (mass[j] * mterm);
+                // deviatoric stress term, scaled by (1-D) damage on each side
+                Vec3 sterm = Sdot(S[i], gradW) * (iri2 * di) + Sdot(S[j], gradW) * (jrj2 * dscale[j]);
                 a += sterm * mass[j];
                 if (alpha_u > 0) {
                     double vsig = std::sqrt(std::abs(P[i] - P[j]) / rbar);
                     du += alpha_u * mass[j] * vsig * (u[i] - u[j]) * kdWdr(r, hbar) / rbar;
                 }
             });
-            acc[i] = a; dudt[i] = du + eps_work[i];
+            acc[i] = a; dudt[i] = du + eps_work[i] * di;
         });
     }
 
@@ -270,6 +330,23 @@ struct System {
         }
     }
 
+    // Benz-Asphaug crack growth: once the local tensile strain exceeds a flaw's
+    // activation strain, damage grows as d(D^1/3)/dt = c_g/R_s with crack speed
+    // c_g ~ 0.4 c_long and R_s ~ particle radius (dx/2). D saturates at 1.
+    void grow_damage(double dt) {
+        parallel_for(n, [&](int i) {
+            const Material& m = materials[mat[i]];
+            if (m.Emod <= 0 || D[i] >= 1.0) return;
+            double eps_local = sigmax[i] / m.Emod;
+            if (sigmax[i] > 0 && eps_local > eps_act[i]) {
+                double cg = 0.4 * std::sqrt(m.Emod / std::max(rho[i], 1e-30));
+                double Rs = 0.5 * h_init / eta;          // ~ dx/2
+                double d13 = std::cbrt(D[i]) + (cg / Rs) * dt;
+                D[i] = std::min(1.0, d13 * d13 * d13);
+            }
+        });
+    }
+
     double timestep() {
         double dt = 1e30;
         for (int i = 0; i < n; i++)
@@ -284,6 +361,7 @@ struct System {
         for (int i = 0; i < n; i++) if (!fixed[i]) pos[i] += vel[i] * dt;
         compute_density_h();
         compute_forces();
+        if (damage_on) grow_damage(dt);
         for (int i = 0; i < n; i++) if (!fixed[i]) {
             vel[i] += acc[i] * (0.5 * dt);
             u[i] += 0.5 * dt * (dudt_old[i] + dudt[i]);

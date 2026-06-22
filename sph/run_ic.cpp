@@ -30,6 +30,14 @@ static void snapshot(System& S, const char* fn) {
 }
 
 int main(int argc, char** argv) {
+    // optional --frac flag (anywhere): enable Monaghan artificial stress +
+    // Benz-Asphaug brittle damage. Filter it out, then parse positionally.
+    bool frac = false;
+    std::vector<char*> av;
+    for (int i = 0; i < argc; i++) {
+        if (std::string(argv[i]) == "--frac") frac = true; else av.push_back(argv[i]);
+    }
+    argc = (int)av.size(); argv = av.data();
     bool resume = (argc > 1 && std::string(argv[1]) == "--resume");
     System S;
     S.materials.push_back(Material::basalt());   // 0
@@ -96,6 +104,10 @@ int main(int argc, char** argv) {
         printf("loaded %s: N=%d (%d iron)  domain x[%.0f,%.0f] y[%.0f,%.0f] z[%.0f,%.0f]  dx=%.1f\n",
                icf, S.n, n_iron, hdr[0], hdr[1], hdr[2], hdr[3], hdr[4], hdr[5], dx);
     }
+    if (frac) {
+        S.eps_as = 0.3; S.damage_on = true; S.seed_damage(dx);
+        printf("FRAC ON: Monaghan artificial stress (eps=0.3) + Benz-Asphaug brittle damage\n");
+    }
     fprintf(stderr, "[diag] loaded, starting init...\n"); fflush(stderr);
     S.init();
     { double hlo = 1e30, hhi = 0; for (int i = 0; i < S.n; i++) { hlo = std::min(hlo, S.hh[i]); hhi = std::max(hhi, S.hh[i]); }
@@ -128,14 +140,14 @@ int main(int argc, char** argv) {
             fflush(stdout);
         }
         if (t >= next_snap) {
-            char fn[64]; std::snprintf(fn, 64, "ic_snap_%03d.bin", isnap++);
+            char fn[64]; std::snprintf(fn, 64, "%s%03d.bin", frac ? "frac_snap_" : "ic_snap_", isnap++);
             snapshot(S, fn); next_snap += 0.05;
         }
         if (std::chrono::duration<double>(std::chrono::steady_clock::now() - wall0).count() > walltime) {
             stop = "walltime"; break;
         }
     }
-    snapshot(S, "ic_snap_final.bin");
+    snapshot(S, frac ? "frac_snap_final.bin" : "ic_snap_final.bin");
     printf("done (%s): %d steps to t=%.4f (+%d checkpoints)\n", stop, nstep, t, isnap);
     return 0;
 }
