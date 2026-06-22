@@ -55,16 +55,23 @@ int main(int argc, char** argv) {
     std::fclose(f);
     printf("loaded %s: N=%d (%d iron)  domain x[%.0f,%.0f] y[%.0f,%.0f] z[%.0f,%.0f]  dx=%.1f\n",
            icf, S.n, n_iron, hdr[0], hdr[1], hdr[2], hdr[3], hdr[4], hdr[5], dx);
+    auto wall0 = std::chrono::steady_clock::now();
+    auto secs = [&]{ return std::chrono::duration<double>(std::chrono::steady_clock::now() - wall0).count(); };
+    fprintf(stderr, "[diag] loaded, starting init...\n"); fflush(stderr);
     S.init();
+    { double hlo = 1e30, hhi = 0; for (int i = 0; i < S.n; i++) { hlo = std::min(hlo, S.hh[i]); hhi = std::max(hhi, S.hh[i]); }
+      fprintf(stderr, "[diag] init done in %.1fs; h range %.1f..%.1f m; cells nc=%dx%dx%d\n",
+              secs(), hlo, hhi, S.nc[0], S.nc[1], S.nc[2]); fflush(stderr); }
 
     double t = 0, next_snap = 0.05, u_melt = 1.0e6;
     int nstep = 0, isnap = 0;
-    auto wall0 = std::chrono::steady_clock::now();
     const char* stop = "t_end";
     while (t < t_end) {
         double dt = S.timestep();
         if (t + dt > t_end) dt = t_end - t;
         S.step(dt); t += dt; nstep++;
+        if (nstep <= 3) { fprintf(stderr, "[diag] step %d dt=%.2e t=%.4f h_max=%.0f wall=%.1fs\n",
+              nstep, dt, t, [&]{double m=0;for(int i=0;i<S.n;i++)m=std::max(m,S.hh[i]);return m;}(), secs()); fflush(stderr); }
         if (nstep % 25 == 0 || t >= t_end) {
             double cx = 0, cz = 0, vz = 0, sp = 0, pen = 0, umax = 0; int ni = 0, nmelt = 0;
             for (int i = 0; i < S.n; i++) {

@@ -150,7 +150,11 @@ struct System {
                         if (r < 2.0 * hi) s += mass[j] * kW(r, hi);
                     });
                     rho[i] = std::max(s, 1e-30);
-                    hh[i] = eta * std::cbrt(mass[i] / rho[i]);
+                    // clamp h to [0.5, 2]*h_init: keeps the cell size from being
+                    // bloated by a few large-h free-surface particles (which made
+                    // every particle scan ~7500 candidates -> ~74 s/step at 5.5M).
+                    hh[i] = std::min(2.0 * h_init,
+                                     std::max(0.5 * h_init, eta * std::cbrt(mass[i] / rho[i])));
                 });
             }
             double hm = 1e-30;
