@@ -62,7 +62,7 @@ def reconstruct(d, dx, downsample, dz, pad=4):
     return dict(rho=rho, u=u, ironf=ironf, lo=lo, dz=dz, dims=dims)
 
 
-def photo(R, t, out):
+def photo(R, t, out, cam=None):
     import pyvista as pv
     pv.OFF_SCREEN = True
     nx, ny, nz = R["dims"]
@@ -89,10 +89,13 @@ def photo(R, t, out):
                specular=0.2, specular_power=12, smooth_shading=True)
     p.add_light(pv.Light(position=(-3, -4, 5), intensity=1.0))         # sun, windward
     p.add_light(pv.Light(position=(3, -2, 2), intensity=0.3, color="#9fb6ff"))  # sky
-    b = surf.bounds
-    sx = 0.5 * (b[0] + b[1])
-    p.camera.focal_point = (sx * 0.3, 0, 0.7 * b[5])         # toward the summit/impact
-    p.camera.position = (b[0] - 3000, b[2] - 8000, b[5] + 3500)   # windward, front, above
+    if cam is not None:                                      # fixed camera (animation)
+        p.camera.focal_point = cam[0]; p.camera.position = cam[1]
+    else:
+        b = surf.bounds
+        sx = 0.5 * (b[0] + b[1])
+        p.camera.focal_point = (sx * 0.3, 0, 0.7 * b[5])     # toward the summit/impact
+        p.camera.position = (b[0] - 3000, b[2] - 8000, b[5] + 3500)   # windward, front, above
     p.camera.up = (0, 0, 1)
     p.camera.zoom(1.2)
     p.screenshot(out, scale=1); print("wrote", out)
