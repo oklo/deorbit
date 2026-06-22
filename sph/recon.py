@@ -62,7 +62,7 @@ def reconstruct(d, dx, downsample, dz, pad=4):
     return dict(rho=rho, u=u, ironf=ironf, lo=lo, dz=dz, dims=dims)
 
 
-def photo(R, t, out, cam=None):
+def photo(R, t, out, cam=None, zoom=1.2):
     import pyvista as pv
     pv.OFF_SCREEN = True
     nx, ny, nz = R["dims"]
@@ -97,7 +97,7 @@ def photo(R, t, out, cam=None):
         p.camera.focal_point = (sx * 0.3, 0, 0.7 * b[5])     # toward the summit/impact
         p.camera.position = (b[0] - 3000, b[2] - 8000, b[5] + 3500)   # windward, front, above
     p.camera.up = (0, 0, 1)
-    p.camera.zoom(1.2)
+    p.camera.zoom(zoom)
     p.screenshot(out, scale=1); print("wrote", out)
 
 
