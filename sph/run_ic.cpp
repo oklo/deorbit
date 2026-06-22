@@ -8,6 +8,8 @@
 #include <cstdlib>
 #include <cmath>
 #include <chrono>
+#include <string>
+#include <vector>
 #include "sph.hpp"
 
 static void snapshot(System& S, const char* fn) {
@@ -28,43 +30,80 @@ static void snapshot(System& S, const char* fn) {
 }
 
 int main(int argc, char** argv) {
-    if (argc < 4) { std::fprintf(stderr, "usage: run_ic ic.bin dx t_end [walltime]\n"); return 1; }
-    const char* icf = argv[1];
-    double dx = atof(argv[2]), t_end = atof(argv[3]);
-    double walltime = (argc > 4 ? atof(argv[4]) : 1e30);
-
+    bool resume = (argc > 1 && std::string(argv[1]) == "--resume");
     System S;
     S.materials.push_back(Material::basalt());   // 0
     S.materials.push_back(Material::iron());      // 1
-    S.eta = 1.3; S.h_init = S.eta * dx;
-
-    FILE* f = std::fopen(icf, "rb");
-    if (!f) { std::fprintf(stderr, "cannot open %s\n", icf); return 1; }
-    double hdr[7];
-    if (std::fread(hdr, sizeof(double), 7, f) != 7) { std::fprintf(stderr, "bad header\n"); return 1; }
-    long N = (long)std::llround(hdr[6]);
-    S.set_domain(hdr[0], hdr[1], false, hdr[2], hdr[3], false, hdr[4], hdr[5], false);
-    int n_iron = 0;
-    for (long i = 0; i < N; i++) {
-        double r[10];
-        if (std::fread(r, sizeof(double), 10, f) != 10) { std::fprintf(stderr, "short read @%ld\n", i); return 1; }
-        S.cur_mat = (int)r[8];
-        S.add({r[0], r[1], r[2]}, {r[3], r[4], r[5]}, r[6], r[7], r[9] != 0.0);
-        if ((int)r[8] == 1) n_iron++;
-    }
-    std::fclose(f);
-    printf("loaded %s: N=%d (%d iron)  domain x[%.0f,%.0f] y[%.0f,%.0f] z[%.0f,%.0f]  dx=%.1f\n",
-           icf, S.n, n_iron, hdr[0], hdr[1], hdr[2], hdr[3], hdr[4], hdr[5], dx);
+    double dx, t_end, walltime, t = 0;
+    int isnap = 0;
     auto wall0 = std::chrono::steady_clock::now();
     auto secs = [&]{ return std::chrono::duration<double>(std::chrono::steady_clock::now() - wall0).count(); };
+
+    if (resume) {
+        // run_ic --resume ic.bin snap.bin dx t0 t_end [walltime]
+        // continue a run from a snapshot: domain + frozen flags from the IC (same
+        // particle order), current pos/vel/u from the snapshot. NB deviatoric
+        // stress S is NOT stored in snapshots -> reset to 0 (fine once the body
+        // is largely fragmented/airborne).
+        if (argc < 7) { std::fprintf(stderr, "usage: run_ic --resume ic.bin snap.bin dx t0 t_end [walltime]\n"); return 1; }
+        const char* icf = argv[2]; const char* snapf = argv[3];
+        dx = atof(argv[4]); double t0 = atof(argv[5]); t_end = atof(argv[6]);
+        walltime = (argc > 7 ? atof(argv[7]) : 1e30);
+        S.eta = 1.3; S.h_init = S.eta * dx;
+        FILE* fi = std::fopen(icf, "rb");
+        if (!fi) { std::fprintf(stderr, "cannot open %s\n", icf); return 1; }
+        double hdr[7]; std::fread(hdr, sizeof(double), 7, fi);
+        long Nic = (long)std::llround(hdr[6]);
+        S.set_domain(hdr[0], hdr[1], false, hdr[2], hdr[3], false, hdr[4], hdr[5], false);
+        std::vector<char> fixedIC(Nic);
+        for (long i = 0; i < Nic; i++) { double r[10]; std::fread(r, sizeof(double), 10, fi); fixedIC[i] = (r[9] != 0.0); }
+        std::fclose(fi);
+        FILE* fs = std::fopen(snapf, "rb");
+        if (!fs) { std::fprintf(stderr, "cannot open %s\n", snapf); return 1; }
+        long Ns; std::fread(&Ns, sizeof(long), 1, fs);
+        int n_iron = 0;
+        for (long i = 0; i < Ns; i++) {
+            double r[10]; std::fread(r, sizeof(double), 10, fs);
+            int mat = (int)r[9]; double mass = (mat == 1 ? 7800.0 : 2700.0) * dx * dx * dx;
+            S.cur_mat = mat;
+            S.add({r[0], r[1], r[2]}, {r[3], r[4], r[5]}, mass, r[6], (i < Nic && fixedIC[i]));
+            if (mat == 1) n_iron++;
+        }
+        std::fclose(fs);
+        t = t0; isnap = (int)std::llround(t0 / 0.05);
+        printf("RESUMED from %s at t=%.3f: N=%d (%d iron)  [deviatoric S reset to 0]\n", snapf, t0, S.n, n_iron);
+    } else {
+        if (argc < 4) { std::fprintf(stderr, "usage: run_ic ic.bin dx t_end [walltime]\n"); return 1; }
+        const char* icf = argv[1];
+        dx = atof(argv[2]); t_end = atof(argv[3]);
+        walltime = (argc > 4 ? atof(argv[4]) : 1e30);
+        S.eta = 1.3; S.h_init = S.eta * dx;
+        FILE* f = std::fopen(icf, "rb");
+        if (!f) { std::fprintf(stderr, "cannot open %s\n", icf); return 1; }
+        double hdr[7];
+        if (std::fread(hdr, sizeof(double), 7, f) != 7) { std::fprintf(stderr, "bad header\n"); return 1; }
+        long N = (long)std::llround(hdr[6]);
+        S.set_domain(hdr[0], hdr[1], false, hdr[2], hdr[3], false, hdr[4], hdr[5], false);
+        int n_iron = 0;
+        for (long i = 0; i < N; i++) {
+            double r[10];
+            if (std::fread(r, sizeof(double), 10, f) != 10) { std::fprintf(stderr, "short read @%ld\n", i); return 1; }
+            S.cur_mat = (int)r[8];
+            S.add({r[0], r[1], r[2]}, {r[3], r[4], r[5]}, r[6], r[7], r[9] != 0.0);
+            if ((int)r[8] == 1) n_iron++;
+        }
+        std::fclose(f);
+        printf("loaded %s: N=%d (%d iron)  domain x[%.0f,%.0f] y[%.0f,%.0f] z[%.0f,%.0f]  dx=%.1f\n",
+               icf, S.n, n_iron, hdr[0], hdr[1], hdr[2], hdr[3], hdr[4], hdr[5], dx);
+    }
     fprintf(stderr, "[diag] loaded, starting init...\n"); fflush(stderr);
     S.init();
     { double hlo = 1e30, hhi = 0; for (int i = 0; i < S.n; i++) { hlo = std::min(hlo, S.hh[i]); hhi = std::max(hhi, S.hh[i]); }
       fprintf(stderr, "[diag] init done in %.1fs; h range %.1f..%.1f m; cells nc=%dx%dx%d\n",
               secs(), hlo, hhi, S.nc[0], S.nc[1], S.nc[2]); fflush(stderr); }
 
-    double t = 0, next_snap = 0.05, u_melt = 1.0e6;
-    int nstep = 0, isnap = 0;
+    double next_snap = (std::floor(t / 0.05) + 1) * 0.05, u_melt = 1.0e6;
+    int nstep = 0;
     const char* stop = "t_end";
     while (t < t_end) {
         double dt = S.timestep();
