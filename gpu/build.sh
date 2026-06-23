@@ -1,0 +1,27 @@
+#!/bin/bash
+# Build the Metal GPU SPH pieces. The .metal -> .metallib steps need the Metal
+# Toolchain component (xcodebuild -downloadComponent MetalToolchain); the C++
+# hosts only need Metal.framework (already in the OS) + the vendored metal-cpp.
+set -e
+cd "$(dirname "$0")"
+SDK=macosx
+FRAMEWORKS="-framework Metal -framework Foundation -framework QuartzCore"
+
+build_kernel() {  # $1 = name (without .metal)
+    xcrun -sdk $SDK metal -O3 -ffast-math -c "$1.metal" -o "$1.air"
+    xcrun -sdk $SDK metallib "$1.air" -o "$1.metallib"
+}
+build_host() {    # $1 = name (without .cpp)
+    clang++ -std=c++17 -O2 -Imetal-cpp "$1.cpp" $FRAMEWORKS -o "$1"
+}
+
+MODE="${1:-all}"
+if [ "$MODE" = "host" ]; then         # host-only: works before the toolchain lands
+    build_host hello
+    build_host density_test
+    echo "hosts built (kernels still need the Metal toolchain)"
+else
+    build_kernel hello;        build_host hello
+    build_kernel sph_density;  build_host density_test
+    echo "built. run: ./hello && ./density_test"
+fi

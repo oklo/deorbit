@@ -49,3 +49,8 @@ sph/latest_*.png
 sph/preimpact_*.png
 sph/hero_*.png
 sph/*.mp4
+gpu/metal-cpp/
+gpu/*.air
+gpu/*.metallib
+gpu/hello
+gpu/density_test
