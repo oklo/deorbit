@@ -35,9 +35,9 @@ static void run(MTL::ComputePipelineState* p,uint32_t n,std::vector<MTL::Buffer*
 static double now(){ return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 
 int main(int argc,char** argv){
-    bool frac=false; std::vector<char*> av;
-    for(int i=0;i<argc;i++){ if(std::string(argv[i])=="--frac") frac=true; else av.push_back(argv[i]); }
-    if(av.size()<4){ printf("usage: gpu_ic ic.bin dx t_end [walltime] [--frac]\n"); return 1; }
+    bool frac=false; float gz=0.0f; float snap_dt=0.05f; std::vector<char*> av;
+    for(int i=0;i<argc;i++){ std::string s=argv[i]; if(s=="--frac") frac=true; else if(s=="--g"&&i+1<argc){ gz=atof(argv[++i]); } else if(s=="--snap"&&i+1<argc){ snap_dt=atof(argv[++i]); } else av.push_back(argv[i]); }
+    if(av.size()<4){ printf("usage: gpu_ic ic.bin dx t_end [walltime] [--frac] [--g g_mars]\n"); return 1; }
     const char* icf=av[1]; float dx=atof(av[2]); float t_end=atof(av[3]); double walltime=av.size()>4?atof(av[4]):1e30;
 
     // ---- load IC (run_ic format) ----
@@ -49,19 +49,19 @@ int main(int argc,char** argv){
         pos[3*i]=r[0];pos[3*i+1]=r[1];pos[3*i+2]=r[2]; vel[3*i]=r[3];vel[3*i+1]=r[4];vel[3*i+2]=r[5];
         mass[i]=r[6]; u[i]=r[7]; mat[i]=(int)r[8]; fixed[i]=(r[9]!=0.0); if(mat[i]==1)n_iron++; }
     fclose(f);
-    printf("loaded %s: n=%ld (%d iron)  dx=%.0f  frac=%d\n", icf, n, n_iron, dx, frac);
+    printf("loaded %s: n=%ld (%d iron)  dx=%.0f  frac=%d  g=%.2f\n", icf, n, n_iron, dx, frac, gz);
 
     float h_init=1.3f*dx, eta=1.3f, alpha=1.0f, beta=2.0f, eps=0.01f, cfl=0.2f;
     float eps_as = frac?0.3f:0.0f; int damon = frac?1:0;
     // eps_act: seed on host matching sph.hpp::seed_damage (basalt wk=1e61,wm=16; iron wk=0)
     std::vector<float> epsact(n,1e30f);
     if(frac){ std::mt19937 rng(12345); std::uniform_real_distribution<double> U(1e-9,1.0); double V=(double)dx*dx*dx;
-        for(long i=0;i<n;i++){ if(mat[i]==0) epsact[i]=(float)std::pow(U(rng)/(1e61*V),1.0/16.0); } }
+        for(long i=0;i<n;i++){ if(mat[i]!=1) epsact[i]=(float)std::pow(U(rng)/(1e61*V),1.0/16.0); } }  // mat 0,2 = basalt-type
 
     D_=MTL::CreateSystemDefaultDevice(); Q_=D_->newCommandQueue();
     NS::Error* e=nullptr; L_=D_->newLibrary(NS::String::string("sph_force.metallib",NS::UTF8StringEncoding),&e);
     if(!L_){printf("metallib load failed\n");return 1;}
-    GMat mats[2]={toG(Material::basalt()),toG(Material::iron())}; uint32_t nn=n;
+    GMat mats[3]={toG(Material::basalt()),toG(Material::iron()),toG(Material::basalt())}; uint32_t nn=n;  // mat2 = basalt impactor (trackable)
     // fixed uniform grid: cell = 4*h_init (>= 2*max clamped hh)
     float cw=4.0f*h_init, lo[3]={(float)hdr[0],(float)hdr[2],(float)hdr[4]};
     int nc[3]={ (int)(((float)hdr[1]-lo[0])/cw)+1, (int)(((float)hdr[3]-lo[1])/cw)+1, (int)(((float)hdr[5]-lo[2])/cw)+1 };
@@ -108,9 +108,9 @@ int main(int argc,char** argv){
         for(long i=0;i<n;i++){ KE+=0.5*M[i]*(V[3*i]*V[3*i]+V[3*i+1]*V[3*i+1]+V[3*i+2]*V[3*i+2]); IE+=M[i]*Uu[i]; } return KE+IE; };
     auto report=[&](float t,int step,double wsec){ float* P=(float*)bpos->contents(); float* Vp=(float*)bvel->contents(); float* Uu=(float*)bu->contents(); int* MT=(int*)bmat->contents();
         double cx=0,cz=0,vz=0,sp=0; int ni=0,nm=0; double um=0;
-        for(long i=0;i<n;i++){ if(MT[i]!=1)continue; cx+=P[3*i];cz+=P[3*i+2];vz+=Vp[3*i+2];
+        for(long i=0;i<n;i++){ if(MT[i]<1)continue; cx+=P[3*i];cz+=P[3*i+2];vz+=Vp[3*i+2];   // mat>=1 = projectile (iron@cayambe / mat2@orcus)
             sp+=std::sqrt(Vp[3*i]*Vp[3*i]+Vp[3*i+1]*Vp[3*i+1]+Vp[3*i+2]*Vp[3*i+2]); if(Uu[i]>1e6)nm++; um=std::max(um,(double)Uu[i]); ni++; }
-        printf("  t=%.4f step=%d iron: x=%.0f z=%.0f |v|=%.0f vz=%.0f melt=%.0f%% umax=%.1e [%.0fs]\n",
+        printf("  t=%.4f step=%d proj: x=%.0f z=%.0f |v|=%.0f vz=%.0f melt=%.0f%% umax=%.1e [%.0fs]\n",
             t,step,cx/ni,cz/ni,sp/ni,vz/ni,100.0*nm/ni,um,wsec); fflush(stdout); };
     auto snapshot=[&](int idx){ char fn[64]; snprintf(fn,64,"gpu_snap_%03d.bin",idx); FILE* o=fopen(fn,"wb");
         long N=n; fwrite(&N,8,1,o); float* P=(float*)bpos->contents(); float* Vp=(float*)bvel->contents();
@@ -121,11 +121,11 @@ int main(int argc,char** argv){
 
     build(); density(); build(); force_eval();
     double E0=energy(); printf("init done, E0=%.4e\n",E0);
-    double t=0,wall0=now(); int step=0,isnap=0; float next_snap=0.05f;
+    double t=0,wall0=now(); int step=0,isnap=0; float next_snap=snap_dt;
     while(t<t_end){
         double a;
         a=now(); float dt=adapt_dt(); T_dt+=now()-a; if(t+dt>t_end) dt=t_end-t; float halfdt=0.5f*dt;
-        a=now(); run(PK,n,{bvel,bacc,bfix},{{&halfdt,4},{&nn,4}}); run(PDR,n,{bpos,bvel,bfix},{{&dt,4},{&nn,4}}); T_small+=now()-a;
+        a=now(); run(PK,n,{bvel,bacc,bfix},{{&halfdt,4},{&gz,4},{&nn,4}}); run(PDR,n,{bpos,bvel,bfix},{{&dt,4},{&nn,4}}); T_small+=now()-a;
         a=now(); build(); T_cells+=now()-a;
         a=now(); reorder(); T_reord+=now()-a;
         a=now(); auto bl=Q_->commandBuffer(); auto be=bl->blitCommandEncoder();
@@ -133,10 +133,10 @@ int main(int argc,char** argv){
         a=now(); density(); T_dens+=now()-a;
         a=now(); force_eval(); T_force+=now()-a;
         a=now(); run(PG,n,{bsig,bD,beps,bmat,brho,bmats},{{&h_init,4},{&eta,4},{&dt,4},{&nn,4}});
-        run(PFN,n,{bvel,bacc,bu,bS,bdudt,bduold,bdSdt,bdSold,bfix,bmat,bmats},{{&dt,4},{&nn,4}}); T_small+=now()-a;
+        run(PFN,n,{bvel,bacc,bu,bS,bdudt,bduold,bdSdt,bdSold,bfix,bmat,bmats},{{&dt,4},{&gz,4},{&nn,4}}); T_small+=now()-a;
         t+=dt; step++;
         if(step%25==0||t>=t_end) report(t,step,now()-wall0);
-        if(t>=next_snap){ snapshot(isnap++); next_snap+=0.05f; }
+        if(t>=next_snap){ snapshot(isnap++); next_snap+=snap_dt; }
         if(now()-wall0>walltime){ printf("walltime hit\n"); break; }
     }
     double E1=energy();

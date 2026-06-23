@@ -231,9 +231,9 @@ kernel void compute_sigmax(device const float* rho[[buffer(0)]], device const fl
 }
 kernel void kick(device packed_float3* vel[[buffer(0)]], device const packed_float3* acc[[buffer(1)]],
                  device const uchar* fixed[[buffer(2)]], constant float& cdt[[buffer(3)]],
-                 constant uint& n[[buffer(4)]], uint i[[thread_position_in_grid]]){
+                 constant float& g[[buffer(4)]], constant uint& n[[buffer(5)]], uint i[[thread_position_in_grid]]){
     if(i>=n || fixed[i]) return;
-    vel[i] = packed_float3(float3(vel[i]) + float3(acc[i])*cdt);
+    float3 v = float3(vel[i]) + float3(acc[i])*cdt; v.z -= g*cdt; vel[i] = packed_float3(v);
 }
 kernel void drift(device packed_float3* pos[[buffer(0)]], device const packed_float3* vel[[buffer(1)]],
                   device const uchar* fixed[[buffer(2)]], constant float& dt[[buffer(3)]],
@@ -286,9 +286,9 @@ kernel void finish(device packed_float3* vel[[buffer(0)]], device const packed_f
                    device const float* dSdt[[buffer(6)]], device const float* dSdt_old[[buffer(7)]],
                    device const uchar* fixed[[buffer(8)]], device const int* mat[[buffer(9)]],
                    constant GMat* mats[[buffer(10)]], constant float& dt[[buffer(11)]],
-                   constant uint& n[[buffer(12)]], uint i[[thread_position_in_grid]]){
+                   constant float& g[[buffer(12)]], constant uint& n[[buffer(13)]], uint i[[thread_position_in_grid]]){
     if(i>=n || fixed[i]) return;
-    vel[i]=packed_float3(float3(vel[i])+float3(acc[i])*(0.5f*dt));
+    float3 v=float3(vel[i])+float3(acc[i])*(0.5f*dt); v.z -= g*(0.5f*dt); vel[i]=packed_float3(v);
     u[i]+=0.5f*dt*(dudt_old[i]+dudt[i]); if(u[i]<1e-12f) u[i]=1e-12f;
     for(int k=0;k<6;k++) Sin[6*i+k]+=0.5f*dt*(dSdt_old[6*i+k]+dSdt[6*i+k]);
     float Y=mats[mat[i]].Y;
