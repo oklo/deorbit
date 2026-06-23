@@ -75,18 +75,24 @@ int main(int argc,char** argv){
     auto bduold=buf(n*4),bdSold=buf(6*n*4),bPf=buf(n*4),bcsig=buf(n*4),bdsc=buf(n*4),bRart=buf(n*4);
     auto bhash=buf(n*4),bcount=buf(Nc*4),bslot=buf(n*4),bstart=buf(Nc*4),bsorted=buf(n*4);
 
+    // cache pipeline states ONCE (were being recreated every step -> wasteful)
+    auto PH=pso("cell_hash"),PSC=pso("cell_scatter"),PD=pso("density_adaptive"),PE=pso("eos_full"),
+         PSG=pso("compute_sigmax"),PST=pso("strain_stress"),PF=pso("forces"),PK=pso("kick"),
+         PDR=pso("drift"),PG=pso("grow_damage"),PFN=pso("finish");
+    double T_cells=0,T_dens=0,T_force=0,T_small=0,T_dt=0,T_blit=0;   // phase timers
+
     auto build=[&](){ memset(bcount->contents(),0,Nc*4);
-        run(pso("cell_hash"),n,{bpos,bhash,bcount,bslot},{{&lo[0],4},{&lo[1],4},{&lo[2],4},{&cw,4},{&nc[0],4},{&nc[1],4},{&nc[2],4},{&nn,4}});
+        run(PH,n,{bpos,bhash,bcount,bslot},{{&lo[0],4},{&lo[1],4},{&lo[2],4},{&cw,4},{&nc[0],4},{&nc[1],4},{&nc[2],4},{&nn,4}});
         uint32_t* c=(uint32_t*)bcount->contents(); uint32_t* s=(uint32_t*)bstart->contents(); uint32_t a=0; for(int i=0;i<Nc;i++){s[i]=a;a+=c[i];}
-        run(pso("cell_scatter"),n,{bhash,bslot,bstart,bsorted},{{&nn,4}}); };
-    auto density=[&](){ for(int it=0;it<4;it++) run(pso("density_adaptive"),n,{bpos,bmass,bsorted,bstart,bcount,brho,bhh},
+        run(PSC,n,{bhash,bslot,bstart,bsorted},{{&nn,4}}); };
+    auto density=[&](){ for(int it=0;it<2;it++) run(PD,n,{bpos,bmass,bsorted,bstart,bcount,brho,bhh},
         {{&lo[0],4},{&lo[1],4},{&lo[2],4},{&cw,4},{&nc[0],4},{&nc[1],4},{&nc[2],4},{&eta,4},{&h_init,4},{&nn,4}}); };
     auto force_eval=[&](){
-        run(pso("eos_full"),n,{brho,bu,bmat,bD,bPf,bcsig,bdsc,bRart,bmats},{{&eps_as,4},{&damon,4},{&nn,4}});
-        run(pso("compute_sigmax"),n,{brho,bu,bmat,bS,bsig,bmats},{{&nn,4}});
-        run(pso("strain_stress"),n,{bpos,bvel,brho,bhh,bmass,bS,bmat,bsorted,bstart,bcount,bmats,bdSdt,bepsw},
+        run(PE,n,{brho,bu,bmat,bD,bPf,bcsig,bdsc,bRart,bmats},{{&eps_as,4},{&damon,4},{&nn,4}});
+        run(PSG,n,{brho,bu,bmat,bS,bsig,bmats},{{&nn,4}});
+        run(PST,n,{bpos,bvel,brho,bhh,bmass,bS,bmat,bsorted,bstart,bcount,bmats,bdSdt,bepsw},
             {{&lo[0],4},{&lo[1],4},{&lo[2],4},{&cw,4},{&nc[0],4},{&nc[1],4},{&nc[2],4},{&nn,4}});
-        run(pso("forces"),n,{bpos,bvel,brho,bhh,bmass,bS,bPf,bcsig,bdsc,bRart,bepsw,bsorted,bstart,bcount,bacc,bdudt},
+        run(PF,n,{bpos,bvel,brho,bhh,bmass,bS,bPf,bcsig,bdsc,bRart,bepsw,bsorted,bstart,bcount,bacc,bdudt},
             {{&lo[0],4},{&lo[1],4},{&lo[2],4},{&cw,4},{&nc[0],4},{&nc[1],4},{&nc[2],4},{&eta,4},{&alpha,4},{&beta,4},{&eps,4},{&eps_as,4},{&nn,4}}); };
     auto adapt_dt=[&](){ float* H=(float*)bhh->contents(); float* C=(float*)bcsig->contents(); double dt=1e30;
         for(long i=0;i<n;i++){ double d=cfl*H[i]/(C[i]*(1.0+alpha)+1e-30); if(d<dt) dt=d; } return (float)dt; };
@@ -109,14 +115,16 @@ int main(int argc,char** argv){
     double E0=energy(); printf("init done, E0=%.4e\n",E0);
     double t=0,wall0=now(); int step=0,isnap=0; float next_snap=0.05f;
     while(t<t_end){
-        float dt=adapt_dt(); if(t+dt>t_end) dt=t_end-t; float halfdt=0.5f*dt;
-        auto bl=Q_->commandBuffer(); auto be=bl->blitCommandEncoder();
-        be->copyFromBuffer(bdudt,0,bduold,0,n*4); be->copyFromBuffer(bdSdt,0,bdSold,0,6*n*4); be->endEncoding(); bl->commit(); bl->waitUntilCompleted();
-        run(pso("kick"),n,{bvel,bacc,bfix},{{&halfdt,4},{&nn,4}});
-        run(pso("drift"),n,{bpos,bvel,bfix},{{&dt,4},{&nn,4}});
-        build(); density(); force_eval();
-        run(pso("grow_damage"),n,{bsig,bD,beps,bmat,brho,bmats},{{&h_init,4},{&eta,4},{&dt,4},{&nn,4}});
-        run(pso("finish"),n,{bvel,bacc,bu,bS,bdudt,bduold,bdSdt,bdSold,bfix,bmat,bmats},{{&dt,4},{&nn,4}});
+        double a;
+        a=now(); float dt=adapt_dt(); T_dt+=now()-a; if(t+dt>t_end) dt=t_end-t; float halfdt=0.5f*dt;
+        a=now(); auto bl=Q_->commandBuffer(); auto be=bl->blitCommandEncoder();
+        be->copyFromBuffer(bdudt,0,bduold,0,n*4); be->copyFromBuffer(bdSdt,0,bdSold,0,6*n*4); be->endEncoding(); bl->commit(); bl->waitUntilCompleted(); T_blit+=now()-a;
+        a=now(); run(PK,n,{bvel,bacc,bfix},{{&halfdt,4},{&nn,4}}); run(PDR,n,{bpos,bvel,bfix},{{&dt,4},{&nn,4}}); T_small+=now()-a;
+        a=now(); build(); T_cells+=now()-a;
+        a=now(); density(); T_dens+=now()-a;
+        a=now(); force_eval(); T_force+=now()-a;
+        a=now(); run(PG,n,{bsig,bD,beps,bmat,brho,bmats},{{&h_init,4},{&eta,4},{&dt,4},{&nn,4}});
+        run(PFN,n,{bvel,bacc,bu,bS,bdudt,bduold,bdSdt,bdSold,bfix,bmat,bmats},{{&dt,4},{&nn,4}}); T_small+=now()-a;
         t+=dt; step++;
         if(step%25==0||t>=t_end) report(t,step,now()-wall0);
         if(t>=next_snap){ snapshot(isnap++); next_snap+=0.05f; }
@@ -124,5 +132,7 @@ int main(int argc,char** argv){
     }
     double E1=energy();
     printf("DONE: %d steps to t=%.4f  %.1f ms/step  E drift=%.2e\n", step, t, 1000*(now()-wall0)/step, (E1-E0)/E0);
+    printf("PROFILE (ms/step): cells=%.1f density=%.1f force_eval=%.1f small=%.1f dt_read=%.1f blit=%.1f\n",
+        1000*T_cells/step,1000*T_dens/step,1000*T_force/step,1000*T_small/step,1000*T_dt/step,1000*T_blit/step);
     return 0;
 }
