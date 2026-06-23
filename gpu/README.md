@@ -33,6 +33,13 @@ against the FP64 CPU result before it is trusted.
   term) -> switched to **ANALYTIC derivatives** (all 3 branches), which are exact
   + faster. TODO: fold the analytic sound speed back into the CPU eos.hpp so both
   use one method (re-pass strength/pi gates; Sod uses ideal-gas cs, unaffected).
+  DONE: CPU eos.hpp now uses the analytic sound speed (gates re-passed).
+- **Milestone 3b (strain/stress + forces) — PASSED.** The full per-step force
+  evaluation (Jaumann dS/dt; momentum = -gradP + artificial viscosity +
+  deviatoric stress + Monaghan artificial stress; energy incl. deviatoric power;
+  damage (1-D) scaling) matches the FP64 CPU oracle in FP32: dS/dt 7e-7, acc
+  1.5e-6, dudt 5e-7. Validated via cpu_dump (a sheared multi-material state run
+  forward so rho/h/S/D are realistic) + force_test.
 
 ## Precision plan (FP32)
 - Apple GPUs have no fast FP64 -> kernels are FP32/mixed.
@@ -45,8 +52,9 @@ against the FP64 CPU result before it is trusted.
 2. ✅ GPU cell-list (counting sort) — O(N) neighbours, 4M particles in 40 ms
 3. forces + strain/stress + Tillotson EOS + Benz-Asphaug damage kernels
    - ✅ 3a Tillotson EOS (analytic sound speed)
-   - ⬜ 3b forces (pressure + AV + deviatoric + artificial stress) + strain/stress
-   - ⬜ 3c Benz-Asphaug damage
+   - ✅ 3b strain/stress (Jaumann) + forces (P + AV + deviatoric + artificial
+        stress + damage scaling): acc 1.5e-6, dudt 5e-7, dS/dt 7e-7 vs CPU
+   - ⬜ 3c Benz-Asphaug damage GROWTH (eig_max + grow_damage; folds into step)
 4. KDK integrator + adaptive-h iteration (on-GPU step loop)
 5. validate full pipeline vs the CPU gates (Sod, strength, pi-scaling, energy)
 6. benchmark; then high-resolution / multi-case production runs
