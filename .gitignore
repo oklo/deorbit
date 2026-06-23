@@ -54,3 +54,4 @@ gpu/*.air
 gpu/*.metallib
 gpu/hello
 gpu/density_test
+sph/iron*.png

@@ -134,3 +134,55 @@ if __name__ == "__main__":
     print(f"grid {tuple(R['dims'])}  rho max {R['rho'].max():.0f}  u max {R['u'].max():.1e}")
     if a.style in ("photo", "both"): photo(R, a.time, a.out + "_photo.png")
     if a.style in ("tufte", "both"): tufte(R, a.time, a.out + "_tufte.png")
+
+
+def reconstruct_iron(d, dx, dz, pad=4):
+    """Iron-only density field: deposit iron mass smoothed by ~h (kernel space-fill)."""
+    sel = d["mat"] == 1
+    P = np.column_stack([d["x"][sel], d["y"][sel], d["z"][sel]])
+    uu = d["u"][sel]
+    m = RHO0[1] * dx**3
+    # frame on the BULK: drop the far high-velocity jetting tail (a few %) that
+    # would otherwise blow the box up to 10+ km and shrink the blob in-frame.
+    qlo = np.percentile(P, 2, axis=0); qhi = np.percentile(P, 98, axis=0)
+    keep = np.all((P >= qlo) & (P <= qhi), axis=1)
+    P = P[keep]; uu = uu[keep]
+    lo = P.min(0) - pad * dz; hi = P.max(0) + pad * dz
+    dims = np.ceil((hi - lo) / dz).astype(int); nx, ny, nz = dims
+    idx = np.clip(((P - lo) / dz).astype(int), 0, dims - 1)
+    flat = (idx[:, 0] * ny + idx[:, 1]) * nz + idx[:, 2]
+    def grid(w): g = np.zeros(nx*ny*nz); np.add.at(g, flat, w); return g.reshape(nx, ny, nz)
+    M = grid(np.full(len(P), m)); EU = grid(np.full(len(P), m) * uu)
+    sig = (ETA * dx) / dz * 0.6
+    M = gaussian_filter(M, sig); EU = gaussian_filter(EU, sig)
+    rho = M / dz**3
+    with np.errstate(divide="ignore", invalid="ignore"):
+        u = np.where(M > 0, EU / M, 0.0)
+    return dict(rho=rho, u=u, lo=lo, dz=dz, dims=dims, cen=P.mean(0), ext=(P.max(0) - P.min(0)))
+
+
+def photo_iron(R, t, out, offset_dir=(-0.55, -0.78, 0.30), zoom=1.0):
+    """Render the iron blob isosurface (metallic, glowing by u), camera following
+    the centroid and dollying with the blob's size."""
+    import pyvista as pv
+    pv.OFF_SCREEN = True
+    nx, ny, nz = R["dims"]
+    g = pv.ImageData(dimensions=(nx, ny, nz), spacing=(R["dz"],) * 3, origin=tuple(R["lo"]))
+    g.point_data["rho"] = R["rho"].flatten(order="F"); g.point_data["u"] = R["u"].flatten(order="F")
+    surf = g.contour([RHO0[1] / 4.0], scalars="rho")          # iron material surface
+    if surf.n_points: surf = surf.smooth(n_iter=20)
+    p = pv.Plotter(off_screen=True, window_size=(1700, 950)); p.set_background("#05070a")
+    if surf.n_points:
+        uu = surf["u"]; steel = np.array([0.45, 0.46, 0.49]); hot = np.array([1.0, 0.5, 0.12])
+        glow = np.clip(uu / 3e6, 0, 1)[:, None]
+        rgb = np.clip(steel[None] * (1 - glow) + hot[None] * glow + glow * 0.7, 0, 1)
+        surf["rgb"] = (rgb * 255).astype(np.uint8)
+        p.add_mesh(surf, scalars="rgb", rgb=True, ambient=0.25, diffuse=0.9,
+                   specular=0.45, specular_power=22, smooth_shading=True)
+    p.add_light(pv.Light(position=(-3, -4, 5), intensity=1.0))
+    p.add_light(pv.Light(position=(3, -2, 2), intensity=0.35, color="#9fb6ff"))
+    cen = R["cen"]; dist = max(float(np.max(R["ext"])) * 1.8, 3500.0)   # dolly with blob size
+    off = np.array(offset_dir, float); off /= np.linalg.norm(off)
+    p.camera.focal_point = tuple(cen); p.camera.position = tuple(cen + off * dist); p.camera.up = (0, 0, 1)
+    p.camera.zoom(zoom)
+    p.screenshot(out, scale=1); print("wrote", out, "(npts %d)" % surf.n_points)
