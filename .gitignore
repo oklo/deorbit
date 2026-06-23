@@ -55,3 +55,15 @@ gpu/*.metallib
 gpu/hello
 gpu/density_test
 sph/iron*.png
+gpu/*.bin
+gpu/*.log
+gpu/cells_test
+gpu/eos_gpu_test
+gpu/force_test
+gpu/step_test
+gpu/gpu_run
+gpu/gpu_ic
+gpu/cpu_dump
+gpu/cpu_bench
+gpu/frames/
+gpu/*.png

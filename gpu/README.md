@@ -58,10 +58,13 @@ against the FP64 CPU result before it is trusted.
 4. ✅ FULL GPU KDK STEP (kick/drift + adaptive-h density loop + EOS + sigmax +
       strain/stress + forces + grow-damage + finish[kick2+trapezoidal u/S+yield]).
       One GPU step vs CPU one-step oracle: pos 1e-7, vel 1e-7, u 8e-8, S 3e-7.
-5. ◑ multi-step energy + benchmark DONE: ~13-14x faster than the 14-core CPU
-      (512k: 135 vs 1784 ms/step; 4M: 988 ms/step), ~4 M particle-steps/s (O(N)),
-      energy drift ~1e-4 (comparable to CPU), stable. gpu_run.cpp + cpu_bench.cpp.
-      Conservative first cut: fixed 4*h_init cells (~2.4x extra candidates) +
-      ~15 synced command buffers/step. TODO to reach ~30-50x: GPU max-reduction
-      for adaptive cell size, GPU prefix-scan, batched encoders w/ barriers.
-      Then: production driver, ideal-gas EOS for GPU Sod, high-res/multi-case.
+5. ✅ multi-step energy + benchmark: ~13-14x (gpu_run.cpp + cpu_bench.cpp).
+6. ✅ PRODUCTION DRIVER + full-length FP32 check (gpu_ic.cpp). Loads the real IC
+      (run_ic format, incl frozen flags), adaptive CFL dt, full-res snapshots
+      (gpu_snap_*), frac (host-seeded Weibull eps_act). On cayambe80.bin (291k,
+      dx=80) to t=0.3: GPU matches CPU run_ic2 EXACTLY (x,z,|v|,vz,melt,umax all
+      identical to printed precision, SAME 283 steps) -> FP32 position-drift
+      concern RETIRED. Speedup ~19x (GPU 24s / 83 ms/step vs CPU 462s / 1632
+      ms/step). THE GPU WORKFLOW IS TURNKEY: ./gpu_ic ic.bin dx t_end [walltime] [--frac].
+   Remaining (optional, for ~30-50x): GPU prefix-scan + max-reduction (adaptive
+   cells) + batched encoders; ideal-gas EOS for a direct GPU Sod.

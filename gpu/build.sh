@@ -25,7 +25,7 @@ else
     build_kernel sph_density;  build_host density_test
     build_kernel sph_cells;    build_host cells_test
     build_kernel sph_eos;      build_host eos_gpu_test
-    build_kernel sph_force;    build_host force_test;  build_host step_test;  build_host gpu_run
+    build_kernel sph_force;    build_host force_test;  build_host step_test;  build_host gpu_run;  build_host gpu_ic
     clang++ -std=c++17 -O2 -pthread cpu_dump.cpp  -o cpu_dump     # CPU oracle dumper
     clang++ -std=c++17 -O2 -pthread cpu_bench.cpp -o cpu_bench    # CPU benchmark
     echo "built. run: ./cpu_dump && ./force_test  (also hello/density_test/cells_test/eos_gpu_test)"
