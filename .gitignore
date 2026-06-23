@@ -67,3 +67,15 @@ gpu/cpu_dump
 gpu/cpu_bench
 gpu/frames/
 gpu/*.png
+
+# snapshot / checkpoint outputs (large, regenerable — never commit).
+# GPU (gpu/) is the production path now; CPU (sph/) is the validation oracle.
+# GPU snapshots (gpu/gpu_snap_*.bin) are already covered by gpu/*.bin above.
+sph/frac_snap*.bin
+sph/frac_snap*.csv
+sph/frac_chk.bin
+sph/frac_*.png
+sph/ground_test.png
+# rendered run movies (regenerable from gpu_snap_* / frames/)
+gpu/*.mp4
+gpu/*.gif
