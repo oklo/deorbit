@@ -24,5 +24,6 @@ else
     build_kernel hello;        build_host hello
     build_kernel sph_density;  build_host density_test
     build_kernel sph_cells;    build_host cells_test
-    echo "built. run: ./hello && ./density_test && ./cells_test"
+    build_kernel sph_eos;      build_host eos_gpu_test
+    echo "built. run: ./hello && ./density_test && ./cells_test && ./eos_gpu_test"
 fi
