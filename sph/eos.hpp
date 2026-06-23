@@ -63,16 +63,49 @@ struct Material {
         if (type == IDEAL) return (gamma - 1.0) * rho * u;
         return till(rho, u);
     }
+    // ANALYTIC Tillotson derivatives (replaces finite differences, which suffer
+    // catastrophic cancellation in dP/du when the density term dwarfs the energy
+    // term -- and which break entirely in FP32 on the GPU). Condensed branch:
+    void cond_d(double rho, double u, double& P, double& dPdr, double& dPdu) const {
+        double eta = rho / rho0, mu = eta - 1.0;
+        double w = 1.0 + u / (u0 * eta * eta), aob = a + b / w;
+        P = aob * rho * u + A * mu + B * mu * mu;
+        dPdu = aob * rho - b * rho * u / (w * w * u0 * eta * eta);
+        double dwdr = -2.0 * u / (u0 * eta * eta * eta * rho0);
+        dPdr = aob * u + rho * u * (-b / (w * w)) * dwdr + A / rho0 + 2.0 * B * mu / rho0;
+    }
+    void expd_d(double rho, double u, double& P, double& dPdr, double& dPdu) const {
+        double eta = rho / rho0, mu = eta - 1.0;
+        double w = 1.0 + u / (u0 * eta * eta);
+        double z = rho0 / rho - 1.0, dzdr = -rho0 / (rho * rho);
+        double E1 = std::exp(-alpha * z * z), E2 = std::exp(-beta * z);
+        double G = b * rho * u / w + A * mu * E2;
+        P = a * rho * u + G * E1;
+        double dwdr = -2.0 * u / (u0 * eta * eta * eta * rho0);
+        double dGu = b * rho / w - b * rho * u / (w * w * u0 * eta * eta);
+        dPdu = a * rho + dGu * E1;
+        double dbruw_dr = b * u / w + b * rho * u * (-1.0 / (w * w)) * dwdr;
+        double dGr = dbruw_dr + A * E2 / rho0 + A * mu * (E2 * (-beta) * dzdr);
+        double dE1dr = E1 * (-alpha * 2.0 * z) * dzdr;
+        dPdr = a * u + dGr * E1 + G * dE1dr;
+    }
     double sound_speed(double rho, double u) const {
         if (type == IDEAL) {
             double P = (gamma - 1.0) * rho * u;
             return std::sqrt(std::max(gamma * P / std::max(rho, 1e-30), 1e-12));
         }
-        // c^2 = dP/drho|_u + (P/rho^2) dP/du   (numerical)
-        double P = till(rho, u);
-        double drho = rho * 1e-4 + 1e-6, du = std::abs(u) * 1e-4 + 1e-3;
-        double dPdrho = (till(rho + drho, u) - P) / drho;
-        double dPdu = (till(rho, u + du) - P) / du;
-        return std::sqrt(std::max(dPdrho + P / (rho * rho) * dPdu, 1e-6));
+        if (rho <= 0) return 1e-3;
+        double P, dPdr, dPdu;
+        if (rho >= rho0 || u <= uiv) cond_d(rho, u, P, dPdr, dPdu);
+        else if (u >= ucv) expd_d(rho, u, P, dPdr, dPdu);
+        else {                                          // intermediate: blend
+            double Pc, dPcr, dPcu, Pe, dPer, dPeu;
+            cond_d(rho, u, Pc, dPcr, dPcu); expd_d(rho, u, Pe, dPer, dPeu);
+            double inv = 1.0 / (ucv - uiv);
+            P    = ((u - uiv) * Pe + (ucv - u) * Pc) * inv;
+            dPdu = ((Pe + (u - uiv) * dPeu) + (-Pc + (ucv - u) * dPcu)) * inv;
+            dPdr = ((u - uiv) * dPer + (ucv - u) * dPcr) * inv;
+        }
+        return std::sqrt(std::max(dPdr + P / (rho * rho) * dPdu, 1e-6));
     }
 };
