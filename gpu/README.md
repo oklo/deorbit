@@ -66,9 +66,9 @@ against the FP64 CPU result before it is trusted.
       identical to printed precision, SAME 283 steps) -> FP32 position-drift
       concern RETIRED. THE GPU WORKFLOW IS TURNKEY:
         ./gpu_ic ic.bin dx t_end [walltime] [--frac]
-   SPEEDUP (clean, 5.5M dx=30 vs CPU ~20 s/step): ~11x baseline -> ~54x after
-     optimization (370 ms/step); full arc in item 7. t=2.0 run ~43 min (was ~40 h
-     CPU). All opts validated EXACT on cayambe80. (NB the early "~19x" at dx=80
+   SPEEDUP (clean, 5.5M dx=30 vs CPU ~20 s/step): ~11x baseline -> ~70x after
+     optimization (286 ms/step); full arc in item 7. t=2.0 run ~35 min (was ~40 h
+     CPU). All opts validated on cayambe80. (NB the early "~19x" at dx=80
      was contention-inflated; trust the 5.5M numbers.)
 7. ✅ OPTIMIZATION (profile-driven; gpu_ic has per-phase timers). Profile showed
    neighbour kernels are 99% (sync/PSO/reductions <1%, dropped). All exact-validated
@@ -79,8 +79,14 @@ against the FP64 CPU result before it is trusted.
    (e) PARTICLE REORDERING by cell each step (gather_w/gather_u8/set_iota: gather
        carried state into cell-sorted order, sorted=identity -> coalesced
        neighbour reads). This was the big one: 2.55x.
-   Cumulative 5.5M: 1809 -> 370 ms/step = ~11x -> ~54x vs CPU. A t=2.0 frac run
-   is ~43 min (was ~40 h CPU). NB: diagnostics (energy/report/snapshot) must read
+   (f) density 2->1 iter (the h-carry makes ONE gather re-converge each step;
+       validated IDENTICAL to 2-iter through t=0.6 incl. peak compression). 1.3x.
+   Cumulative 5.5M: 1809 -> 286 ms/step = ~11x -> ~70x vs CPU. A t=2.0 frac run
+   is ~35 min (was ~40 h CPU). NB: diagnostics (energy/report/snapshot) must read
    the REORDERED GPU bmass/bmat, not the host arrays (that bug looked like broken
    physics but was just mismatched metrics).
-   Further (optional): threadgroup-memory tiling (~1.3x more); ideal-gas GPU Sod.
+   Profile @286ms: density=82 force_eval=183 (now 64%) reorder=7 dt_read=6.
+   Threadgroup-size sweep (64/128/256/512): NO effect -> purely bandwidth-bound;
+   the reorder + HW cache already capture most neighbour reuse (effective BW demand
+   > peak, so cache is serving reuse). Remaining lever is explicit threadgroup
+   tiling on force_eval, but it's high-risk for diminishing (~1.1-1.2x) return.

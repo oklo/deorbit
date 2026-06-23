@@ -95,7 +95,7 @@ int main(int argc,char** argv){
         run(PH,n,{bpos,bhash,bcount,bslot},{{&lo[0],4},{&lo[1],4},{&lo[2],4},{&cw,4},{&nc[0],4},{&nc[1],4},{&nc[2],4},{&nn,4}});
         uint32_t* c=(uint32_t*)bcount->contents(); uint32_t* s=(uint32_t*)bstart->contents(); uint32_t a=0; for(int i=0;i<Nc;i++){s[i]=a;a+=c[i];}
         run(PSC,n,{bhash,bslot,bstart,bsorted},{{&nn,4}}); };
-    auto density=[&](){ for(int it=0;it<2;it++) run(PD,n,{bpos,bmass,bsorted,bstart,bcount,brho,bhh},
+    auto density=[&](){ for(int it=0;it<1;it++) run(PD,n,{bpos,bmass,bsorted,bstart,bcount,brho,bhh},
         {{&lo[0],4},{&lo[1],4},{&lo[2],4},{&cw,4},{&nc[0],4},{&nc[1],4},{&nc[2],4},{&eta,4},{&h_init,4},{&nn,4}}); };
     auto force_eval=[&](){
         run(PE,n,{brho,bu,bmat,bD,bPf,bcsig,bdsc,bRart,bmats},{{&eps_as,4},{&damon,4},{&nn,4}});
