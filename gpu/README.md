@@ -23,6 +23,10 @@ against the FP64 CPU result before it is trusted.
 - **Milestone 1 (density) — PASSED.** FP32 vs FP64 RMS rel err **1.3e-7** (gate 1e-3);
   brute-force GPU **156x** a single CPU thread. Precision is a non-issue for the
   kernel math; positions over the ~10 km domain will use relative coords.
+- **Milestone 2 (cell list) — PASSED.** Counting-sort cell list (hash + atomic
+  count + CPU exclusive scan over the shared buffer + scatter) -> O(N) neighbours.
+  Cell-list density matches FP64 to **1.3e-7**; **4.1M particles in 40 ms
+  (~100 M-particles/s)**, interior rho ~ rho0. The GPU sort risk is retired.
 
 ## Precision plan (FP32)
 - Apple GPUs have no fast FP64 -> kernels are FP32/mixed.
@@ -32,7 +36,7 @@ against the FP64 CPU result before it is trusted.
 
 ## Roadmap
 1. ✅ density (brute-force) — toolchain + FP32 + neighbour kernel
-2. GPU cell-list (hash -> sort -> cell ranges) for O(N) neighbours
+2. ✅ GPU cell-list (counting sort) — O(N) neighbours, 4M particles in 40 ms
 3. forces + strain/stress + Tillotson EOS + Benz-Asphaug damage kernels
 4. KDK integrator + adaptive-h iteration (on-GPU step loop)
 5. validate full pipeline vs the CPU gates (Sod, strength, pi-scaling, energy)

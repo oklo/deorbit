@@ -23,5 +23,6 @@ if [ "$MODE" = "host" ]; then         # host-only: works before the toolchain la
 else
     build_kernel hello;        build_host hello
     build_kernel sph_density;  build_host density_test
-    echo "built. run: ./hello && ./density_test"
+    build_kernel sph_cells;    build_host cells_test
+    echo "built. run: ./hello && ./density_test && ./cells_test"
 fi
