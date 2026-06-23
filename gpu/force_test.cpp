@@ -12,9 +12,9 @@
 #include <cmath>
 #include <cstring>
 
-struct GMat { float rho0,A,B,a,b,alpha,beta,u0,uiv,ucv,G; };
+struct GMat { float rho0,A,B,a,b,alpha,beta,u0,uiv,ucv,G,Emod,Y; };
 static GMat toG(const Material& m){ return {(float)m.rho0,(float)m.A,(float)m.B,(float)m.a,(float)m.b,
-    (float)m.alpha,(float)m.beta,(float)m.u0,(float)m.uiv,(float)m.ucv,(float)m.G}; }
+    (float)m.alpha,(float)m.beta,(float)m.u0,(float)m.uiv,(float)m.ucv,(float)m.G,(float)m.Emod,(float)m.Y}; }
 
 static MTL::Device* gDev; static MTL::CommandQueue* gQ; static MTL::Library* gLib;
 static MTL::Buffer* buf(size_t b, const void* s=nullptr){ return s ? gDev->newBuffer(s,b,MTL::ResourceStorageModeShared)

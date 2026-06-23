@@ -1,7 +1,7 @@
 #include <metal_stdlib>
 using namespace metal;
 
-struct GMat { float rho0, A, B, a, b, alpha, beta, u0, uiv, ucv, G; };
+struct GMat { float rho0, A, B, a, b, alpha, beta, u0, uiv, ucv, G, Emod, Y; };
 
 inline float kW(float r, float h) {
     float q = r / h, s = 1.0f / (M_PI_F * h * h * h);
@@ -209,4 +209,92 @@ kernel void forces(device const packed_float3* pos [[buffer(0)]], device const p
             a += (si*(iri2*di) + sj*(jrj2*dscale[j])) * mass[j];
           } } } }
     acc[i] = packed_float3(a); dudt[i] = du + epsw[i]*di;
+}
+
+// ---- step kernels (milestone 4) ----
+inline float eig_max(float sxx,float sxy,float sxz,float syy,float syz,float szz){  // Smith trig, == CPU
+    float p1 = sxy*sxy + sxz*sxz + syz*syz, q = (sxx+syy+szz)/3.0f;
+    if (p1 < 1e-30f) return max(max(sxx,syy),szz);
+    float p2 = (sxx-q)*(sxx-q)+(syy-q)*(syy-q)+(szz-q)*(szz-q)+2.0f*p1, p = sqrt(p2/6.0f);
+    float a=(sxx-q)/p,b=(syy-q)/p,c=(szz-q)/p,d=sxy/p,e=sxz/p,f=syz/p;
+    float r = (a*(b*c-f*f)-d*(d*c-f*e)+e*(d*f-b*e))/2.0f;
+    r = clamp(r,-1.0f,1.0f);
+    return q + 2.0f*p*cos(acos(r)/3.0f);
+}
+kernel void compute_sigmax(device const float* rho[[buffer(0)]], device const float* u[[buffer(1)]],
+                           device const int* mat[[buffer(2)]], device const float* Sin[[buffer(3)]],
+                           device float* sigmax[[buffer(4)]], constant GMat* mats[[buffer(5)]],
+                           constant uint& n[[buffer(6)]], uint i[[thread_position_in_grid]]){
+    if(i>=n) return;
+    float P = till(rho[i],u[i],mats[mat[i]]);
+    sigmax[i] = -P + eig_max(Sin[6*i],Sin[6*i+1],Sin[6*i+2],Sin[6*i+3],Sin[6*i+4],Sin[6*i+5]);
+}
+kernel void kick(device packed_float3* vel[[buffer(0)]], device const packed_float3* acc[[buffer(1)]],
+                 device const uchar* fixed[[buffer(2)]], constant float& cdt[[buffer(3)]],
+                 constant uint& n[[buffer(4)]], uint i[[thread_position_in_grid]]){
+    if(i>=n || fixed[i]) return;
+    vel[i] = packed_float3(float3(vel[i]) + float3(acc[i])*cdt);
+}
+kernel void drift(device packed_float3* pos[[buffer(0)]], device const packed_float3* vel[[buffer(1)]],
+                  device const uchar* fixed[[buffer(2)]], constant float& dt[[buffer(3)]],
+                  constant uint& n[[buffer(4)]], uint i[[thread_position_in_grid]]){
+    if(i>=n || fixed[i]) return;
+    pos[i] = packed_float3(float3(pos[i]) + float3(vel[i])*dt);
+}
+// adaptive-h density GATHER (rho from own hi, then hh = clamp(eta*(m/rho)^1/3))
+kernel void density_adaptive(device const packed_float3* pos[[buffer(0)]], device const float* mass[[buffer(1)]],
+                             device const uint* sorted[[buffer(2)]], device const uint* cell_start[[buffer(3)]],
+                             device const uint* cell_count[[buffer(4)]], device float* rho[[buffer(5)]],
+                             device float* hh[[buffer(6)]],
+                             constant float& lox[[buffer(7)]], constant float& loy[[buffer(8)]],
+                             constant float& loz[[buffer(9)]], constant float& cw[[buffer(10)]],
+                             constant int& ncx[[buffer(11)]], constant int& ncy[[buffer(12)]],
+                             constant int& ncz[[buffer(13)]], constant float& eta[[buffer(14)]],
+                             constant float& h_init[[buffer(15)]], constant uint& n[[buffer(16)]],
+                             uint i[[thread_position_in_grid]]){
+    if(i>=n) return;
+    float3 ri=float3(pos[i]); float hi=hh[i];
+    int bx,by,bz; cell_of(ri,lox,loy,loz,cw,ncx,ncy,ncz,bx,by,bz);
+    float s=0.0f;
+    for(int dx=-1;dx<=1;dx++){int cx=bx+dx;if(cx<0||cx>=ncx)continue;
+      for(int dy=-1;dy<=1;dy++){int cy=by+dy;if(cy<0||cy>=ncy)continue;
+        for(int dz=-1;dz<=1;dz++){int cz=bz+dz;if(cz<0||cz>=ncz)continue;
+          int c=(cx*ncy+cy)*ncz+cz; uint s0=cell_start[c],cn=cell_count[c];
+          for(uint q=0;q<cn;q++){uint j=sorted[s0+q]; float r=length(ri-float3(pos[j]));
+            if(r<2.0f*hi) s+=mass[j]*kW(r,hi);}}}}
+    float rho_i=max(s,1e-30f); rho[i]=rho_i;
+    hh[i]=clamp(eta*pow(mass[i]/rho_i,1.0f/3.0f), 0.5f*h_init, 2.0f*h_init);
+}
+kernel void grow_damage(device const float* sigmax[[buffer(0)]], device float* D[[buffer(1)]],
+                        device const float* eps_act[[buffer(2)]], device const int* mat[[buffer(3)]],
+                        device const float* rho[[buffer(4)]], constant GMat* mats[[buffer(5)]],
+                        constant float& h_init[[buffer(6)]], constant float& eta[[buffer(7)]],
+                        constant float& dt[[buffer(8)]], constant uint& n[[buffer(9)]], uint i[[thread_position_in_grid]]){
+    if(i>=n) return; constant GMat& m=mats[mat[i]];
+    if(m.Emod<=0.0f || D[i]>=1.0f) return;
+    float eps_local=sigmax[i]/m.Emod;
+    if(sigmax[i]>0.0f && eps_local>eps_act[i]){
+        float cg=0.4f*sqrt(m.Emod/max(rho[i],1e-30f)), Rs=0.5f*h_init/eta;
+        float d13=pow(D[i],1.0f/3.0f)+(cg/Rs)*dt;
+        D[i]=min(1.0f,d13*d13*d13);
+    }
+}
+// kick2 + trapezoidal u, S + von Mises radial return
+kernel void finish(device packed_float3* vel[[buffer(0)]], device const packed_float3* acc[[buffer(1)]],
+                   device float* u[[buffer(2)]], device float* Sin[[buffer(3)]],
+                   device const float* dudt[[buffer(4)]], device const float* dudt_old[[buffer(5)]],
+                   device const float* dSdt[[buffer(6)]], device const float* dSdt_old[[buffer(7)]],
+                   device const uchar* fixed[[buffer(8)]], device const int* mat[[buffer(9)]],
+                   constant GMat* mats[[buffer(10)]], constant float& dt[[buffer(11)]],
+                   constant uint& n[[buffer(12)]], uint i[[thread_position_in_grid]]){
+    if(i>=n || fixed[i]) return;
+    vel[i]=packed_float3(float3(vel[i])+float3(acc[i])*(0.5f*dt));
+    u[i]+=0.5f*dt*(dudt_old[i]+dudt[i]); if(u[i]<1e-12f) u[i]=1e-12f;
+    for(int k=0;k<6;k++) Sin[6*i+k]+=0.5f*dt*(dSdt_old[6*i+k]+dSdt[6*i+k]);
+    float Y=mats[mat[i]].Y;
+    if(Y<=0.0f){ for(int k=0;k<6;k++) Sin[6*i+k]=0.0f; return; }
+    float sxx=Sin[6*i],sxy=Sin[6*i+1],sxz=Sin[6*i+2],syy=Sin[6*i+3],syz=Sin[6*i+4],szz=Sin[6*i+5];
+    float J2=0.5f*(sxx*sxx+syy*syy+szz*szz)+(sxy*sxy+sxz*sxz+syz*syz);
+    float vm=sqrt(3.0f*J2);
+    if(vm>Y){ float f=Y/vm; for(int k=0;k<6;k++) Sin[6*i+k]*=f; }
 }

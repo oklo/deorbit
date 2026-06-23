@@ -3,7 +3,7 @@ using namespace metal;
 
 // Tillotson EOS in FP32 — must match eos.hpp::till / pressure / sound_speed.
 // 11 floats, no vec members -> identical layout on host and device.
-struct GMat { float rho0, A, B, a, b, alpha, beta, u0, uiv, ucv, G; };
+struct GMat { float rho0, A, B, a, b, alpha, beta, u0, uiv, ucv, G, Emod, Y; };
 
 inline float till(float rho, float u, constant GMat& m) {
     if (rho <= 0.0f) return 0.0f;

@@ -54,7 +54,9 @@ against the FP64 CPU result before it is trusted.
    - ✅ 3a Tillotson EOS (analytic sound speed)
    - ✅ 3b strain/stress (Jaumann) + forces (P + AV + deviatoric + artificial
         stress + damage scaling): acc 1.5e-6, dudt 5e-7, dS/dt 7e-7 vs CPU
-   - ⬜ 3c Benz-Asphaug damage GROWTH (eig_max + grow_damage; folds into step)
-4. KDK integrator + adaptive-h iteration (on-GPU step loop)
-5. validate full pipeline vs the CPU gates (Sod, strength, pi-scaling, energy)
-6. benchmark; then high-resolution / multi-case production runs
+   - ✅ 3c Benz-Asphaug damage growth (eig_max + grow_damage; in the step)
+4. ✅ FULL GPU KDK STEP (kick/drift + adaptive-h density loop + EOS + sigmax +
+      strain/stress + forces + grow-damage + finish[kick2+trapezoidal u/S+yield]).
+      One GPU step vs CPU one-step oracle: pos 1e-7, vel 1e-7, u 8e-8, S 3e-7.
+5. ⬜ multi-step energy conservation + benchmark; GPU production driver; ideal-gas
+      EOS for a direct GPU Sod; then high-res / multi-case runs.

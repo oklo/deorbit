@@ -53,6 +53,15 @@ int main() {
             S.dSdt[i].xx, S.dSdt[i].xy, S.dSdt[i].xz, S.dSdt[i].yy, S.dSdt[i].yz, S.dSdt[i].zz };
         std::fwrite(rec, 8, 29, f);
     }
+    // one more step at a FIXED dt -> dump the post-step state as the step oracle
+    double dtv = S.timestep();
+    S.step(dtv);
+    std::fwrite(&dtv, 8, 1, f);
+    for (int i = 0; i < S.n; i++) {
+        double post[13] = { S.pos[i].x, S.pos[i].y, S.pos[i].z, S.vel[i].x, S.vel[i].y, S.vel[i].z,
+            S.u[i], S.S[i].xx, S.S[i].xy, S.S[i].xz, S.S[i].yy, S.S[i].yz, S.S[i].zz };
+        std::fwrite(post, 8, 13, f);
+    }
     std::fclose(f);
     double smax = 0; for (int i = 0; i < S.n; i++) smax = std::max(smax, std::abs(S.S[i].xy));
     printf("dumped force_ref.bin: n=%d  max|S_xy|=%.3e  max hh=%.1f  (frac on)\n",

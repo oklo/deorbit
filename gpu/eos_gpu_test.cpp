@@ -12,10 +12,10 @@
 #include <vector>
 #include <cmath>
 
-struct GMat { float rho0, A, B, a, b, alpha, beta, u0, uiv, ucv, G; };
+struct GMat { float rho0, A, B, a, b, alpha, beta, u0, uiv, ucv, G, Emod, Y; };
 static GMat toG(const Material& m) {
     return { (float)m.rho0,(float)m.A,(float)m.B,(float)m.a,(float)m.b,(float)m.alpha,
-             (float)m.beta,(float)m.u0,(float)m.uiv,(float)m.ucv,(float)m.G };
+             (float)m.beta,(float)m.u0,(float)m.uiv,(float)m.ucv,(float)m.G,(float)m.Emod,(float)m.Y };
 }
 
 int main() {
