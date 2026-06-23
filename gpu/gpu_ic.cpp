@@ -77,7 +77,7 @@ int main(int argc,char** argv){
 
     // cache pipeline states ONCE (were being recreated every step -> wasteful)
     auto PH=pso("cell_hash"),PSC=pso("cell_scatter"),PD=pso("density_adaptive"),PE=pso("eos_full"),
-         PSG=pso("compute_sigmax"),PST=pso("strain_stress"),PF=pso("forces"),PK=pso("kick"),
+         PSG=pso("compute_sigmax"),PSF=pso("strain_forces"),PK=pso("kick"),
          PDR=pso("drift"),PG=pso("grow_damage"),PFN=pso("finish");
     double T_cells=0,T_dens=0,T_force=0,T_small=0,T_dt=0,T_blit=0;   // phase timers
 
@@ -90,9 +90,7 @@ int main(int argc,char** argv){
     auto force_eval=[&](){
         run(PE,n,{brho,bu,bmat,bD,bPf,bcsig,bdsc,bRart,bmats},{{&eps_as,4},{&damon,4},{&nn,4}});
         run(PSG,n,{brho,bu,bmat,bS,bsig,bmats},{{&nn,4}});
-        run(PST,n,{bpos,bvel,brho,bhh,bmass,bS,bmat,bsorted,bstart,bcount,bmats,bdSdt,bepsw},
-            {{&lo[0],4},{&lo[1],4},{&lo[2],4},{&cw,4},{&nc[0],4},{&nc[1],4},{&nc[2],4},{&nn,4}});
-        run(PF,n,{bpos,bvel,brho,bhh,bmass,bS,bPf,bcsig,bdsc,bRart,bepsw,bsorted,bstart,bcount,bacc,bdudt},
+        run(PSF,n,{bpos,bvel,brho,bhh,bmass,bS,bmat,bPf,bcsig,bdsc,bRart,bsorted,bstart,bcount,bmats,bdSdt,bacc,bdudt},
             {{&lo[0],4},{&lo[1],4},{&lo[2],4},{&cw,4},{&nc[0],4},{&nc[1],4},{&nc[2],4},{&eta,4},{&alpha,4},{&beta,4},{&eps,4},{&eps_as,4},{&nn,4}}); };
     auto adapt_dt=[&](){ float* H=(float*)bhh->contents(); float* C=(float*)bcsig->contents(); double dt=1e30;
         for(long i=0;i<n;i++){ double d=cfl*H[i]/(C[i]*(1.0+alpha)+1e-30); if(d<dt) dt=d; } return (float)dt; };

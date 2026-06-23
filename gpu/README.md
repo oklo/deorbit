@@ -66,11 +66,16 @@ against the FP64 CPU result before it is trusted.
       identical to printed precision, SAME 283 steps) -> FP32 position-drift
       concern RETIRED. THE GPU WORKFLOW IS TURNKEY:
         ./gpu_ic ic.bin dx t_end [walltime] [--frac]
-   SPEEDUP (clean, production scale): ~10-11x. Measured at 5.5M (dx=30): GPU
-   ~1.88 s/step vs CPU ~20 s/step -> the ~40 h frac run becomes ~3.5-4 h. NB the
-   earlier "~19x" (dx=80, 24 vs 462 s) was CONTENTION-INFLATED -- that CPU
-   validation shared cores with the then-running CPU frac sim, so the CPU side
-   was ~2x slow; the clean uncontended figure is ~10-11x. (Synthetic gpu_run vs
-   cpu_bench numbers were also contended + N-dependent; trust the 5.5M figure.)
-   Remaining (optional, for ~30-50x): GPU prefix-scan + max-reduction (adaptive
-   cells) + batched encoders; ideal-gas EOS for a direct GPU Sod.
+   SPEEDUP (clean, production scale, 5.5M dx=30 vs CPU ~20 s/step):
+     baseline ~11x (1809 ms/step) -> density 4->2 iters ~15x (1314) -> fused
+     strain+forces ~21x (958 ms/step). Both opts validated EXACT on cayambe80
+     (identical iron metrics to CPU). t=2.0 run ~2 h. (NB the earlier "~19x" at
+     dx=80 was contention-inflated; trust the 5.5M numbers.)
+7. ✅ OPTIMIZATION (profile-driven; gpu_ic has per-phase timers). Profile showed
+   neighbour kernels are 99% (sync/PSO/reductions <1%, so those were dropped).
+   Done: (a) PSO caching, (b) density 4->2 iters (h carried between steps ->
+   converges in 2; exact), (c) FUSED strain_stress+forces into one neighbour pass
+   (strain_forces kernel; exact). 11x -> 21x.
+   Remaining lever (~30-40x): threadgroup-memory tiling + particle reordering by
+   cell (coalesced neighbour reads) on density + strain_forces. Plus ideal-gas
+   EOS for a direct GPU Sod.

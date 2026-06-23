@@ -298,3 +298,65 @@ kernel void finish(device packed_float3* vel[[buffer(0)]], device const packed_f
     float vm=sqrt(3.0f*J2);
     if(vm>Y){ float f=Y/vm; for(int k=0;k<6;k++) Sin[6*i+k]*=f; }
 }
+
+// FUSED strain/stress + forces: ONE neighbour traversal computes the velocity
+// gradient AND the momentum/energy sums, then post-loop derives dS/dt, eps_work
+// (folded into dudt), acc. Replaces the separate strain_stress + forces passes.
+kernel void strain_forces(device const packed_float3* pos[[buffer(0)]], device const packed_float3* vel[[buffer(1)]],
+        device const float* rho[[buffer(2)]], device const float* hh[[buffer(3)]], device const float* mass[[buffer(4)]],
+        device const float* Sin[[buffer(5)]], device const int* mat[[buffer(6)]], device const float* Pf[[buffer(7)]],
+        device const float* csig[[buffer(8)]], device const float* dscale[[buffer(9)]], device const float* Rart[[buffer(10)]],
+        device const uint* sorted[[buffer(11)]], device const uint* cell_start[[buffer(12)]], device const uint* cell_count[[buffer(13)]],
+        constant GMat* mats[[buffer(14)]], device float* dSdt[[buffer(15)]], device packed_float3* acc[[buffer(16)]],
+        device float* dudt[[buffer(17)]], constant float& lox[[buffer(18)]], constant float& loy[[buffer(19)]],
+        constant float& loz[[buffer(20)]], constant float& cw[[buffer(21)]], constant int& ncx[[buffer(22)]],
+        constant int& ncy[[buffer(23)]], constant int& ncz[[buffer(24)]], constant float& eta[[buffer(25)]],
+        constant float& alpha[[buffer(26)]], constant float& beta[[buffer(27)]], constant float& eps[[buffer(28)]],
+        constant float& eps_as[[buffer(29)]], constant uint& n[[buffer(30)]], uint i[[thread_position_in_grid]]){
+    if(i>=n) return;
+    float G=mats[mat[i]].G;
+    float3 ri=float3(pos[i]), vi=float3(vel[i]);
+    float iri2=1.0f/(rho[i]*rho[i]), Pi_over=Pf[i]*iri2, di=dscale[i];
+    float sxx=Sin[6*i],sxy=Sin[6*i+1],sxz=Sin[6*i+2],syy=Sin[6*i+3],syz=Sin[6*i+4],szz=Sin[6*i+5];
+    int bx,by,bz; cell_of(ri,lox,loy,loz,cw,ncx,ncy,ncz,bx,by,bz);
+    float L[3][3]={{0,0,0},{0,0,0},{0,0,0}};
+    float3 a=float3(0.0f); float du=0.0f;
+    for(int dx=-1;dx<=1;dx++){int cx=bx+dx;if(cx<0||cx>=ncx)continue;
+      for(int dy=-1;dy<=1;dy++){int cy=by+dy;if(cy<0||cy>=ncy)continue;
+        for(int dz=-1;dz<=1;dz++){int cz=bz+dz;if(cz<0||cz>=ncz)continue;
+          int c=(cx*ncy+cy)*ncz+cz; uint s0=cell_start[c],cn=cell_count[c];
+          for(uint q=0;q<cn;q++){ uint j=sorted[s0+q]; if(j==i) continue;
+            float3 rij=ri-float3(pos[j]); float r=length(rij); float hbar=0.5f*(hh[i]+hh[j]);
+            if(r>=2.0f*hbar||r==0.0f) continue;
+            float3 gradW=rij*(kdWdr(r,hbar)/r);
+            float Vj=mass[j]/rho[j]; float3 dvj=float3(vel[j])-vi;
+            float dd[3]={dvj.x,dvj.y,dvj.z}, gg[3]={gradW.x,gradW.y,gradW.z};
+            for(int aa=0;aa<3;aa++)for(int bb=0;bb<3;bb++) L[aa][bb]+=Vj*dd[aa]*gg[bb];
+            float3 vij=vi-float3(vel[j]); float rbar=0.5f*(rho[i]+rho[j]); float dvr=dot(vij,rij), Pij=0.0f;
+            if(dvr<0.0f){ float mu=hbar*dvr/(r*r+eps*hbar*hbar); float cbar=0.5f*(csig[i]+csig[j]); Pij=(-alpha*cbar*mu+beta*mu*mu)/rbar; }
+            float jrj2=1.0f/(rho[j]*rho[j]); float term=Pi_over+Pf[j]*jrj2+Pij;
+            du += 0.5f*mass[j]*term*dot(vij,gradW);
+            float mterm=term;
+            if(eps_as>0.0f){ float wdp=kW(hbar/eta,hbar); float fr=(wdp>0.0f?kW(r,hbar)/wdp:0.0f); float fn=fr*fr; fn*=fn; mterm+=(Rart[i]+Rart[j])*fn; }
+            a -= gradW*(mass[j]*mterm);
+            float3 si=Sdot(sxx,sxy,sxz,syy,syz,szz,gradW);
+            float3 sj=Sdot(Sin[6*j],Sin[6*j+1],Sin[6*j+2],Sin[6*j+3],Sin[6*j+4],Sin[6*j+5],gradW);
+            a += (si*(iri2*di)+sj*(jrj2*dscale[j]))*mass[j];
+          }}}}
+    float epsw=0.0f;
+    if(G>0.0f){
+        float exx=L[0][0],eyy=L[1][1],ezz=L[2][2];
+        float exy=0.5f*(L[0][1]+L[1][0]),exz=0.5f*(L[0][2]+L[2][0]),eyz=0.5f*(L[1][2]+L[2][1]);
+        float Rxy=0.5f*(L[0][1]-L[1][0]),Rxz=0.5f*(L[0][2]-L[2][0]),Ryz=0.5f*(L[1][2]-L[2][1]);
+        float tr=(exx+eyy+ezz)/3.0f;
+        float Rm[3][3]={{0,Rxy,Rxz},{-Rxy,0,Ryz},{-Rxz,-Ryz,0}};
+        float Sm[3][3]={{sxx,sxy,sxz},{sxy,syy,syz},{sxz,syz,szz}};
+        float J[3][3];
+        for(int aa=0;aa<3;aa++)for(int bb=0;bb<3;bb++){ float rs=0,sr=0;
+            for(int c=0;c<3;c++){ rs+=Rm[aa][c]*Sm[c][bb]; sr+=Sm[aa][c]*Rm[c][bb]; } J[aa][bb]=rs-sr; }
+        dSdt[6*i+0]=2.0f*G*(exx-tr)+J[0][0]; dSdt[6*i+3]=2.0f*G*(eyy-tr)+J[1][1]; dSdt[6*i+5]=2.0f*G*(ezz-tr)+J[2][2];
+        dSdt[6*i+1]=2.0f*G*exy+J[0][1]; dSdt[6*i+2]=2.0f*G*exz+J[0][2]; dSdt[6*i+4]=2.0f*G*eyz+J[1][2];
+        epsw=(sxx*exx+syy*eyy+szz*ezz+2.0f*(sxy*exy+sxz*exz+syz*eyz))/rho[i];
+    } else { for(int k=0;k<6;k++) dSdt[6*i+k]=0.0f; }
+    acc[i]=packed_float3(a); dudt[i]=du+epsw*di;
+}
