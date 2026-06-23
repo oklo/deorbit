@@ -79,7 +79,17 @@ int main(int argc,char** argv){
     auto PH=pso("cell_hash"),PSC=pso("cell_scatter"),PD=pso("density_adaptive"),PE=pso("eos_full"),
          PSG=pso("compute_sigmax"),PSF=pso("strain_forces"),PK=pso("kick"),
          PDR=pso("drift"),PG=pso("grow_damage"),PFN=pso("finish");
-    double T_cells=0,T_dens=0,T_force=0,T_small=0,T_dt=0,T_blit=0;   // phase timers
+    auto PGW=pso("gather_w"),PGU8=pso("gather_u8"),PIOTA=pso("set_iota");
+    double T_cells=0,T_dens=0,T_force=0,T_small=0,T_dt=0,T_blit=0,T_reord=0;   // phase timers
+    // double buffers for particle reordering (coalesced neighbour reads)
+    auto bpos_b=buf(3*n*4),bvel_b=buf(3*n*4),bS_b=buf(6*n*4),bdSdt_b=buf(6*n*4),
+         bu_b=buf(n*4),bhh_b=buf(n*4),bmass_b=buf(n*4),bmat_b=buf(n*4),bD_b=buf(n*4),beps_b=buf(n*4),bdudt_b=buf(n*4),bfix_b=buf(n);
+    auto gw=[&](MTL::Buffer*& src,MTL::Buffer*& dst,uint32_t W){ uint32_t w=W; run(PGW,n,{src,dst,bsorted},{{&w,4},{&nn,4}}); std::swap(src,dst); };
+    auto reorder=[&](){     // gather carried state into cell-sorted order, then sorted=identity
+        gw(bpos,bpos_b,3); gw(bvel,bvel_b,3); gw(bS,bS_b,6); gw(bdSdt,bdSdt_b,6);
+        gw(bu,bu_b,1); gw(bhh,bhh_b,1); gw(bmass,bmass_b,1); gw(bmat,bmat_b,1); gw(bD,bD_b,1); gw(beps,beps_b,1); gw(bdudt,bdudt_b,1);
+        run(PGU8,n,{bfix,bfix_b,bsorted},{{&nn,4}}); std::swap(bfix,bfix_b);
+        run(PIOTA,n,{bsorted},{{&nn,4}}); };
 
     auto build=[&](){ memset(bcount->contents(),0,Nc*4);
         run(PH,n,{bpos,bhash,bcount,bslot},{{&lo[0],4},{&lo[1],4},{&lo[2],4},{&cw,4},{&nc[0],4},{&nc[1],4},{&nc[2],4},{&nn,4}});
@@ -94,20 +104,20 @@ int main(int argc,char** argv){
             {{&lo[0],4},{&lo[1],4},{&lo[2],4},{&cw,4},{&nc[0],4},{&nc[1],4},{&nc[2],4},{&eta,4},{&alpha,4},{&beta,4},{&eps,4},{&eps_as,4},{&nn,4}}); };
     auto adapt_dt=[&](){ float* H=(float*)bhh->contents(); float* C=(float*)bcsig->contents(); double dt=1e30;
         for(long i=0;i<n;i++){ double d=cfl*H[i]/(C[i]*(1.0+alpha)+1e-30); if(d<dt) dt=d; } return (float)dt; };
-    auto energy=[&](){ float* V=(float*)bvel->contents(); float* Uu=(float*)bu->contents(); double KE=0,IE=0;
-        for(long i=0;i<n;i++){ KE+=0.5*mass[i]*(V[3*i]*V[3*i]+V[3*i+1]*V[3*i+1]+V[3*i+2]*V[3*i+2]); IE+=mass[i]*Uu[i]; } return KE+IE; };
-    auto report=[&](float t,int step,double wsec){ float* P=(float*)bpos->contents(); float* Vp=(float*)bvel->contents(); float* Uu=(float*)bu->contents();
+    auto energy=[&](){ float* V=(float*)bvel->contents(); float* Uu=(float*)bu->contents(); float* M=(float*)bmass->contents(); double KE=0,IE=0;
+        for(long i=0;i<n;i++){ KE+=0.5*M[i]*(V[3*i]*V[3*i]+V[3*i+1]*V[3*i+1]+V[3*i+2]*V[3*i+2]); IE+=M[i]*Uu[i]; } return KE+IE; };
+    auto report=[&](float t,int step,double wsec){ float* P=(float*)bpos->contents(); float* Vp=(float*)bvel->contents(); float* Uu=(float*)bu->contents(); int* MT=(int*)bmat->contents();
         double cx=0,cz=0,vz=0,sp=0; int ni=0,nm=0; double um=0;
-        for(long i=0;i<n;i++){ if(mat[i]!=1)continue; cx+=P[3*i];cz+=P[3*i+2];vz+=Vp[3*i+2];
+        for(long i=0;i<n;i++){ if(MT[i]!=1)continue; cx+=P[3*i];cz+=P[3*i+2];vz+=Vp[3*i+2];
             sp+=std::sqrt(Vp[3*i]*Vp[3*i]+Vp[3*i+1]*Vp[3*i+1]+Vp[3*i+2]*Vp[3*i+2]); if(Uu[i]>1e6)nm++; um=std::max(um,(double)Uu[i]); ni++; }
         printf("  t=%.4f step=%d iron: x=%.0f z=%.0f |v|=%.0f vz=%.0f melt=%.0f%% umax=%.1e [%.0fs]\n",
             t,step,cx/ni,cz/ni,sp/ni,vz/ni,100.0*nm/ni,um,wsec); fflush(stdout); };
     auto snapshot=[&](int idx){ char fn[64]; snprintf(fn,64,"gpu_snap_%03d.bin",idx); FILE* o=fopen(fn,"wb");
         long N=n; fwrite(&N,8,1,o); float* P=(float*)bpos->contents(); float* Vp=(float*)bvel->contents();
-        float* Uu=(float*)bu->contents(); float* Rho=(float*)brho->contents(); float* H=(float*)bhh->contents();
+        float* Uu=(float*)bu->contents(); float* Rho=(float*)brho->contents(); float* H=(float*)bhh->contents(); int* MT=(int*)bmat->contents();
         std::vector<double> rec(10*n); for(long i=0;i<n;i++){ double* r=&rec[10*i];
             r[0]=P[3*i];r[1]=P[3*i+1];r[2]=P[3*i+2]; r[3]=Vp[3*i];r[4]=Vp[3*i+1];r[5]=Vp[3*i+2];
-            r[6]=Uu[i];r[7]=Rho[i];r[8]=H[i];r[9]=mat[i]; } fwrite(rec.data(),8,10*n,o); fclose(o); };
+            r[6]=Uu[i];r[7]=Rho[i];r[8]=H[i];r[9]=MT[i]; } fwrite(rec.data(),8,10*n,o); fclose(o); };
 
     build(); density(); build(); force_eval();
     double E0=energy(); printf("init done, E0=%.4e\n",E0);
@@ -115,10 +125,11 @@ int main(int argc,char** argv){
     while(t<t_end){
         double a;
         a=now(); float dt=adapt_dt(); T_dt+=now()-a; if(t+dt>t_end) dt=t_end-t; float halfdt=0.5f*dt;
-        a=now(); auto bl=Q_->commandBuffer(); auto be=bl->blitCommandEncoder();
-        be->copyFromBuffer(bdudt,0,bduold,0,n*4); be->copyFromBuffer(bdSdt,0,bdSold,0,6*n*4); be->endEncoding(); bl->commit(); bl->waitUntilCompleted(); T_blit+=now()-a;
         a=now(); run(PK,n,{bvel,bacc,bfix},{{&halfdt,4},{&nn,4}}); run(PDR,n,{bpos,bvel,bfix},{{&dt,4},{&nn,4}}); T_small+=now()-a;
         a=now(); build(); T_cells+=now()-a;
+        a=now(); reorder(); T_reord+=now()-a;
+        a=now(); auto bl=Q_->commandBuffer(); auto be=bl->blitCommandEncoder();
+        be->copyFromBuffer(bdudt,0,bduold,0,n*4); be->copyFromBuffer(bdSdt,0,bdSold,0,6*n*4); be->endEncoding(); bl->commit(); bl->waitUntilCompleted(); T_blit+=now()-a;
         a=now(); density(); T_dens+=now()-a;
         a=now(); force_eval(); T_force+=now()-a;
         a=now(); run(PG,n,{bsig,bD,beps,bmat,brho,bmats},{{&h_init,4},{&eta,4},{&dt,4},{&nn,4}});
@@ -130,7 +141,7 @@ int main(int argc,char** argv){
     }
     double E1=energy();
     printf("DONE: %d steps to t=%.4f  %.1f ms/step  E drift=%.2e\n", step, t, 1000*(now()-wall0)/step, (E1-E0)/E0);
-    printf("PROFILE (ms/step): cells=%.1f density=%.1f force_eval=%.1f small=%.1f dt_read=%.1f blit=%.1f\n",
-        1000*T_cells/step,1000*T_dens/step,1000*T_force/step,1000*T_small/step,1000*T_dt/step,1000*T_blit/step);
+    printf("PROFILE (ms/step): cells=%.1f reorder=%.1f density=%.1f force_eval=%.1f small=%.1f dt_read=%.1f blit=%.1f\n",
+        1000*T_cells/step,1000*T_reord/step,1000*T_dens/step,1000*T_force/step,1000*T_small/step,1000*T_dt/step,1000*T_blit/step);
     return 0;
 }

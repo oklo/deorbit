@@ -66,16 +66,21 @@ against the FP64 CPU result before it is trusted.
       identical to printed precision, SAME 283 steps) -> FP32 position-drift
       concern RETIRED. THE GPU WORKFLOW IS TURNKEY:
         ./gpu_ic ic.bin dx t_end [walltime] [--frac]
-   SPEEDUP (clean, production scale, 5.5M dx=30 vs CPU ~20 s/step):
-     baseline ~11x (1809 ms/step) -> density 4->2 iters ~15x (1314) -> fused
-     strain+forces ~21x (958 ms/step). Both opts validated EXACT on cayambe80
-     (identical iron metrics to CPU). t=2.0 run ~2 h. (NB the earlier "~19x" at
-     dx=80 was contention-inflated; trust the 5.5M numbers.)
+   SPEEDUP (clean, 5.5M dx=30 vs CPU ~20 s/step): ~11x baseline -> ~54x after
+     optimization (370 ms/step); full arc in item 7. t=2.0 run ~43 min (was ~40 h
+     CPU). All opts validated EXACT on cayambe80. (NB the early "~19x" at dx=80
+     was contention-inflated; trust the 5.5M numbers.)
 7. ✅ OPTIMIZATION (profile-driven; gpu_ic has per-phase timers). Profile showed
-   neighbour kernels are 99% (sync/PSO/reductions <1%, so those were dropped).
-   Done: (a) PSO caching, (b) density 4->2 iters (h carried between steps ->
-   converges in 2; exact), (c) FUSED strain_stress+forces into one neighbour pass
-   (strain_forces kernel; exact). 11x -> 21x.
-   Remaining lever (~30-40x): threadgroup-memory tiling + particle reordering by
-   cell (coalesced neighbour reads) on density + strain_forces. Plus ideal-gas
-   EOS for a direct GPU Sod.
+   neighbour kernels are 99% (sync/PSO/reductions <1%, dropped). All exact-validated
+   on cayambe80 (identical iron metrics to CPU):
+   (a) PSO caching; (b) density 4->2 iters (h carried -> converges in 2);
+   (c) FUSED strain_stress+forces into one neighbour pass (strain_forces kernel);
+   (d) sqrt-avoidance (r^2 cutoff test; tiny -> confirmed memory-bound);
+   (e) PARTICLE REORDERING by cell each step (gather_w/gather_u8/set_iota: gather
+       carried state into cell-sorted order, sorted=identity -> coalesced
+       neighbour reads). This was the big one: 2.55x.
+   Cumulative 5.5M: 1809 -> 370 ms/step = ~11x -> ~54x vs CPU. A t=2.0 frac run
+   is ~43 min (was ~40 h CPU). NB: diagnostics (energy/report/snapshot) must read
+   the REORDERED GPU bmass/bmat, not the host arrays (that bug looked like broken
+   physics but was just mismatched metrics).
+   Further (optional): threadgroup-memory tiling (~1.3x more); ideal-gas GPU Sod.

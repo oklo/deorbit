@@ -260,8 +260,8 @@ kernel void density_adaptive(device const packed_float3* pos[[buffer(0)]], devic
       for(int dy=-1;dy<=1;dy++){int cy=by+dy;if(cy<0||cy>=ncy)continue;
         for(int dz=-1;dz<=1;dz++){int cz=bz+dz;if(cz<0||cz>=ncz)continue;
           int c=(cx*ncy+cy)*ncz+cz; uint s0=cell_start[c],cn=cell_count[c];
-          for(uint q=0;q<cn;q++){uint j=sorted[s0+q]; float r=length(ri-float3(pos[j]));
-            if(r<2.0f*hi) s+=mass[j]*kW(r,hi);}}}}
+          for(uint q=0;q<cn;q++){uint j=sorted[s0+q]; float3 dij=ri-float3(pos[j]);
+            float r2=dot(dij,dij), th=2.0f*hi; if(r2<th*th) s+=mass[j]*kW(sqrt(r2),hi);}}}}
     float rho_i=max(s,1e-30f); rho[i]=rho_i;
     hh[i]=clamp(eta*pow(mass[i]/rho_i,1.0f/3.0f), 0.5f*h_init, 2.0f*h_init);
 }
@@ -326,8 +326,8 @@ kernel void strain_forces(device const packed_float3* pos[[buffer(0)]], device c
         for(int dz=-1;dz<=1;dz++){int cz=bz+dz;if(cz<0||cz>=ncz)continue;
           int c=(cx*ncy+cy)*ncz+cz; uint s0=cell_start[c],cn=cell_count[c];
           for(uint q=0;q<cn;q++){ uint j=sorted[s0+q]; if(j==i) continue;
-            float3 rij=ri-float3(pos[j]); float r=length(rij); float hbar=0.5f*(hh[i]+hh[j]);
-            if(r>=2.0f*hbar||r==0.0f) continue;
+            float3 rij=ri-float3(pos[j]); float r2=dot(rij,rij); float hbar=0.5f*(hh[i]+hh[j]);
+            float th=2.0f*hbar; if(r2>=th*th||r2==0.0f) continue; float r=sqrt(r2);
             float3 gradW=rij*(kdWdr(r,hbar)/r);
             float Vj=mass[j]/rho[j]; float3 dvj=float3(vel[j])-vi;
             float dd[3]={dvj.x,dvj.y,dvj.z}, gg[3]={gradW.x,gradW.y,gradW.z};
@@ -360,3 +360,16 @@ kernel void strain_forces(device const packed_float3* pos[[buffer(0)]], device c
     } else { for(int k=0;k<6;k++) dSdt[6*i+k]=0.0f; }
     acc[i]=packed_float3(a); dudt[i]=du+epsw*di;
 }
+
+// ---- particle reordering (coalesced neighbour reads) ----
+// gather 4-byte-word arrays into cell-sorted order: out[k]=in[sorted[k]] (W words/particle)
+kernel void gather_w(device const uint* in[[buffer(0)]], device uint* out[[buffer(1)]],
+                     device const uint* sorted[[buffer(2)]], constant uint& W[[buffer(3)]],
+                     constant uint& n[[buffer(4)]], uint k[[thread_position_in_grid]]){
+    if(k>=n) return; uint src=sorted[k]; for(uint w=0;w<W;w++) out[k*W+w]=in[src*W+w];
+}
+kernel void gather_u8(device const uchar* in[[buffer(0)]], device uchar* out[[buffer(1)]],
+                      device const uint* sorted[[buffer(2)]], constant uint& n[[buffer(3)]],
+                      uint k[[thread_position_in_grid]]){ if(k<n) out[k]=in[sorted[k]]; }
+kernel void set_iota(device uint* sorted[[buffer(0)]], constant uint& n[[buffer(1)]],
+                     uint k[[thread_position_in_grid]]){ if(k<n) sorted[k]=k; }
