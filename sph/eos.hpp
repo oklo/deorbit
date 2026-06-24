@@ -45,6 +45,9 @@ struct Material {
                                                 4.87e8, 4.72e6, 1.82e7, 2.27e10, 3.5e8, 16.0, 1.0e61); }
     static Material water()  { return tillotson(998, 2.2e9, 9.94e9, 0.7, 0.15, 10, 5,
                                                 7.0e6, 4.19e5, 2.69e6, 0.0, 0.0); }
+    // aluminum (Tillotson, std table; Pierazzo 2008 benchmark material). Ductile -> wk=0.
+    static Material aluminum(){ return tillotson(2700, 7.52e10, 6.5e10, 0.5, 1.63, 5, 5,
+                                                5.0e6, 3.0e6, 1.39e7, 0.0, 0.0); }
 
     double till(double rho, double u) const {
         if (rho <= 0) return 0.0;

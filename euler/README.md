@@ -57,8 +57,11 @@ M3 or M5 won't validate.**
       Y->(1-D)Y. GATES (CPU==GPU): tensile stretch -> D->1, shear strength -> 0;
       free-fall + hydrostatic; all prior gates regress. (wk=1e61 overflows FP32 ->
       eps_act precomputed on host.)
-- [ ] **M5 Pierazzo et al. (2008) Al-on-Al impact benchmark** — THE CREDIBILITY GATE:
-      match the published code-comparison results. Pass/fail for the whole effort.
+- [~] **M5 Pierazzo et al. (2008) Al-on-Al benchmark — THE CREDIBILITY GATE.** M5a DONE:
+      Al Tillotson EOS added; 1D Al-on-Al planar impact (U=10 km/s) reproduces the analytic
+      Tillotson Hugoniot peak shock pressure EXACTLY (1.638e11 vs 1.637e11 Pa, 0.0% err) ->
+      shock-capture + EOS give the correct impact-pressure state. Next M5b: 3D Al-sphere
+      impact, peak-pressure decay P(r/a) vs the published inter-code band (the spatial test).
 - [ ] **M6 acoustic fluidization (block model)** — gate: reproduce a known complex
       crater's depth/rim (calibration-dependent by nature).
 - [ ] **M7 Orcus cross-check** — cross-validate vs SPH (early dynamics), then the

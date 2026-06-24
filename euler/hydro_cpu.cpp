@@ -145,6 +145,15 @@ static void exact_sod(double S,double&r,double&u,double&p){
     else{if(P>pR){double SR=uR+cR*sqrt(G2*P/pR+G1);if(S>SR){r=rR;u=uR;p=pR;}else{r=rR*((P/pR+G6)/(G6*P/pR+1));u=us;p=P;}}
         else{double SHR=uR+cR,STR=us+cR*pow(P/pR,G1);if(S>SHR){r=rR;u=uR;p=pR;}else if(S<STR){r=rR*pow(P/pR,1/g);u=us;p=P;}else{u=G5*(-cR+(g-1)/2*uR+S);double c=G5*(cR-(g-1)/2*(uR-S));r=rR*pow(c/cR,G4);p=pR*pow(c/cR,G3);}}}
 }
+// analytic Tillotson Hugoniot: shock into material at rest, particle velocity up behind shock.
+// solve Rankine-Hugoniot (mass+momentum+energy) coupled to P=till(rho,u) by bisection on shock speed Us.
+static double hugoniot_P(double up){
+    double rho0=MAT.rho0, lo=up*1.0001, hi=up*30.0;
+    for(int it=0;it<200;it++){ double Us=0.5*(lo+hi);
+        double rho=rho0*Us/(Us-up), Pmom=rho0*Us*up, uint=0.5*Pmom*(1.0/rho0-1.0/rho);
+        double Peos=MAT.pressure(rho,uint); if(Pmom-Peos<0) lo=Us; else hi=Us; }
+    double Us=0.5*(lo+hi); return rho0*Us*up;
+}
 int main(int argc,char**argv){
     string mode=argc>1?argv[1]:"sod";
     if(mode=="sod"){
@@ -203,6 +212,15 @@ int main(int argc,char**argv){
         double Dmax=0,Sxxmax=0;for(int i=20;i<N-20;i++){int c=g.idx(i,0,0);Dmax=max(Dmax,g.D[c]);Sxxmax=max(Sxxmax,fabs(g.Sxx[c]));}
         printf("Tensile damage: max D=%.4f  max|Sxx|=%.3e (Y=%.3e, ratio %.4f)\n",Dmax,Sxxmax,Y,Sxxmax/Y);
         printf("GATE (D>0.9 grows & strength degrades Sxx<0.5Y): %s\n",(Dmax>0.9&&Sxxmax<0.5*Y)?"PASS":"CHECK");
+    } else if(mode=="alimpact"){ // Pierazzo-style: 1D Al-on-Al planar impact -> peak shock P vs analytic Hugoniot
+        MAT=Material::aluminum(); int N=400;double L=2.0,dx=L/N,CFL=0.3,tend=3e-5; double rho0=2700,up=5000;  // U=10 km/s symmetric (small domain: Hugoniot is scale-free)
+        Grid g(N,1,1,dx);
+        for(int i=0;i<N;i++){double x=(i+0.5)*dx;int c=g.idx(i,0,0);g.r[c]=rho0;double vx=(x<0.5*L?up:-up);g.mu[c]=rho0*vx;g.E[c]=0.5*rho0*vx*vx;}
+        double t=0;int s=0;while(t<tend){double dt=CFL*dx/maxspeed(g);if(t+dt>tend)dt=tend-t;step_rk2(g,dt);t+=dt;s++;}
+        double Pmax=0;for(int i=0;i<N;i++)Pmax=max(Pmax,Pcell(g,g.idx(i,0,0)));
+        double Phug=hugoniot_P(up);
+        printf("Al-on-Al planar (U=%.0f km/s, up=%.0f m/s): peak P=%.3e Pa  Tillotson Hugoniot=%.3e (err %.1f%%)\n",2*up/1000.0,up,Pmax,Phug,100*fabs(Pmax-Phug)/Phug);
+        printf("GATE (shock P matches analytic Hugoniot, <5%%): %s\n",(fabs(Pmax-Phug)/Phug<0.05)?"PASS":"CHECK");
     } else { // surface
         MAT=Material::basalt();int N=64;double L=200e3,dx=L/N,tend=2.0,CFL=0.4;Grid g(1,1,N,dx);
         for(int k=0;k<N;k++){double z=(k+0.5)*dx;double rr=z<0.5*L?2700:0.27;int c=g.idx(0,0,k);g.r[c]=rr;g.E[c]=0;}
