@@ -67,14 +67,24 @@ M3 or M5 won't validate.**
       far-field domain + higher cppr convergence study would pin it -- a refinement, not done
       here per the option-1 physics-based plan). The shock-capture + EOS give correct impact
       pressures -> the cross-check is credible. Metal: pmax_update kernel; mode 'pierazzo'.
-- [ ] **M6 acoustic fluidization (block model)** — gate: reproduce a known complex
-      crater's depth/rim (calibration-dependent by nature).
+- [~] **M6 acoustic fluidization (block model) — PARTIAL (honest checkpoint).** AF
+      mechanism IMPLEMENTED + regression-safe: fluidization field `af` reduces shear
+      strength Y->(1-D)(1-af)Y; Maxwell-style decay (TDEC); Newtonian viscosity
+      ETA_AF (eta*grad^2 v) to damp fluidized flow; void-CFL exclusion (RHO_CFL) so
+      near-vacuum ambient cells don't tank dt. BLOCKED on the collapse DEMO by a
+      separate numerics issue: the sharp basalt|ambient free surface is NOT hydrostatically
+      well-balanced under gravity (surface cells get a spurious net force -> rarefy; M2
+      surface gate passed only because it had no gravity). Needs a well-balanced interface
+      reconstruction (or fixed-substrate treatment) -- this ALSO gates M7's loaded substrate.
+      Next focused work: free-surface + gravity well-balancing, then the collapse demo + calibration.
 - [ ] **M7 Orcus cross-check** — cross-validate vs SPH (early dynamics), then the
       3-way figure: MOLA | SPH | euler.
 
 ## Status
-**M5 DONE — credibility gate passed on the peak shock pressure** (1D Al Hugoniot exact;
-3D Al-sphere isobaric core 93% of Hugoniot; decay physical, near-field n~1.3). **5 of 7
-milestones done** (hydro, EOS+free surface, strength, damage+gravity, shock-physics).
-The euler code reproduces correct impact pressures. Next: **M6 acoustic fluidization**
-(crater collapse -> clean morphology), then **M7 Orcus 3-way** (MOLA | SPH | euler).
+**M5 DONE** (credibility gate, peak shock pressure). **M6 PARTIAL**: acoustic-fluidization
+mechanism implemented (strength reduction + decay + viscosity + void-CFL), regression-safe,
+but the collapse demo is blocked by free-surface + gravity well-balancing (a sharp material
+interface under gravity isn't hydrostatically balanced -> surface cells rarefy). This same
+issue gates M7's loaded substrate. **Next focused work: well-balanced free-surface gravity**
+(then M6 collapse demo + M7 Orcus 3-way). 5 of 7 milestones validated; M6/M7 need the
+well-balancing fix. SPH Orcus run done; renders committed.

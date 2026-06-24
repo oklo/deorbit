@@ -14,6 +14,9 @@ using namespace std;
 static Material MAT = Material::ideal(1.4);
 static double GAM = 1.4;
 static double GZ = 0.0;   // gravity (accel toward -z), m/s^2
+static double TDEC = 0.0;  // acoustic-fluidization decay time (s); 0 = AF off
+static double ETA_AF = 0.0; // acoustic-fluidization viscosity (Pa.s); damps fluidized flow (Wunnemann-Ivanov)
+static double RHO_CFL = 0.0; // exclude near-void cells (rho<RHO_CFL) from the CFL (their hi-v dynamics are negligible)
 static inline void eos_pc(double rho,double e,double&p,double&cs){ p=MAT.pressure(rho,e); if(p<0)p=0; cs=MAT.sound_speed(rho,e); }
 struct F5 { double r, mn, mt1, mt2, E; };
 static F5 hllc(double rL,double vnL,double t1L,double t2L,double eL,double rR,double vnR,double t1R,double t2R,double eR){
@@ -31,10 +34,10 @@ static F5 hllc(double rL,double vnL,double t1L,double t2L,double eL,double rR,do
     return star(rR,vnR,t1R,t2R,pR,ER,SR,Fp(rR,vnR,t1R,t2R,pR,ER));
 }
 static inline double mm(double a,double b){ return (a*b<=0)?0.0:(fabs(a)<fabs(b)?a:b); }
-struct Grid { int nx,ny,nz; double dx; vector<double> r,mu,mv,mw,E, Sxx,Syy,Szz,Sxy,Sxz,Syz, D;
+struct Grid { int nx,ny,nz; double dx; vector<double> r,mu,mv,mw,E, Sxx,Syy,Szz,Sxy,Sxz,Syz, D, af;
     int idx(int i,int j,int k)const{ return (i*ny+j)*nz+k; }
     Grid(int X,int Y,int Z,double d):nx(X),ny(Y),nz(Z),dx(d){ int n=X*Y*Z; r.assign(n,0);mu.assign(n,0);mv.assign(n,0);mw.assign(n,0);E.assign(n,0);
-        Sxx.assign(n,0);Syy.assign(n,0);Szz.assign(n,0);Sxy.assign(n,0);Sxz.assign(n,0);Syz.assign(n,0);D.assign(n,0);} };
+        Sxx.assign(n,0);Syy.assign(n,0);Szz.assign(n,0);Sxy.assign(n,0);Sxz.assign(n,0);Syz.assign(n,0);D.assign(n,0);af.assign(n,0);} };
 static inline double eint(const Grid&g,int c){ double ke=0.5*(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c]; return (g.E[c]-ke)/g.r[c]; }
 static inline double Pcell(const Grid&g,int c){ double p,cs; eos_pc(g.r[c],eint(g,c),p,cs); return p; }
 
@@ -103,6 +106,10 @@ static void Lop(const Grid&g, DU&d){
         double dSxy_x=(g.Sxy[xp]-g.Sxy[xm])/hx, dSyy_y=(g.Syy[yp]-g.Syy[ym])/hy, dSyz_z=(g.Syz[zp]-g.Syz[zm])/hz;
         double dSxz_x=(g.Sxz[xp]-g.Sxz[xm])/hx, dSyz_y=(g.Syz[yp]-g.Syz[ym])/hy, dSzz_z=(g.Szz[zp]-g.Szz[zm])/hz;
         d.mu[c]+=dSxx_x+dSxy_y+dSxz_z; d.mv[c]+=dSxy_x+dSyy_y+dSyz_z; d.mw[c]+=dSxz_x+dSyz_y+dSzz_z;
+        if(g.af[c]>0&&ETA_AF>0){ double eta=g.af[c]*ETA_AF, id2=1.0/(g.dx*g.dx);   // AF Newtonian viscosity (damps fluidized flow)
+            d.mu[c]+=eta*(vx(xp)+vx(xm)+vx(yp)+vx(ym)+vx(zp)+vx(zm)-6*vx(c))*id2;
+            d.mv[c]+=eta*(vy(xp)+vy(xm)+vy(yp)+vy(ym)+vy(zp)+vy(zm)-6*vy(c))*id2;
+            d.mw[c]+=eta*(vz(xp)+vz(xm)+vz(yp)+vz(ym)+vz(zp)+vz(zm)-6*vz(c))*id2; }
         // energy: div(S.v). (S.v)_x = Sxx u+Sxy v+Sxz w, etc.
         auto Svx=[&](int cc){return g.Sxx[cc]*vx(cc)+g.Sxy[cc]*vy(cc)+g.Sxz[cc]*vz(cc);};
         auto Svy=[&](int cc){return g.Sxy[cc]*vx(cc)+g.Syy[cc]*vy(cc)+g.Syz[cc]*vz(cc);};
@@ -111,7 +118,7 @@ static void Lop(const Grid&g, DU&d){
     }
 }
 static void vonmises(Grid&g){ double Y0=MAT.Y; if(Y0<=0)return; int n=g.nx*g.ny*g.nz;
-    for(int c=0;c<n;c++){ double Y=(1.0-g.D[c])*Y0;   // damage degrades shear strength
+    for(int c=0;c<n;c++){ double Y=(1.0-g.D[c])*(1.0-g.af[c])*Y0;   // damage + acoustic fluidization degrade shear strength
         double sxx=g.Sxx[c],syy=g.Syy[c],szz=g.Szz[c],sxy=g.Sxy[c],sxz=g.Sxz[c],syz=g.Syz[c];
         double J2=0.5*(sxx*sxx+syy*syy+szz*szz)+sxy*sxy+sxz*sxz+syz*syz; double vm=sqrt(3.0*J2);
         if(vm>Y){double f=(vm>0?Y/vm:0.0); g.Sxx[c]*=f;g.Syy[c]*=f;g.Szz[c]*=f;g.Sxy[c]*=f;g.Sxz[c]*=f;g.Syz[c]*=f;} } }
@@ -122,7 +129,7 @@ static void grow_damage(Grid&g,double dt){ double Em=MAT.Emod,wk=MAT.wk,wm=MAT.w
         if(sigmax>0.0 && sigmax/Em>eps_act){ double cg=0.4*sqrt(Em/max(g.r[c],1e-30)),Rs=0.5*dx;
             double d13=pow(g.D[c],1.0/3.0)+(cg/Rs)*dt; g.D[c]=min(1.0,d13*d13*d13); } } }
 static double maxspeed(const Grid&g){ double s=1e-30; int n=g.r.size(); double G=MAT.G;
-    for(int c=0;c<n;c++){ double p,cs; eos_pc(g.r[c],eint(g,c),p,cs); double cel=sqrt(cs*cs+ (G>0?(4.0/3.0)*G/g.r[c]:0.0));
+    for(int c=0;c<n;c++){ if(g.r[c]<RHO_CFL) continue; double p,cs; eos_pc(g.r[c],eint(g,c),p,cs); double cel=sqrt(cs*cs+ (G>0?(4.0/3.0)*G/g.r[c]:0.0));
         double v=sqrt(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c]; s=max(s,v+cel);} return s; }
 static void step_rk2(Grid&g,double dt){ int n=g.r.size(); DU d(n); Grid g1=g;
     Lop(g,d);
@@ -132,6 +139,7 @@ static void step_rk2(Grid&g,double dt){ int n=g.r.size(); DU d(n); Grid g1=g;
     for(int c=0;c<n;c++){g.r[c]=0.5*(g.r[c]+g1.r[c]+dt*d.r[c]);g.mu[c]=0.5*(g.mu[c]+g1.mu[c]+dt*d.mu[c]);g.mv[c]=0.5*(g.mv[c]+g1.mv[c]+dt*d.mv[c]);g.mw[c]=0.5*(g.mw[c]+g1.mw[c]+dt*d.mw[c]);g.E[c]=0.5*(g.E[c]+g1.E[c]+dt*d.E[c]);
         g.Sxx[c]=0.5*(g.Sxx[c]+g1.Sxx[c]+dt*d.Sxx[c]);g.Syy[c]=0.5*(g.Syy[c]+g1.Syy[c]+dt*d.Syy[c]);g.Szz[c]=0.5*(g.Szz[c]+g1.Szz[c]+dt*d.Szz[c]);g.Sxy[c]=0.5*(g.Sxy[c]+g1.Sxy[c]+dt*d.Sxy[c]);g.Sxz[c]=0.5*(g.Sxz[c]+g1.Sxz[c]+dt*d.Sxz[c]);g.Syz[c]=0.5*(g.Syz[c]+g1.Syz[c]+dt*d.Syz[c]);g.D[c]=0.5*(g.D[c]+g1.D[c]+dt*d.D[c]);}
     grow_damage(g,dt); vonmises(g);
+    if(TDEC>0){ double f=exp(-dt/TDEC); int N=g.r.size(); for(int c=0;c<N;c++) g.af[c]*=f; }   // AF vibrations decay
 }
 static void exact_sod(double S,double&r,double&u,double&p){
     double rL=1,uL=0,pL=1,rR=0.125,uR=0,pR=0.1,g=GAM;double cL=sqrt(g*pL/rL),cR=sqrt(g*pR/rR);
@@ -221,6 +229,23 @@ int main(int argc,char**argv){
         double Phug=hugoniot_P(up);
         printf("Al-on-Al planar (U=%.0f km/s, up=%.0f m/s): peak P=%.3e Pa  Tillotson Hugoniot=%.3e (err %.1f%%)\n",2*up/1000.0,up,Pmax,Phug,100*fabs(Pmax-Phug)/Phug);
         printf("GATE (shock P matches analytic Hugoniot, <5%%): %s\n",(fabs(Pmax-Phug)/Phug<0.05)?"PASS":"CHECK");
+    } else if(mode=="collapse"){ // acoustic-fluidization demo: a basalt step slumps if fluidized, holds if not
+        MAT=Material::basalt(); GZ=3.71; double rho0=2700,A=2.67e10; int NXc=80,NZc=40;double dx=500.0,CFL=0.4;
+        double zlo=10e3,h0=4e3,zhi=zlo+h0,tend=8.0; double hfin[2]; const char*lbl[2]={"AF-on ","AF-off"};
+        for(int run=0;run<2;run++){
+            TDEC=(run==0?1e6:0.0); ETA_AF=(run==0?1e9:0.0); RHO_CFL=100.0; Grid g(NXc,1,NZc,dx);   // exclude only the true ambient (0.27)
+            for(int i=0;i<NXc;i++)for(int k=0;k<NZc;k++){double x=(i+0.5)*dx,z=(k+0.5)*dx;int c=g.idx(i,0,k);double zs=(x<0.5*NXc*dx?zhi:zlo);
+                if(z<zs){g.r[c]=rho0*(1.0+rho0*GZ*(zs-z)/A); if(run==0)g.af[c]=1.0;} else g.r[c]=0.27; g.E[c]=0;}   // cold lithostatic step
+            double t=0;int s=0;while(t<tend){double dt=CFL*dx/maxspeed(g);if(t+dt>tend)dt=tend-t;step_rk2(g,dt);
+                for(int i=0;i<NXc;i++)for(int k=0;k<2;k++){double zs=(((i+0.5)*dx)<0.5*NXc*dx?zhi:zlo),z=(k+0.5)*dx;int c=g.idx(i,0,k);
+                    g.r[c]=rho0*(1.0+rho0*GZ*(zs-z)/A);g.mu[c]=g.mv[c]=g.mw[c]=0;g.E[c]=0;g.Sxx[c]=g.Syy[c]=g.Szz[c]=g.Sxy[c]=g.Sxz[c]=g.Syz[c]=0;}  // held floor
+                t+=dt;s++;}
+            double smx=0,smn=1e30,vmx=0;for(int i=0;i<NXc;i++)for(int k=0;k<NZc;k++){int c=g.idx(i,0,k);if(g.r[c]>1350)vmx=max(vmx,sqrt(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c]);}
+            for(int i=0;i<NXc;i++){double sf=0;for(int k=NZc-1;k>=0;k--){if(g.r[g.idx(i,0,k)]>1350){sf=(k+0.5)*dx;break;}}smx=max(smx,sf);smn=min(smn,sf);}
+            hfin[run]=smx-smn; printf("  %s: step height=%.2f km, max|v|=%.1f m/s (steps %d, t=%.1f)\n",lbl[run],hfin[run]/1e3,vmx,s,t);
+        }
+        printf("AF collapse: h0=%.1f km -> AF-on %.2f km, AF-off %.2f km\n",h0/1e3,hfin[0]/1e3,hfin[1]/1e3);
+        printf("GATE (AF slumps step <0.5*h0 & no-AF holds >0.7*h0): %s\n",(hfin[0]<0.5*h0&&hfin[1]>0.7*h0)?"PASS":"CHECK");
     } else { // surface
         MAT=Material::basalt();int N=64;double L=200e3,dx=L/N,tend=2.0,CFL=0.4;Grid g(1,1,N,dx);
         for(int k=0;k<N;k++){double z=(k+0.5)*dx;double rr=z<0.5*L?2700:0.27;int c=g.idx(0,0,k);g.r[c]=rr;g.E[c]=0;}
