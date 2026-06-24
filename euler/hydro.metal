@@ -2,7 +2,7 @@
 using namespace metal;
 // euler M2b: GPU hydro with pluggable EOS (ideal | Tillotson) + free surface. FP32.
 // Mirrors hydro_cpu.cpp (the oracle). Reconstructs internal energy e; P>=0 fluid floor.
-struct GMat { float rho0,A,B,a,b,alpha,beta,u0,uiv,ucv; };
+struct GMat { float rho0,A,B,a,b,alpha,beta,u0,uiv,ucv, G,Y; };
 struct C5 { float r,mu,mv,mw,E; };
 // ---- Tillotson (copied verbatim from gpu/sph_force.metal, the SPH-validated EOS) ----
 inline float till(float rho,float u,constant GMat&m){
@@ -110,7 +110,8 @@ kernel void wavespeed(device const float*r[[buffer(0)]],device const float*mu[[b
                 constant int&mode[[buffer(6)]],constant float&gam[[buffer(7)]],constant GMat&mat[[buffer(8)]],
                 constant uint&n[[buffer(9)]],uint g[[thread_position_in_grid]]){
     if(g>=n)return; C5 c=rdc(r,mu,mv,mw,E,g); float2 pc=eospc(c.r,eint(c),mode,gam,mat);
-    s[g]=sqrt(c.mu*c.mu+c.mv*c.mv+c.mw*c.mw)/c.r+pc.y;
+    float cel=sqrt(pc.y*pc.y + ((mode!=0&&mat.G>0.0f)?(4.0f/3.0f)*mat.G/c.r:0.0f));   // elastic speed (strength only)
+    s[g]=sqrt(c.mu*c.mu+c.mv*c.mv+c.mw*c.mw)/c.r+cel;
 }
 kernel void rk1(device const float*r[[buffer(0)]],device const float*mu[[buffer(1)]],device const float*mv[[buffer(2)]],
                 device const float*mw[[buffer(3)]],device const float*E[[buffer(4)]],
@@ -130,4 +131,74 @@ kernel void rk2(device float*r[[buffer(0)]],device float*mu[[buffer(1)]],device 
                 constant float&dt[[buffer(15)]],constant uint&n[[buffer(16)]],uint g[[thread_position_in_grid]]){
     if(g>=n)return; r[g]=0.5f*(r[g]+r1[g]+dt*dr[g]);mu[g]=0.5f*(mu[g]+mu1[g]+dt*dmu[g]);mv[g]=0.5f*(mv[g]+mv1[g]+dt*dmv[g]);
     mw[g]=0.5f*(mw[g]+mw1[g]+dt*dmw[g]);E[g]=0.5f*(E[g]+E1[g]+dt*dE[g]);
+}
+// ---- M3: strength. ADDS div-S to momentum & div(S.v) to energy; writes dS (Jaumann+2G*edev-adv). ----
+kernel void strength(device const float*r[[buffer(0)]],device const float*mu[[buffer(1)]],device const float*mv[[buffer(2)]],
+    device const float*mw[[buffer(3)]],device const float*E[[buffer(4)]],
+    device const float*Sxx[[buffer(5)]],device const float*Syy[[buffer(6)]],device const float*Szz[[buffer(7)]],
+    device const float*Sxy[[buffer(8)]],device const float*Sxz[[buffer(9)]],device const float*Syz[[buffer(10)]],
+    device float*dmu[[buffer(11)]],device float*dmv[[buffer(12)]],device float*dmw[[buffer(13)]],device float*dE[[buffer(14)]],
+    device float*dSxx[[buffer(15)]],device float*dSyy[[buffer(16)]],device float*dSzz[[buffer(17)]],
+    device float*dSxy[[buffer(18)]],device float*dSxz[[buffer(19)]],device float*dSyz[[buffer(20)]],
+    constant int&nx[[buffer(21)]],constant int&ny[[buffer(22)]],constant int&nz[[buffer(23)]],
+    constant float&invdx[[buffer(24)]],constant GMat&mat[[buffer(25)]],constant uint&n[[buffer(26)]],
+    uint gid[[thread_position_in_grid]]){
+    if(gid>=n)return; float G=mat.G; if(G<=0.0f)return;
+    int k=gid%nz,j=(gid/nz)%ny,i=gid/(ny*nz);
+    int xm=((i>0?i-1:0)*ny+j)*nz+k, xp=((i<nx-1?i+1:nx-1)*ny+j)*nz+k;
+    int ym=(i*ny+(j>0?j-1:0))*nz+k, yp=(i*ny+(j<ny-1?j+1:ny-1))*nz+k;
+    int zm=(i*ny+j)*nz+(k>0?k-1:0), zp=(i*ny+j)*nz+(k<nz-1?k+1:nz-1);
+    float dx=1.0f/invdx;
+    float hx=((i>0&&i<nx-1)?2.0f:1.0f)*dx, hy=((j>0&&j<ny-1)?2.0f:1.0f)*dx, hz=((k>0&&k<nz-1)?2.0f:1.0f)*dx;
+    #define VX(c) (mu[c]/r[c])
+    #define VY(c) (mv[c]/r[c])
+    #define VZ(c) (mw[c]/r[c])
+    float Lxx=(VX(xp)-VX(xm))/hx, Lxy=(VX(yp)-VX(ym))/hy, Lxz=(VX(zp)-VX(zm))/hz;
+    float Lyx=(VY(xp)-VY(xm))/hx, Lyy=(VY(yp)-VY(ym))/hy, Lyz=(VY(zp)-VY(zm))/hz;
+    float Lzx=(VZ(xp)-VZ(xm))/hx, Lzy=(VZ(yp)-VZ(ym))/hy, Lzz=(VZ(zp)-VZ(zm))/hz;
+    float exx=Lxx,eyy=Lyy,ezz=Lzz,exy=0.5f*(Lxy+Lyx),exz=0.5f*(Lxz+Lzx),eyz=0.5f*(Lyz+Lzy),tr=(exx+eyy+ezz)/3.0f;
+    float Wxy=0.5f*(Lxy-Lyx),Wxz=0.5f*(Lxz-Lzx),Wyz=0.5f*(Lyz-Lzy);
+    float sxx=Sxx[gid],syy=Syy[gid],szz=Szz[gid],sxy=Sxy[gid],sxz=Sxz[gid],syz=Syz[gid];
+    float Sm[3][3]={{sxx,sxy,sxz},{sxy,syy,syz},{sxz,syz,szz}},Wm[3][3]={{0,Wxy,Wxz},{-Wxy,0,Wyz},{-Wxz,-Wyz,0}},Jm[3][3];
+    for(int a=0;a<3;a++)for(int bb=0;bb<3;bb++){float s=0;for(int cc=0;cc<3;cc++)s+=Sm[a][cc]*Wm[cc][bb]-Wm[a][cc]*Sm[cc][bb];Jm[a][bb]=s;}
+    float u=VX(gid),v=VY(gid),w=VZ(gid);
+    #define ADV(S) ( u*(u>0.0f?(S[gid]-S[xm])/((i>0)?dx:1e30f):(S[xp]-S[gid])/((i<nx-1)?dx:1e30f)) \
+                  + v*(v>0.0f?(S[gid]-S[ym])/((j>0)?dx:1e30f):(S[yp]-S[gid])/((j<ny-1)?dx:1e30f)) \
+                  + w*(w>0.0f?(S[gid]-S[zm])/((k>0)?dx:1e30f):(S[zp]-S[gid])/((k<nz-1)?dx:1e30f)) )
+    dSxx[gid]=2*G*(exx-tr)+Jm[0][0]-ADV(Sxx); dSyy[gid]=2*G*(eyy-tr)+Jm[1][1]-ADV(Syy); dSzz[gid]=2*G*(ezz-tr)+Jm[2][2]-ADV(Szz);
+    dSxy[gid]=2*G*exy+Jm[0][1]-ADV(Sxy); dSxz[gid]=2*G*exz+Jm[0][2]-ADV(Sxz); dSyz[gid]=2*G*eyz+Jm[1][2]-ADV(Syz);
+    dmu[gid]+=(Sxx[xp]-Sxx[xm])/hx+(Sxy[yp]-Sxy[ym])/hy+(Sxz[zp]-Sxz[zm])/hz;
+    dmv[gid]+=(Sxy[xp]-Sxy[xm])/hx+(Syy[yp]-Syy[ym])/hy+(Syz[zp]-Syz[zm])/hz;
+    dmw[gid]+=(Sxz[xp]-Sxz[xm])/hx+(Syz[yp]-Syz[ym])/hy+(Szz[zp]-Szz[zm])/hz;
+    #define SVX(c) (Sxx[c]*VX(c)+Sxy[c]*VY(c)+Sxz[c]*VZ(c))
+    #define SVY(c) (Sxy[c]*VX(c)+Syy[c]*VY(c)+Syz[c]*VZ(c))
+    #define SVZ(c) (Sxz[c]*VX(c)+Syz[c]*VY(c)+Szz[c]*VZ(c))
+    dE[gid]+=(SVX(xp)-SVX(xm))/hx+(SVY(yp)-SVY(ym))/hy+(SVZ(zp)-SVZ(zm))/hz;
+}
+kernel void vonmises(device float*Sxx[[buffer(0)]],device float*Syy[[buffer(1)]],device float*Szz[[buffer(2)]],
+    device float*Sxy[[buffer(3)]],device float*Sxz[[buffer(4)]],device float*Syz[[buffer(5)]],
+    constant GMat&mat[[buffer(6)]],constant uint&n[[buffer(7)]],uint g[[thread_position_in_grid]]){
+    if(g>=n)return; float Y=mat.Y; if(Y<=0.0f)return;
+    float J2=0.5f*(Sxx[g]*Sxx[g]+Syy[g]*Syy[g]+Szz[g]*Szz[g])+Sxy[g]*Sxy[g]+Sxz[g]*Sxz[g]+Syz[g]*Syz[g];
+    float vm=sqrt(3.0f*J2); if(vm>Y){float f=Y/vm; Sxx[g]*=f;Syy[g]*=f;Szz[g]*=f;Sxy[g]*=f;Sxz[g]*=f;Syz[g]*=f;}
+}
+kernel void rk1s(device const float*Sxx[[buffer(0)]],device const float*Syy[[buffer(1)]],device const float*Szz[[buffer(2)]],
+    device const float*Sxy[[buffer(3)]],device const float*Sxz[[buffer(4)]],device const float*Syz[[buffer(5)]],
+    device const float*dSxx[[buffer(6)]],device const float*dSyy[[buffer(7)]],device const float*dSzz[[buffer(8)]],
+    device const float*dSxy[[buffer(9)]],device const float*dSxz[[buffer(10)]],device const float*dSyz[[buffer(11)]],
+    device float*S1xx[[buffer(12)]],device float*S1yy[[buffer(13)]],device float*S1zz[[buffer(14)]],
+    device float*S1xy[[buffer(15)]],device float*S1xz[[buffer(16)]],device float*S1yz[[buffer(17)]],
+    constant float&dt[[buffer(18)]],constant uint&n[[buffer(19)]],uint g[[thread_position_in_grid]]){
+    if(g>=n)return; S1xx[g]=Sxx[g]+dt*dSxx[g];S1yy[g]=Syy[g]+dt*dSyy[g];S1zz[g]=Szz[g]+dt*dSzz[g];
+    S1xy[g]=Sxy[g]+dt*dSxy[g];S1xz[g]=Sxz[g]+dt*dSxz[g];S1yz[g]=Syz[g]+dt*dSyz[g];
+}
+kernel void rk2s(device float*Sxx[[buffer(0)]],device float*Syy[[buffer(1)]],device float*Szz[[buffer(2)]],
+    device float*Sxy[[buffer(3)]],device float*Sxz[[buffer(4)]],device float*Syz[[buffer(5)]],
+    device const float*S1xx[[buffer(6)]],device const float*S1yy[[buffer(7)]],device const float*S1zz[[buffer(8)]],
+    device const float*S1xy[[buffer(9)]],device const float*S1xz[[buffer(10)]],device const float*S1yz[[buffer(11)]],
+    device const float*dSxx[[buffer(12)]],device const float*dSyy[[buffer(13)]],device const float*dSzz[[buffer(14)]],
+    device const float*dSxy[[buffer(15)]],device const float*dSxz[[buffer(16)]],device const float*dSyz[[buffer(17)]],
+    constant float&dt[[buffer(18)]],constant uint&n[[buffer(19)]],uint g[[thread_position_in_grid]]){
+    if(g>=n)return; Sxx[g]=0.5f*(Sxx[g]+S1xx[g]+dt*dSxx[g]);Syy[g]=0.5f*(Syy[g]+S1yy[g]+dt*dSyy[g]);Szz[g]=0.5f*(Szz[g]+S1zz[g]+dt*dSzz[g]);
+    Sxy[g]=0.5f*(Sxy[g]+S1xy[g]+dt*dSxy[g]);Sxz[g]=0.5f*(Sxz[g]+S1xz[g]+dt*dSxz[g]);Syz[g]=0.5f*(Syz[g]+S1yz[g]+dt*dSyz[g]);
 }

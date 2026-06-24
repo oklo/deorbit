@@ -44,11 +44,12 @@ M3 or M5 won't validate.**
       ambient. GATES: Sod regression L1 0.0044 (CPU==GPU); basalt free surface
       max|v|=0.000 (static, CPU==GPU); basalt shock GPU-vs-CPU rel 3.3e-7.
       (Impactor color tag deferred to M7 -- passive scalar, not a physics gate.)
-- [~] **M3 strength (elastic-plastic, Jaumann, von Mises).** M3a (CPU) DONE: deviatoric
-      stress S (6 comp), Jaumann rate dS=2G*edev+(SW-WS), v.grad advection, div S ->
-      momentum + div(S.v) -> energy, von Mises radial return. GATES: elastic shear
-      wave c_s 2863 vs sqrt(G/rho) 2900 (1.2%); von Mises cap sqrt(3J2)->Y exactly;
-      Sod/surface regress (strength no-op when G=0). Next: M3b Metal port.
+- [x] **M3 strength (elastic-plastic, Jaumann, von Mises) — DONE (CPU + GPU).**
+      Deviatoric stress S (6 comp): Jaumann rate dS=2G*edev+(SW-WS), v.grad advection,
+      div S -> momentum + div(S.v) -> energy, von Mises radial return; gated on G>0.
+      GATES (CPU==GPU): elastic shear wave c_s 2863 vs sqrt(G/rho) 2900 (1.3%); von
+      Mises cap sqrt(3J2)->Y exactly; Sod/surface regress (strength no-op for ideal gas).
+      THE FLAGGED RISK GATE PASSES on both paths. Metal kernels: strength/vonmises/rk1s/rk2s.
 - [ ] **M4 damage (Grady-Kipp) + gravity** — gate: reuse SPH gates; lithostatic balance.
 - [ ] **M5 Pierazzo et al. (2008) Al-on-Al impact benchmark** — THE CREDIBILITY GATE:
       match the published code-comparison results. Pass/fail for the whole effort.
@@ -58,7 +59,7 @@ M3 or M5 won't validate.**
       3-way figure: MOLA | SPH | euler.
 
 ## Status
-**M3a DONE (CPU)** — elastic-plastic strength validated: shear-wave speed 1.2%,
-von Mises cap exact. The flagged risk gate passes. Next: **M3b** Metal port of the
-strength kernels (GPU==CPU). Then M4 (damage + gravity), M5 (Pierazzo credibility
-gate). SPH (../gpu/) runs in parallel.
+**M3 DONE (CPU + GPU)** — elastic-plastic strength validated on both paths
+(shear-wave speed 1.3%, von Mises cap exact, ideal-gas no-op regression). The
+flagged risk gate passes. Next: **M4** (Grady-Kipp damage + gravity, mostly reused
+from SPH), then **M5 Pierazzo** -- the pass/fail credibility gate. SPH runs in parallel.
