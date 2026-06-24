@@ -14,9 +14,9 @@ EXAG = 1.0          # NO vertical exaggeration -- accuracy over drama
 DZ   = 1500.0       # finer grid to resolve the true-scale (shallow) crater
 SUB  = 2            # 1-in-2 (the crater-region crop already reduces the count)
 EXTRA_BLUR = 1.5
-# camera (per spec): 75 km altitude, 50 km off the midline, 100 km uprange of impact
-# (crater at x ~ -165 km), looking downrange (+x).
-POS   = (-265000.0, -50000.0, 75000.0)
+# camera (per spec, 2x further in each dim): 150 km altitude, 100 km off the
+# midline, 200 km uprange of impact (crater at x ~ -165 km), looking downrange (+x).
+POS   = (-365000.0, -100000.0, 150000.0)
 FOCAL = (-50000.0, 0.0, -2000.0)
 ZOOM  = 1.0
 
@@ -43,7 +43,7 @@ def photo_orcus(R, out):
 
 def render(snap, out):
     d = recon.load(snap)
-    m = (d["x"]>-280e3)&(d["x"]<200e3)&(np.abs(d["y"])<120e3)   # crop to crater region (slab is huge)
+    m = (d["x"]>-380e3)&(d["x"]<200e3)&(np.abs(d["y"])<150e3)   # crop to crater region (slab is huge)
     for k in d: d[k] = d[k][m]
     n = len(d["x"]); keep = np.arange(0, n, SUB)
     for k in d: d[k] = d[k][keep]
