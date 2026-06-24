@@ -87,7 +87,8 @@ kernel void lop(device const float*r[[buffer(0)]],device const float*mu[[buffer(
                 device float*dmw[[buffer(8)]],device float*dE[[buffer(9)]],
                 constant int&nx[[buffer(10)]],constant int&ny[[buffer(11)]],constant int&nz[[buffer(12)]],
                 constant float&invdx[[buffer(13)]],constant int&mode[[buffer(14)]],constant float&gam[[buffer(15)]],
-                constant GMat&mat[[buffer(16)]],constant uint&n[[buffer(17)]],uint gid[[thread_position_in_grid]]){
+                constant GMat&mat[[buffer(16)]],constant uint&n[[buffer(17)]],constant float&gz[[buffer(18)]],
+                uint gid[[thread_position_in_grid]]){
     if(gid>=n) return;
     int k=gid%nz, j=(gid/nz)%ny, i=gid/(ny*nz);
     C5 acc={0,0,0,0,0};
@@ -103,7 +104,8 @@ kernel void lop(device const float*r[[buffer(0)]],device const float*mu[[buffer(
         C5 FRa=faceflux(cm1,c0,cp1,cp2,dir,mode,gam,mat), FLa=faceflux(cm2,cm1,c0,cp1,dir,mode,gam,mat);
         acc.r-=(FRa.r-FLa.r);acc.mu-=(FRa.mu-FLa.mu);acc.mv-=(FRa.mv-FLa.mv);acc.mw-=(FRa.mw-FLa.mw);acc.E-=(FRa.E-FLa.E);
     }
-    dr[gid]=acc.r*invdx;dmu[gid]=acc.mu*invdx;dmv[gid]=acc.mv*invdx;dmw[gid]=acc.mw*invdx;dE[gid]=acc.E*invdx;
+    dr[gid]=acc.r*invdx;dmu[gid]=acc.mu*invdx;dmv[gid]=acc.mv*invdx;
+    dmw[gid]=acc.mw*invdx - gz*r[gid]; dE[gid]=acc.E*invdx - gz*mw[gid];   // gravity body force
 }
 kernel void wavespeed(device const float*r[[buffer(0)]],device const float*mu[[buffer(1)]],device const float*mv[[buffer(2)]],
                 device const float*mw[[buffer(3)]],device const float*E[[buffer(4)]],device float*s[[buffer(5)]],

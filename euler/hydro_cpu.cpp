@@ -13,6 +13,7 @@
 using namespace std;
 static Material MAT = Material::ideal(1.4);
 static double GAM = 1.4;
+static double GZ = 0.0;   // gravity (accel toward -z), m/s^2
 static inline void eos_pc(double rho,double e,double&p,double&cs){ p=MAT.pressure(rho,e); if(p<0)p=0; cs=MAT.sound_speed(rho,e); }
 struct F5 { double r, mn, mt1, mt2, E; };
 static F5 hllc(double rL,double vnL,double t1L,double t2L,double eL,double rR,double vnR,double t1R,double t2R,double eR){
@@ -61,6 +62,7 @@ static void Lop(const Grid&g, DU&d){
         }
     };
     sweep(0);sweep(1);sweep(2);
+    if(GZ!=0.0){ for(int c=0;c<n;c++){ d.mw[c]+=-GZ*g.r[c]; d.E[c]+=-GZ*g.mw[c]; } }   // gravity body force
     if(G<=0) return;                      // no strength (ideal gas) -> done
     // ---- strength sources (per cell, central diffs; clamp at boundaries) ----
     auto vx=[&](int c){return g.mu[c]/g.r[c];}; auto vy=[&](int c){return g.mv[c]/g.r[c];}; auto vz=[&](int c){return g.mw[c]/g.r[c];};
@@ -170,6 +172,21 @@ int main(int argc,char**argv){
         for(int i=0;i<N;i++){double x=(i+0.5)*dx;double rr=x<0.5*L?3000:2700,ee=x<0.5*L?1e6:0;int c=g.idx(i,0,0);g.r[c]=rr;g.E[c]=rr*ee;}
         double t=0;int s=0;while(t<tend){double dt=CFL*dx/maxspeed(g);if(t+dt>tend)dt=tend-t;step_rk2(g,dt);t+=dt;s++;}
         FILE*o=fopen("bshock_cpu.txt","w");for(int i=0;i<N;i++)fprintf(o,"%.8e\n",g.r[g.idx(i,0,0)]);fclose(o);printf("CPU bshock done\n");
+    } else if(mode=="freefall"){ // uniform medium under gravity -> v_z = -g*t exactly
+        MAT=Material::ideal(1.4); GZ=9.8; int N=50;double dx=10.0,tend=10.0,CFL=0.4;Grid g(1,1,N,dx);
+        for(int k=0;k<N;k++){int c=g.idx(0,0,k);g.r[c]=1.0;g.E[c]=1e5/(GAM-1);}
+        double t=0;while(t<tend){double dt=CFL*dx/maxspeed(g);if(t+dt>tend)dt=tend-t;step_rk2(g,dt);t+=dt;}
+        double vexp=-GZ*t,emax=0;for(int k=0;k<N;k++){int c=g.idx(0,0,k);emax=max(emax,fabs(g.mw[c]/g.r[c]-vexp));}
+        printf("Free-fall: v_z=%.4f expected -g*t=%.4f  max err=%.3e\n",g.mw[g.idx(0,0,N/2)]/g.r[g.idx(0,0,N/2)],vexp,emax);
+        printf("GATE (v=-g*t, err<1e-3*|v|): %s\n",(emax<1e-3*fabs(vexp))?"PASS":"CHECK");
+    } else if(mode=="atmos"){ // ideal-gas isothermal hydrostatic atmosphere -> must stay ~static
+        MAT=Material::ideal(1.4); GZ=9.8; double P0=1e5,rho0=1.0,H=P0/(rho0*GZ),cs=sqrt(GAM*P0/rho0);
+        int N=200;double L=4*H,dx=L/N,CFL=0.4; Grid g(1,1,N,dx);
+        for(int k=0;k<N;k++){double z=(k+0.5)*dx;int c=g.idx(0,0,k);g.r[c]=rho0*exp(-z/H);g.E[c]=(P0*exp(-z/H))/(GAM-1);}
+        double tend=0.05*L/cs,t=0;while(t<tend){double dt=CFL*dx/maxspeed(g);if(t+dt>tend)dt=tend-t;step_rk2(g,dt);t+=dt;}
+        double vmax=0;for(int k=80;k<120;k++){int c=g.idx(0,0,k);vmax=max(vmax,fabs(g.mw[c]/g.r[c]));}  // deep interior, pre-boundary-contamination
+        printf("Hydrostatic atmosphere (interior balance): deep max|v|=%.3f m/s  cs=%.0f  ratio=%.4f  t=%.2fs\n",vmax,cs,vmax/cs,t);
+        printf("GATE (interior well-balanced, max|v|<0.02*cs): %s\n",(vmax<0.02*cs)?"PASS":"CHECK");
     } else { // surface
         MAT=Material::basalt();int N=64;double L=200e3,dx=L/N,tend=2.0,CFL=0.4;Grid g(1,1,N,dx);
         for(int k=0;k<N;k++){double z=(k+0.5)*dx;double rr=z<0.5*L?2700:0.27;int c=g.idx(0,0,k);g.r[c]=rr;g.E[c]=0;}

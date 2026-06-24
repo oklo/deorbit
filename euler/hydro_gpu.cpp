@@ -40,14 +40,16 @@ static void exact_sod(double S,double&r,double&u,double&p){
 }
 int main(int argc,char**argv){
     string mode=argc>1?argv[1]:"sod"; double rho0=2700,G=BASALT.G,Y=BASALT.Y,csb=sqrt(G/rho0);
-    int nx,ny,nz,emode; double Ldom,tend,CFL;
+    int nx,ny,nz,emode; double Ldom,tend,CFL; float gz=0.0f;
     if(mode=="sod"){nx=200;ny=nz=1;Ldom=1.0;tend=0.2;CFL=0.4;emode=0;}
     else if(mode=="sedov"){nx=ny=nz=64;Ldom=2.0;tend=0.5;CFL=0.3;emode=0;}
     else if(mode=="surface"){nx=1;ny=1;nz=64;Ldom=200e3;tend=2.0;CFL=0.4;emode=1;}
     else if(mode=="bshock"){nx=400;ny=nz=1;Ldom=400e3;tend=4.0;CFL=0.4;emode=1;}
     else if(mode=="shear"){nx=800;ny=nz=1;Ldom=400e3;tend=20e3/csb;CFL=0.3;emode=1;}
+    else if(mode=="freefall"){nx=ny=1;nz=50;Ldom=500.0;tend=10.0;CFL=0.4;emode=0;gz=9.8f;}
+    else if(mode=="atmos"){nx=ny=1;nz=200;double H=1e5/9.8;Ldom=4*H;tend=0.05*Ldom/sqrt(GAM*1e5);CFL=0.4;emode=0;gz=9.8f;}
     else {nx=400;ny=nz=1;Ldom=400e3;tend=15e3/csb;CFL=0.3;emode=1;}   // yield
-    double dx=Ldom/(mode=="surface"?nz:nx); uint32_t n=nx*ny*nz; float invdx=1.0f/dx; float gam=GAM; bool strn=(emode==1);
+    double dx=Ldom/((nx==1&&ny==1)?nz:nx); uint32_t n=nx*ny*nz; float invdx=1.0f/dx; float gam=GAM; bool strn=(emode==1);
     D_=MTL::CreateSystemDefaultDevice(); Q_=D_->newCommandQueue(); NS::Error* e=nullptr;
     L_=D_->newLibrary(NS::String::string("hydro.metallib",NS::UTF8StringEncoding),&e);
     if(!L_){printf("metallib load failed\n");return 1;}
@@ -63,10 +65,12 @@ int main(int argc,char**argv){
     else if(mode=="sedov"){for(uint32_t c=0;c<n;c++){r[c]=1;E[c]=1e-4/(GAM-1);}int ic=nx/2;E[(ic*ny+ic)*nz+ic]+=1.0/(dx*dx*dx);}
     else if(mode=="surface"){for(int k=0;k<nz;k++){double z=(k+0.5)*dx;r[k]=z<0.5*Ldom?2700.0f:0.27f;E[k]=0;}}
     else if(mode=="bshock"){for(int i=0;i<nx;i++){double x=(i+0.5)*dx;float rr=x<0.5*Ldom?3000.0f:2700.0f,ee=x<0.5*Ldom?1e6f:0.0f;r[i]=rr;E[i]=rr*ee;}}
+    else if(mode=="freefall"){for(int k=0;k<nz;k++){r[k]=1.0f;E[k]=1e5/(GAM-1);}}
+    else if(mode=="atmos"){double H=1e5/9.8;for(int k=0;k<nz;k++){double z=(k+0.5)*dx;r[k]=exp(-z/H);E[k]=(1e5*exp(-z/H))/(GAM-1);}}
     else {double x0=0.3*Ldom,wid=8e3,A=(mode=="shear"?1.0:2000.0);for(int i=0;i<nx;i++){double x=(i+0.5)*dx;r[i]=rho0;double vy=A*exp(-((x-x0)/wid)*((x-x0)/wid));mv[i]=rho0*vy;E[i]=0.5*rho0*vy*vy;}}
     auto Plop=pso("lop"),Pws=pso("wavespeed"),Prk1=pso("rk1"),Prk2=pso("rk2"),Pstr=pso("strength"),Pvm=pso("vonmises"),Prk1s=pso("rk1s"),Prk2s=pso("rk2s");
     int NX=nx,NY=ny,NZ=nz;
-    auto lopA=vector<pair<const void*,size_t>>{{&NX,4},{&NY,4},{&NZ,4},{&invdx,4},{&emode,4},{&gam,4},{&BASALT,sizeof(GMat)},{&n,4}};
+    auto lopA=vector<pair<const void*,size_t>>{{&NX,4},{&NY,4},{&NZ,4},{&invdx,4},{&emode,4},{&gam,4},{&BASALT,sizeof(GMat)},{&n,4},{&gz,4}};
     auto strA=vector<pair<const void*,size_t>>{{&NX,4},{&NY,4},{&NZ,4},{&invdx,4},{&BASALT,sizeof(GMat)},{&n,4}};
     auto vmA=vector<pair<const void*,size_t>>{{&BASALT,sizeof(GMat)},{&n,4}};
     double t=0;int step=0;
@@ -97,6 +101,12 @@ int main(int argc,char**argv){
         double x0=0.3*Ldom; int ip0=(int)(x0/dx); double pk=0,xpk=0;for(int i=ip0+3;i<nx-2;i++){double vy=mv[i]/r[i];if(vy>pk){pk=vy;xpk=(i+0.5)*dx;}}
         double cs_num=(xpk-x0)/t;
         printf("GPU shear wave: c_s_num=%.0f vs sqrt(G/rho)=%.0f (err %.1f%%) amp=%.3f  GATE: %s\n",cs_num,csb,100*fabs(cs_num-csb)/csb,pk,(fabs(cs_num-csb)/csb<0.03)?"PASS":"CHECK");
+    } else if(mode=="freefall"){
+        double vexp=-9.8*t,emax=0;for(int k=0;k<nz;k++)emax=max(emax,(double)fabs(mw[k]/r[k]-vexp));
+        printf("GPU free-fall: v_z=%.4f expected=%.4f max err=%.3e  GATE: %s\n",mw[nz/2]/r[nz/2],vexp,emax,(emax<1e-3*fabs(vexp))?"PASS":"CHECK");
+    } else if(mode=="atmos"){
+        double cs=sqrt(GAM*1e5),vmax=0;for(int k=80;k<120;k++)vmax=max(vmax,(double)fabs(mw[k]/r[k]));
+        printf("GPU hydrostatic atmos: deep max|v|=%.3f cs=%.0f ratio=%.4f  GATE: %s\n",vmax,cs,vmax/cs,(vmax<0.02*cs)?"PASS":"CHECK");
     } else if(mode=="yield"){
         float*Sxx=(float*)bxx->contents(),*Syy=(float*)byy->contents(),*Szz=(float*)bzz->contents(),*Sxy=pxy,*Sxz=(float*)bxz->contents(),*Syz=(float*)byz->contents();
         double smax=0;for(int i=0;i<nx;i++){double J2=0.5*(Sxx[i]*Sxx[i]+Syy[i]*Syy[i]+Szz[i]*Szz[i])+Sxy[i]*Sxy[i]+Sxz[i]*Sxz[i]+Syz[i]*Syz[i];smax=max(smax,sqrt(3*J2));}
