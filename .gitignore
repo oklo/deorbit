@@ -84,3 +84,10 @@ gpu/*.gif
 # Orcus: MOLA tiles (downloadable) + large 1km ICs (regenerable)
 mars_data/
 sph/orcus*.bin
+
+# euler (GPU Eulerian code) build artifacts
+euler/hydro_cpu
+euler/*.o
+euler/*.air
+euler/*.metallib
+euler/*.png
