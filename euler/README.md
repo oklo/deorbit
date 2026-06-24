@@ -50,11 +50,13 @@ M3 or M5 won't validate.**
       GATES (CPU==GPU): elastic shear wave c_s 2863 vs sqrt(G/rho) 2900 (1.3%); von
       Mises cap sqrt(3J2)->Y exactly; Sod/surface regress (strength no-op for ideal gas).
       THE FLAGGED RISK GATE PASSES on both paths. Metal kernels: strength/vonmises/rk1s/rk2s.
-- [~] **M4 damage (Grady-Kipp) + gravity.** Gravity DONE (CPU+GPU): body-force source;
-      free-fall v=-g*t exact, hydrostatic atmosphere interior well-balanced (5e-4 of cs).
-      Damage CPU DONE: D scalar advected, grows via crack ODE d^(1/3)+=(cg/Rs)dt when
-      tensile strain sigmax/Emod > Weibull activation (1/(wk*dx^3))^(1/wm); degrades
-      Y->(1-D)Y. GATE: tensile stretch -> D->1, shear strength -> 0. Next: M4 damage GPU.
+- [x] **M4 damage (Grady-Kipp) + gravity — DONE (CPU + GPU).** Gravity: body-force
+      source; free-fall v=-g*t exact, hydrostatic atmosphere interior well-balanced
+      (5e-4 of cs). Damage: D scalar advected, grows via crack ODE d^(1/3)+=(cg/Rs)dt
+      when tensile strain sigmax/Emod > Weibull activation (1/(wk*dx^3))^(1/wm); degrades
+      Y->(1-D)Y. GATES (CPU==GPU): tensile stretch -> D->1, shear strength -> 0;
+      free-fall + hydrostatic; all prior gates regress. (wk=1e61 overflows FP32 ->
+      eps_act precomputed on host.)
 - [ ] **M5 Pierazzo et al. (2008) Al-on-Al impact benchmark** — THE CREDIBILITY GATE:
       match the published code-comparison results. Pass/fail for the whole effort.
 - [ ] **M6 acoustic fluidization (block model)** — gate: reproduce a known complex
@@ -63,7 +65,7 @@ M3 or M5 won't validate.**
       3-way figure: MOLA | SPH | euler.
 
 ## Status
-**M3 DONE (CPU + GPU)** — elastic-plastic strength validated on both paths
-(shear-wave speed 1.3%, von Mises cap exact, ideal-gas no-op regression). The
-flagged risk gate passes. Next: **M4** (Grady-Kipp damage + gravity, mostly reused
-from SPH), then **M5 Pierazzo** -- the pass/fail credibility gate. SPH runs in parallel.
+**M4 DONE (CPU + GPU)** — gravity (free-fall exact, hydrostatic well-balanced) +
+Grady-Kipp damage (tensile -> D->1 -> strength loss), all gated, GPU==CPU. **4 of 7
+milestones done** (hydro, EOS+free surface, strength, damage+gravity). Next: **M5
+Pierazzo Al-on-Al** -- the pass/fail credibility gate. SPH runs in parallel.

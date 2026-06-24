@@ -12,8 +12,8 @@
 #include <vector>
 #include <algorithm>
 using namespace std;
-struct GMat { float rho0,A,B,a,b,alpha,beta,u0,uiv,ucv,G,Y; };
-static GMat BASALT={2700,2.67e10f,2.67e10f,0.5f,1.5f,5,5,4.87e8f,4.72e6f,1.82e7f,2.27e10f,3.5e8f};
+struct GMat { float rho0,A,B,a,b,alpha,beta,u0,uiv,ucv,G,Y,Emod; };
+static GMat BASALT={2700,2.67e10f,2.67e10f,0.5f,1.5f,5,5,4.87e8f,4.72e6f,1.82e7f,2.27e10f,3.5e8f,5.306e10f};
 static float GAM=1.4f;
 static MTL::Device* D_; static MTL::CommandQueue* Q_; static MTL::Library* L_;
 static MTL::Buffer* buf(size_t b){ auto p=D_->newBuffer(b, MTL::ResourceStorageModeShared); memset(p->contents(),0,b); return p; }
@@ -48,8 +48,10 @@ int main(int argc,char**argv){
     else if(mode=="shear"){nx=800;ny=nz=1;Ldom=400e3;tend=20e3/csb;CFL=0.3;emode=1;}
     else if(mode=="freefall"){nx=ny=1;nz=50;Ldom=500.0;tend=10.0;CFL=0.4;emode=0;gz=9.8f;}
     else if(mode=="atmos"){nx=ny=1;nz=200;double H=1e5/9.8;Ldom=4*H;tend=0.05*Ldom/sqrt(GAM*1e5);CFL=0.4;emode=0;gz=9.8f;}
+    else if(mode=="tensile"){nx=100;ny=nz=1;Ldom=10e3;tend=0.1;CFL=0.3;emode=1;}
     else {nx=400;ny=nz=1;Ldom=400e3;tend=15e3/csb;CFL=0.3;emode=1;}   // yield
     double dx=Ldom/((nx==1&&ny==1)?nz:nx); uint32_t n=nx*ny*nz; float invdx=1.0f/dx; float gam=GAM; bool strn=(emode==1);
+    float epsact=(float)pow(1.0/(1e61*dx*dx*dx),1.0/16.0);   // Weibull weakest-flaw activation strain (host: wk=1e61 overflows FP32)
     D_=MTL::CreateSystemDefaultDevice(); Q_=D_->newCommandQueue(); NS::Error* e=nullptr;
     L_=D_->newLibrary(NS::String::string("hydro.metallib",NS::UTF8StringEncoding),&e);
     if(!L_){printf("metallib load failed\n");return 1;}
@@ -59,6 +61,7 @@ int main(int argc,char**argv){
     auto bxx=buf(n*4),byy=buf(n*4),bzz=buf(n*4),bxy=buf(n*4),bxz=buf(n*4),byz=buf(n*4);
     auto dxx=buf(n*4),dyy=buf(n*4),dzz=buf(n*4),dxy=buf(n*4),dxz=buf(n*4),dyz=buf(n*4);
     auto sxx1=buf(n*4),syy1=buf(n*4),szz1=buf(n*4),sxy1=buf(n*4),sxz1=buf(n*4),syz1=buf(n*4);
+    auto bD=buf(n*4),bdD=buf(n*4),bD1=buf(n*4);   // damage, rate, RK temp
     float*r=(float*)br->contents(),*mu=(float*)bmu->contents(),*mv=(float*)bmv->contents(),*mw=(float*)bmw->contents(),*E=(float*)bE->contents();
     float*pxy=(float*)bxy->contents(); // for shear/yield diagnostics
     if(mode=="sod"){for(int i=0;i<nx;i++){double x=(i+0.5)*dx;float rr=x<0.5?1.0f:0.125f,pp=x<0.5?1.0f:0.1f;r[i]=rr;E[i]=pp/(GAM-1);}}
@@ -67,8 +70,9 @@ int main(int argc,char**argv){
     else if(mode=="bshock"){for(int i=0;i<nx;i++){double x=(i+0.5)*dx;float rr=x<0.5*Ldom?3000.0f:2700.0f,ee=x<0.5*Ldom?1e6f:0.0f;r[i]=rr;E[i]=rr*ee;}}
     else if(mode=="freefall"){for(int k=0;k<nz;k++){r[k]=1.0f;E[k]=1e5/(GAM-1);}}
     else if(mode=="atmos"){double H=1e5/9.8;for(int k=0;k<nz;k++){double z=(k+0.5)*dx;r[k]=exp(-z/H);E[k]=(1e5*exp(-z/H))/(GAM-1);}}
+    else if(mode=="tensile"){double rate=1e-2;for(int i=0;i<nx;i++){double x=(i+0.5)*dx;r[i]=rho0;double vx=rate*(x-0.5*Ldom);mu[i]=rho0*vx;E[i]=0.5*rho0*vx*vx;}}
     else {double x0=0.3*Ldom,wid=8e3,A=(mode=="shear"?1.0:2000.0);for(int i=0;i<nx;i++){double x=(i+0.5)*dx;r[i]=rho0;double vy=A*exp(-((x-x0)/wid)*((x-x0)/wid));mv[i]=rho0*vy;E[i]=0.5*rho0*vy*vy;}}
-    auto Plop=pso("lop"),Pws=pso("wavespeed"),Prk1=pso("rk1"),Prk2=pso("rk2"),Pstr=pso("strength"),Pvm=pso("vonmises"),Prk1s=pso("rk1s"),Prk2s=pso("rk2s");
+    auto Plop=pso("lop"),Pws=pso("wavespeed"),Prk1=pso("rk1"),Prk2=pso("rk2"),Pstr=pso("strength"),Pvm=pso("vonmises"),Prk1s=pso("rk1s"),Prk2s=pso("rk2s"),Pgd=pso("grow_damage");
     int NX=nx,NY=ny,NZ=nz;
     auto lopA=vector<pair<const void*,size_t>>{{&NX,4},{&NY,4},{&NZ,4},{&invdx,4},{&emode,4},{&gam,4},{&BASALT,sizeof(GMat)},{&n,4},{&gz,4}};
     auto strA=vector<pair<const void*,size_t>>{{&NX,4},{&NY,4},{&NZ,4},{&invdx,4},{&BASALT,sizeof(GMat)},{&n,4}};
@@ -78,16 +82,18 @@ int main(int argc,char**argv){
         run(Pws,n,{br,bmu,bmv,bmw,bE,bsp},{{&emode,4},{&gam,4},{&BASALT,sizeof(GMat)},{&n,4}});
         float*sp=(float*)bsp->contents();double smax=1e-30;for(uint32_t c=0;c<n;c++)smax=max(smax,(double)sp[c]);
         float dt=CFL*dx/smax;if(t+dt>tend)dt=tend-t; auto dtA=vector<pair<const void*,size_t>>{{&dt,4},{&n,4}};
+        auto gdA=vector<pair<const void*,size_t>>{{&BASALT,sizeof(GMat)},{&epsact,4},{&invdx,4},{&dt,4},{&n,4}};
         run(Plop,n,{br,bmu,bmv,bmw,bE,bdr,bdmu,bdmv,bdmw,bdE},lopA);
-        if(strn) run(Pstr,n,{br,bmu,bmv,bmw,bE,bxx,byy,bzz,bxy,bxz,byz,bdmu,bdmv,bdmw,bdE,dxx,dyy,dzz,dxy,dxz,dyz},strA);
+        if(strn) run(Pstr,n,{br,bmu,bmv,bmw,bE,bxx,byy,bzz,bxy,bxz,byz,bdmu,bdmv,bdmw,bdE,dxx,dyy,dzz,dxy,dxz,dyz,bD,bdD},strA);
         run(Prk1,n,{br,bmu,bmv,bmw,bE,bdr,bdmu,bdmv,bdmw,bdE,br1,bmu1,bmv1,bmw1,bE1},dtA);
-        if(strn){ run(Prk1s,n,{bxx,byy,bzz,bxy,bxz,byz,dxx,dyy,dzz,dxy,dxz,dyz,sxx1,syy1,szz1,sxy1,sxz1,syz1},dtA);
-                  run(Pvm,n,{sxx1,syy1,szz1,sxy1,sxz1,syz1},vmA); }
+        if(strn){ run(Prk1s,n,{bxx,byy,bzz,bxy,bxz,byz,dxx,dyy,dzz,dxy,dxz,dyz,sxx1,syy1,szz1,sxy1,sxz1,syz1,bD,bdD,bD1},dtA);
+                  run(Pvm,n,{sxx1,syy1,szz1,sxy1,sxz1,syz1,bD1},vmA); }
         run(Plop,n,{br1,bmu1,bmv1,bmw1,bE1,bdr,bdmu,bdmv,bdmw,bdE},lopA);
-        if(strn) run(Pstr,n,{br1,bmu1,bmv1,bmw1,bE1,sxx1,syy1,szz1,sxy1,sxz1,syz1,bdmu,bdmv,bdmw,bdE,dxx,dyy,dzz,dxy,dxz,dyz},strA);
+        if(strn) run(Pstr,n,{br1,bmu1,bmv1,bmw1,bE1,sxx1,syy1,szz1,sxy1,sxz1,syz1,bdmu,bdmv,bdmw,bdE,dxx,dyy,dzz,dxy,dxz,dyz,bD1,bdD},strA);
         run(Prk2,n,{br,bmu,bmv,bmw,bE,br1,bmu1,bmv1,bmw1,bE1,bdr,bdmu,bdmv,bdmw,bdE},dtA);
-        if(strn){ run(Prk2s,n,{bxx,byy,bzz,bxy,bxz,byz,sxx1,syy1,szz1,sxy1,sxz1,syz1,dxx,dyy,dzz,dxy,dxz,dyz},dtA);
-                  run(Pvm,n,{bxx,byy,bzz,bxy,bxz,byz},vmA); }
+        if(strn){ run(Prk2s,n,{bxx,byy,bzz,bxy,bxz,byz,sxx1,syy1,szz1,sxy1,sxz1,syz1,dxx,dyy,dzz,dxy,dxz,dyz,bD,bD1,bdD},dtA);
+                  run(Pgd,n,{br,bmu,bmv,bmw,bE,bxx,byy,bzz,bD},gdA);
+                  run(Pvm,n,{bxx,byy,bzz,bxy,bxz,byz,bD},vmA); }
         t+=dt;step++;
     }
     if(mode=="sod"){
@@ -111,6 +117,10 @@ int main(int argc,char**argv){
         float*Sxx=(float*)bxx->contents(),*Syy=(float*)byy->contents(),*Szz=(float*)bzz->contents(),*Sxy=pxy,*Sxz=(float*)bxz->contents(),*Syz=(float*)byz->contents();
         double smax=0;for(int i=0;i<nx;i++){double J2=0.5*(Sxx[i]*Sxx[i]+Syy[i]*Syy[i]+Szz[i]*Szz[i])+Sxy[i]*Sxy[i]+Sxz[i]*Sxz[i]+Syz[i]*Syz[i];smax=max(smax,sqrt(3*J2));}
         printf("GPU yield: max sqrt(3J2)=%.4e Y=%.4e ratio=%.4f  GATE: %s\n",smax,Y,smax/Y,(smax<=1.01*Y&&smax>0.9*Y)?"PASS":"CHECK");
+    } else if(mode=="tensile"){
+        float*Dd=(float*)bD->contents(),*Sxx=(float*)bxx->contents();
+        double Dmax=0,Sxxmax=0;for(int i=20;i<nx-20;i++){Dmax=max(Dmax,(double)Dd[i]);Sxxmax=max(Sxxmax,(double)fabs(Sxx[i]));}
+        printf("GPU tensile damage: max D=%.4f max|Sxx|=%.3e (Y=%.3e ratio %.4f)  GATE: %s\n",Dmax,Sxxmax,Y,Sxxmax/Y,(Dmax>0.9&&Sxxmax<0.5*Y)?"PASS":"CHECK");
     } else if(mode=="bshock"){
         FILE*o=fopen("bshock_gpu.txt","w");for(int i=0;i<nx;i++)fprintf(o,"%.8e\n",r[i]);fclose(o);printf("GPU bshock wrote bshock_gpu.txt\n");
     } else printf("GPU %s done steps=%d\n",mode.c_str(),step);
