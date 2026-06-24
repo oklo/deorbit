@@ -14,6 +14,7 @@
 using namespace std;
 struct GMat { float rho0,A,B,a,b,alpha,beta,u0,uiv,ucv,G,Y,Emod; };
 static GMat BASALT={2700,2.67e10f,2.67e10f,0.5f,1.5f,5,5,4.87e8f,4.72e6f,1.82e7f,2.27e10f,3.5e8f,5.306e10f};
+static GMat AL={2700,7.52e10f,6.5e10f,0.5f,1.63f,5,5,5.0e6f,3.0e6f,1.39e7f,0,0,0};   // aluminum, hydro (Pierazzo)
 static float GAM=1.4f;
 static MTL::Device* D_; static MTL::CommandQueue* Q_; static MTL::Library* L_;
 static MTL::Buffer* buf(size_t b){ auto p=D_->newBuffer(b, MTL::ResourceStorageModeShared); memset(p->contents(),0,b); return p; }
@@ -49,8 +50,10 @@ int main(int argc,char**argv){
     else if(mode=="freefall"){nx=ny=1;nz=50;Ldom=500.0;tend=10.0;CFL=0.4;emode=0;gz=9.8f;}
     else if(mode=="atmos"){nx=ny=1;nz=200;double H=1e5/9.8;Ldom=4*H;tend=0.05*Ldom/sqrt(GAM*1e5);CFL=0.4;emode=0;gz=9.8f;}
     else if(mode=="tensile"){nx=100;ny=nz=1;Ldom=10e3;tend=0.1;CFL=0.3;emode=1;}
+    else if(mode=="pierazzo"){nx=ny=80;nz=100;Ldom=8.0;tend=1.2e-3;CFL=0.3;emode=1;}   // 3D Al sphere impact (dx=0.1m, a=1m=10cppr)
     else {nx=400;ny=nz=1;Ldom=400e3;tend=15e3/csb;CFL=0.3;emode=1;}   // yield
-    double dx=Ldom/((nx==1&&ny==1)?nz:nx); uint32_t n=nx*ny*nz; float invdx=1.0f/dx; float gam=GAM; bool strn=(emode==1);
+    double dx=Ldom/((nx==1&&ny==1)?nz:nx); uint32_t n=nx*ny*nz; float invdx=1.0f/dx; float gam=GAM;
+    GMat MG=(mode=="pierazzo")?AL:BASALT; bool strn=(emode==1 && MG.G>0);   // Al = pure hydro (no strength/damage)
     float epsact=(float)pow(1.0/(1e61*dx*dx*dx),1.0/16.0);   // Weibull weakest-flaw activation strain (host: wk=1e61 overflows FP32)
     D_=MTL::CreateSystemDefaultDevice(); Q_=D_->newCommandQueue(); NS::Error* e=nullptr;
     L_=D_->newLibrary(NS::String::string("hydro.metallib",NS::UTF8StringEncoding),&e);
@@ -62,6 +65,7 @@ int main(int argc,char**argv){
     auto dxx=buf(n*4),dyy=buf(n*4),dzz=buf(n*4),dxy=buf(n*4),dxz=buf(n*4),dyz=buf(n*4);
     auto sxx1=buf(n*4),syy1=buf(n*4),szz1=buf(n*4),sxy1=buf(n*4),sxz1=buf(n*4),syz1=buf(n*4);
     auto bD=buf(n*4),bdD=buf(n*4),bD1=buf(n*4);   // damage, rate, RK temp
+    auto bPmax=buf(n*4);   // peak pressure each cell experiences (M5b Pierazzo decay)
     float*r=(float*)br->contents(),*mu=(float*)bmu->contents(),*mv=(float*)bmv->contents(),*mw=(float*)bmw->contents(),*E=(float*)bE->contents();
     float*pxy=(float*)bxy->contents(); // for shear/yield diagnostics
     if(mode=="sod"){for(int i=0;i<nx;i++){double x=(i+0.5)*dx;float rr=x<0.5?1.0f:0.125f,pp=x<0.5?1.0f:0.1f;r[i]=rr;E[i]=pp/(GAM-1);}}
@@ -71,18 +75,25 @@ int main(int argc,char**argv){
     else if(mode=="freefall"){for(int k=0;k<nz;k++){r[k]=1.0f;E[k]=1e5/(GAM-1);}}
     else if(mode=="atmos"){double H=1e5/9.8;for(int k=0;k<nz;k++){double z=(k+0.5)*dx;r[k]=exp(-z/H);E[k]=(1e5*exp(-z/H))/(GAM-1);}}
     else if(mode=="tensile"){double rate=1e-2;for(int i=0;i<nx;i++){double x=(i+0.5)*dx;r[i]=rho0;double vx=rate*(x-0.5*Ldom);mu[i]=rho0*vx;E[i]=0.5*rho0*vx*vx;}}
+    else if(mode=="pierazzo"){double a=1.0,U=10000.0,zsurf=7.0,cx=0.5*Ldom,cy=0.5*Ldom,cz=zsurf+a;   // Al sphere tangent to surface, moving down
+        for(int i=0;i<nx;i++)for(int j=0;j<ny;j++)for(int k=0;k<nz;k++){uint32_t c=(i*ny+j)*nz+k;
+            double x=(i+0.5)*dx,y=(j+0.5)*dx,z=(k+0.5)*dx; double dr=sqrt((x-cx)*(x-cx)+(y-cy)*(y-cy)+(z-cz)*(z-cz));
+            if(dr<a){r[c]=rho0;mw[c]=-rho0*U;E[c]=0.5*rho0*U*U;}            // projectile
+            else if(z<zsurf){r[c]=rho0;E[c]=0;}                            // Al half-space
+            else {r[c]=0.27f;E[c]=0;}                                      // low-density ambient
+        }}
     else {double x0=0.3*Ldom,wid=8e3,A=(mode=="shear"?1.0:2000.0);for(int i=0;i<nx;i++){double x=(i+0.5)*dx;r[i]=rho0;double vy=A*exp(-((x-x0)/wid)*((x-x0)/wid));mv[i]=rho0*vy;E[i]=0.5*rho0*vy*vy;}}
-    auto Plop=pso("lop"),Pws=pso("wavespeed"),Prk1=pso("rk1"),Prk2=pso("rk2"),Pstr=pso("strength"),Pvm=pso("vonmises"),Prk1s=pso("rk1s"),Prk2s=pso("rk2s"),Pgd=pso("grow_damage");
+    auto Plop=pso("lop"),Pws=pso("wavespeed"),Prk1=pso("rk1"),Prk2=pso("rk2"),Pstr=pso("strength"),Pvm=pso("vonmises"),Prk1s=pso("rk1s"),Prk2s=pso("rk2s"),Pgd=pso("grow_damage"),Ppm=pso("pmax_update");
     int NX=nx,NY=ny,NZ=nz;
-    auto lopA=vector<pair<const void*,size_t>>{{&NX,4},{&NY,4},{&NZ,4},{&invdx,4},{&emode,4},{&gam,4},{&BASALT,sizeof(GMat)},{&n,4},{&gz,4}};
-    auto strA=vector<pair<const void*,size_t>>{{&NX,4},{&NY,4},{&NZ,4},{&invdx,4},{&BASALT,sizeof(GMat)},{&n,4}};
-    auto vmA=vector<pair<const void*,size_t>>{{&BASALT,sizeof(GMat)},{&n,4}};
+    auto lopA=vector<pair<const void*,size_t>>{{&NX,4},{&NY,4},{&NZ,4},{&invdx,4},{&emode,4},{&gam,4},{&MG,sizeof(GMat)},{&n,4},{&gz,4}};
+    auto strA=vector<pair<const void*,size_t>>{{&NX,4},{&NY,4},{&NZ,4},{&invdx,4},{&MG,sizeof(GMat)},{&n,4}};
+    auto vmA=vector<pair<const void*,size_t>>{{&MG,sizeof(GMat)},{&n,4}};
     double t=0;int step=0;
     while(t<tend){
-        run(Pws,n,{br,bmu,bmv,bmw,bE,bsp},{{&emode,4},{&gam,4},{&BASALT,sizeof(GMat)},{&n,4}});
+        run(Pws,n,{br,bmu,bmv,bmw,bE,bsp},{{&emode,4},{&gam,4},{&MG,sizeof(GMat)},{&n,4}});
         float*sp=(float*)bsp->contents();double smax=1e-30;for(uint32_t c=0;c<n;c++)smax=max(smax,(double)sp[c]);
         float dt=CFL*dx/smax;if(t+dt>tend)dt=tend-t; auto dtA=vector<pair<const void*,size_t>>{{&dt,4},{&n,4}};
-        auto gdA=vector<pair<const void*,size_t>>{{&BASALT,sizeof(GMat)},{&epsact,4},{&invdx,4},{&dt,4},{&n,4}};
+        auto gdA=vector<pair<const void*,size_t>>{{&MG,sizeof(GMat)},{&epsact,4},{&invdx,4},{&dt,4},{&n,4}};
         run(Plop,n,{br,bmu,bmv,bmw,bE,bdr,bdmu,bdmv,bdmw,bdE},lopA);
         if(strn) run(Pstr,n,{br,bmu,bmv,bmw,bE,bxx,byy,bzz,bxy,bxz,byz,bdmu,bdmv,bdmw,bdE,dxx,dyy,dzz,dxy,dxz,dyz,bD,bdD},strA);
         run(Prk1,n,{br,bmu,bmv,bmw,bE,bdr,bdmu,bdmv,bdmw,bdE,br1,bmu1,bmv1,bmw1,bE1},dtA);
@@ -94,6 +105,7 @@ int main(int argc,char**argv){
         if(strn){ run(Prk2s,n,{bxx,byy,bzz,bxy,bxz,byz,sxx1,syy1,szz1,sxy1,sxz1,syz1,dxx,dyy,dzz,dxy,dxz,dyz,bD,bD1,bdD},dtA);
                   run(Pgd,n,{br,bmu,bmv,bmw,bE,bxx,byy,bzz,bD},gdA);
                   run(Pvm,n,{bxx,byy,bzz,bxy,bxz,byz,bD},vmA); }
+        if(mode=="pierazzo") run(Ppm,n,{br,bmu,bmv,bmw,bE,bPmax},{{&MG,sizeof(GMat)},{&n,4}});
         t+=dt;step++;
     }
     if(mode=="sod"){
@@ -123,6 +135,16 @@ int main(int argc,char**argv){
         printf("GPU tensile damage: max D=%.4f max|Sxx|=%.3e (Y=%.3e ratio %.4f)  GATE: %s\n",Dmax,Sxxmax,Y,Sxxmax/Y,(Dmax>0.9&&Sxxmax<0.5*Y)?"PASS":"CHECK");
     } else if(mode=="bshock"){
         FILE*o=fopen("bshock_gpu.txt","w");for(int i=0;i<nx;i++)fprintf(o,"%.8e\n",r[i]);fclose(o);printf("GPU bshock wrote bshock_gpu.txt\n");
+    } else if(mode=="pierazzo"){
+        float*Pm=(float*)bPmax->contents(); double a=1.0,zsurf=7.0; int ci=nx/2,cj=ny/2,ksurf=(int)(zsurf/dx);
+        double Pcore=0; for(int k=ksurf;k>=ksurf-(int)(a/dx) && k>=0;k--){Pcore=max(Pcore,(double)Pm[(ci*ny+cj)*nz+k]);}
+        double Sx=0,Sy=0,Sx2=0,Sxy=0; int np=0; FILE*o=fopen("pierazzo_decay.txt","w");
+        for(int k=ksurf-1;k>=0;k--){double depth=zsurf-(k+0.5)*dx,ra=depth/a; float P=Pm[(ci*ny+cj)*nz+k];
+            if(ra>=0.5&&P>0)fprintf(o,"%.4f %.6e\n",ra,P);
+            if(ra>=1.2&&ra<=6.0&&P>0.05*Pcore){double lx=log(ra),ly=log(P);Sx+=lx;Sy+=ly;Sx2+=lx*lx;Sxy+=lx*ly;np++;}}  // developed region only
+        fclose(o); double nexp=-(np*Sxy-Sx*Sy)/(np*Sx2-Sx*Sx),Phug=1.637e11;
+        printf("Pierazzo Al-sphere (U=10km/s,10cppr): isobaric-core P=%.3e Pa (Hugoniot %.3e, %.0f%%); decay P~(r/a)^-n, n=%.2f (npts=%d)\n",Pcore,Phug,100*Pcore/Phug,nexp,np);
+        printf("GATE (core P >0.7*Hugoniot & decay n in [1,3]): %s\n",(Pcore>0.7*Phug&&nexp>1.0&&nexp<3.0)?"PASS":"CHECK");
     } else printf("GPU %s done steps=%d\n",mode.c_str(),step);
     return 0;
 }

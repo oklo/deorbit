@@ -220,3 +220,10 @@ kernel void rk2s(device float*Sxx[[buffer(0)]],device float*Syy[[buffer(1)]],dev
     if(g>=n)return; Sxx[g]=0.5f*(Sxx[g]+S1xx[g]+dt*dSxx[g]);Syy[g]=0.5f*(Syy[g]+S1yy[g]+dt*dSyy[g]);Szz[g]=0.5f*(Szz[g]+S1zz[g]+dt*dSzz[g]);
     Sxy[g]=0.5f*(Sxy[g]+S1xy[g]+dt*dSxy[g]);Sxz[g]=0.5f*(Sxz[g]+S1xz[g]+dt*dSxz[g]);Syz[g]=0.5f*(Syz[g]+S1yz[g]+dt*dSyz[g]);Dd[g]=0.5f*(Dd[g]+D1[g]+dt*dD[g]);
 }
+// M5b: track the peak pressure each cell experiences (Pierazzo decay diagnostic)
+kernel void pmax_update(device const float*r[[buffer(0)]],device const float*mu[[buffer(1)]],device const float*mv[[buffer(2)]],
+    device const float*mw[[buffer(3)]],device const float*E[[buffer(4)]],device float*Pmax[[buffer(5)]],
+    constant GMat&mat[[buffer(6)]],constant uint&n[[buffer(7)]],uint g[[thread_position_in_grid]]){
+    if(g>=n)return; C5 c={r[g],mu[g],mv[g],mw[g],E[g]}; float P=till(c.r,eint(c),mat); if(P<0.0f)P=0.0f;
+    Pmax[g]=max(Pmax[g],P);
+}
