@@ -109,6 +109,12 @@ int main(int argc,char**argv){
         double Ranal=pow(E0*t*t/(0.851*rho0),0.2);
         printf("Sedov N=%d steps=%d  R_num=%.4f R_anal=%.4f (err %.1f%%)\n",N,s,Rsh,Ranal,100*fabs(Rsh-Ranal)/Ranal);
         printf("GATE (R<10%%): %s\n",(fabs(Rsh-Ranal)/Ranal<0.10)?"PASS":"CHECK");
+    } else if(mode=="bshock"){ // basalt shock (no analytic) -- CPU vs GPU dynamic-EOS cross-check
+        MAT=Material::basalt(); int N=400;double L=400e3,dx=L/N,tend=4.0,CFL=0.4; Grid g(N,1,1,dx);
+        for(int i=0;i<N;i++){double x=(i+0.5)*dx;double rr=x<0.5*L?3000:2700,ee=x<0.5*L?1e6:0;int c=g.idx(i,0,0);g.r[c]=rr;g.mu[c]=g.mv[c]=g.mw[c]=0;g.E[c]=rr*ee;}
+        double t=0;int s=0;while(t<tend){double dt=CFL*dx/maxspeed(g);if(t+dt>tend)dt=tend-t;step_rk2(g,dt);t+=dt;s++;}
+        FILE*o=fopen("bshock_cpu.txt","w");for(int i=0;i<N;i++)fprintf(o,"%.8e\n",g.r[g.idx(i,0,0)]);fclose(o);
+        printf("CPU bshock steps=%d t=%.2f  wrote bshock_cpu.txt\n",s,t);
     } else { // surface: basalt block + low-density ambient, NO gravity -> must stay static
         MAT=Material::basalt(); int N=64;double L=200e3,dx=L/N,tend=2.0,CFL=0.4; double rho0=2700,ramb=0.27;
         Grid g(1,1,N,dx);   // 1D column in z

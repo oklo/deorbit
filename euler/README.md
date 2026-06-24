@@ -38,11 +38,12 @@ M3 or M5 won't validate.**
 - [x] **M1b Metal GPU port** — DONE: FP32 GPU matches FP64 CPU to printed precision
       on both gates (Sod L1 0.0042 identical; Sedov R 0.776 / 0.8% / comp 3.12 identical).
       Per-cell divergence (MUSCL+HLLC, 13-pt stencil) + RK2; regular grid = clean GPU map.
-- [~] **M2 Tillotson EOS + free surface.** M2a (CPU) DONE: pluggable EOS via
-      ../sph/eos.hpp (reconstruct internal energy; P>=0 fluid floor; low-density
-      ambient). GATES: Sod regression L1 0.0044 (unchanged); basalt|ambient free
-      surface max|v|=0.000 (perfectly static). Next: M2b Metal port + color tag
-      (impactor) + a dynamic free-surface/shock check.
+- [x] **M2 Tillotson EOS + free surface — DONE (CPU + GPU).** Pluggable EOS
+      (ideal | Tillotson via ../sph/eos.hpp & MSL port of sph_force.metal's
+      till/ssound); reconstruct internal energy; P>=0 fluid floor + low-density
+      ambient. GATES: Sod regression L1 0.0044 (CPU==GPU); basalt free surface
+      max|v|=0.000 (static, CPU==GPU); basalt shock GPU-vs-CPU rel 3.3e-7.
+      (Impactor color tag deferred to M7 -- passive scalar, not a physics gate.)
 - [ ] **M3 strength (elastic-plastic, Jaumann, von Mises)** — THE HARD PART (advecting
       the stress tensor through the remap). gate: elastic-plastic benchmark.
 - [ ] **M4 damage (Grady-Kipp) + gravity** — gate: reuse SPH gates; lithostatic balance.
@@ -54,6 +55,7 @@ M3 or M5 won't validate.**
       3-way figure: MOLA | SPH | euler.
 
 ## Status
-**M1 DONE** — CPU reference + Metal GPU port both validated (Sod + Sedov; GPU==CPU to
-printed precision). Next: M2 (Tillotson EOS + multi-material VOF + vacuum/free surface).
-SPH (../gpu/) runs in parallel as the oracle.
+**M2 DONE** — hydro + Tillotson EOS + clean free surface, CPU + GPU, all gated
+(Sod, Sedov, static free surface, dynamic basalt shock GPU==CPU 3e-7). Next:
+**M3 strength** (elastic-plastic, Jaumann, von Mises) -- the hard one (advecting
+the deviatoric stress tensor on the grid). SPH (../gpu/) runs in parallel.
