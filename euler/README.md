@@ -44,8 +44,11 @@ M3 or M5 won't validate.**
       ambient. GATES: Sod regression L1 0.0044 (CPU==GPU); basalt free surface
       max|v|=0.000 (static, CPU==GPU); basalt shock GPU-vs-CPU rel 3.3e-7.
       (Impactor color tag deferred to M7 -- passive scalar, not a physics gate.)
-- [ ] **M3 strength (elastic-plastic, Jaumann, von Mises)** — THE HARD PART (advecting
-      the stress tensor through the remap). gate: elastic-plastic benchmark.
+- [~] **M3 strength (elastic-plastic, Jaumann, von Mises).** M3a (CPU) DONE: deviatoric
+      stress S (6 comp), Jaumann rate dS=2G*edev+(SW-WS), v.grad advection, div S ->
+      momentum + div(S.v) -> energy, von Mises radial return. GATES: elastic shear
+      wave c_s 2863 vs sqrt(G/rho) 2900 (1.2%); von Mises cap sqrt(3J2)->Y exactly;
+      Sod/surface regress (strength no-op when G=0). Next: M3b Metal port.
 - [ ] **M4 damage (Grady-Kipp) + gravity** — gate: reuse SPH gates; lithostatic balance.
 - [ ] **M5 Pierazzo et al. (2008) Al-on-Al impact benchmark** — THE CREDIBILITY GATE:
       match the published code-comparison results. Pass/fail for the whole effort.
@@ -55,7 +58,7 @@ M3 or M5 won't validate.**
       3-way figure: MOLA | SPH | euler.
 
 ## Status
-**M2 DONE** — hydro + Tillotson EOS + clean free surface, CPU + GPU, all gated
-(Sod, Sedov, static free surface, dynamic basalt shock GPU==CPU 3e-7). Next:
-**M3 strength** (elastic-plastic, Jaumann, von Mises) -- the hard one (advecting
-the deviatoric stress tensor on the grid). SPH (../gpu/) runs in parallel.
+**M3a DONE (CPU)** — elastic-plastic strength validated: shear-wave speed 1.2%,
+von Mises cap exact. The flagged risk gate passes. Next: **M3b** Metal port of the
+strength kernels (GPU==CPU). Then M4 (damage + gravity), M5 (Pierazzo credibility
+gate). SPH (../gpu/) runs in parallel.
