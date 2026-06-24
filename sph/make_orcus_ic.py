@@ -28,7 +28,8 @@ ap.add_argument("--out", default="orcus_ic.bin")
 A = ap.parse_args()
 
 RHO = 2700.0; AB = 2.0           # basalt Tillotson (a+b) -> lithostatic thermal coeff
-dx = A.dx; h2 = 2.0*1.3*dx; a = A.D/2.0; m_part = RHO*dx**3
+dx = A.dx; a = A.D/2.0; m_part = RHO*dx**3
+wall = 6.0*dx                    # fixed-boundary thickness >= 2*h_max (=5.2dx) so boundary kernels are COMPLETE
 
 # --- flat basalt slab, surface at z=0, filled downward ---
 xs = np.arange(A.xlo+dx/2, A.xhi, dx)
@@ -36,9 +37,9 @@ ys = np.arange(-A.yhalf+dx/2, A.yhalf, dx)
 zs = np.arange(-dx/2, -A.depth, -dx)
 X, Y, Z = np.meshgrid(xs, ys, zs, indexing="ij"); n = X.size
 u_litho = (A.g/AB)*np.abs(Z)     # lithostatic equilibrium via thermal pressure
-fx = (np.abs(X-A.xlo) < h2) | (np.abs(X-A.xhi) < h2)
-fy = (np.abs(Y-(-A.yhalf)) < h2) | (np.abs(Y-A.yhalf) < h2)
-fb = (Z < -A.depth + 2*dx)
+fx = (np.abs(X-A.xlo) < wall) | (np.abs(X-A.xhi) < wall)
+fy = (np.abs(Y-(-A.yhalf)) < wall) | (np.abs(Y-A.yhalf) < wall)
+fb = (Z < -A.depth + wall)
 fixed = (fx | fy | fb).astype(np.float64)
 slab = np.column_stack([X.ravel(), Y.ravel(), Z.ravel(),
     np.zeros(n), np.zeros(n), np.zeros(n),

@@ -15,7 +15,7 @@ ap.add_argument("--xlo", type=float, default=-400e3); ap.add_argument("--xhi", t
 ap.add_argument("--yhalf", type=float, default=200e3); ap.add_argument("--depth", type=float, default=120e3)
 ap.add_argument("--x0", type=float, default=-250e3); ap.add_argument("--out", default="orcus_relaxed_ic.bin")
 A = ap.parse_args()
-RHO = 2700.0; dx = A.dx; h2 = 2*1.3*dx; a = A.D/2; m_part = RHO*dx**3
+RHO = 2700.0; dx = A.dx; a = A.D/2; m_part = RHO*dx**3; wall = 6.0*dx   # must match make_orcus_ic.py
 
 def load(fn):
     with open(fn,"rb") as f:
@@ -23,11 +23,11 @@ def load(fn):
         return np.fromfile(f,dtype=np.float64,count=10*n).reshape(n,10)  # x y z vx vy vz u rho h mat
 
 s = load(A.snap); x,y,z,u = s[:,0],s[:,1],s[:,2],s[:,6]; n = len(x)
-fx = (np.abs(x-A.xlo)<h2)|(np.abs(x-A.xhi)<h2)
-fy = (np.abs(y-(-A.yhalf))<h2)|(np.abs(y-A.yhalf)<h2)
-fb = (z < -A.depth + 2*dx)
+fx = (np.abs(x-A.xlo)<wall)|(np.abs(x-A.xhi)<wall)
+fy = (np.abs(y-(-A.yhalf))<wall)|(np.abs(y-A.yhalf)<wall)
+fb = (z < -A.depth + wall)
 fixed = (fx|fy|fb).astype(np.float64)
-slab = np.column_stack([x,y,z, np.zeros(n),np.zeros(n),np.zeros(n),   # velocity zeroed
+slab = np.column_stack([x,y,z, s[:,3],s[:,4],s[:,5],   # keep relaxed velocities (~0.3 m/s; zeroing re-perturbs)
     np.full(n,m_part), u, np.zeros(n), fixed])                         # mat=0
 surf = np.median(np.sort(z)[-15000:])
 print(f"relaxed slab: {n:,} particles, fixed {int(fixed.sum()):,}, settled surface z={surf:.0f} m")
