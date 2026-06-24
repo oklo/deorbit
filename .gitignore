@@ -91,3 +91,5 @@ euler/*.o
 euler/*.air
 euler/*.metallib
 euler/*.png
+euler/hydro_gpu
+euler/*.txt

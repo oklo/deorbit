@@ -35,7 +35,9 @@ M3 or M5 won't validate.**
 - [x] **M1a Euler hydro (ideal gas), CPU reference** — gates PASSED: Sod MUSCL L1
       rho=0.004/p=0.003/u=0.008 vs exact Riemann; Sedov 3-D shock radius 0.8% vs
       analytic. Unsplit MUSCL(minmod)+HLLC+SSP-RK2. (peak compression resolution-limited.)
-- [ ] **M1b Metal GPU port** of the validated hydro (GPU vs CPU ~1e-6).
+- [x] **M1b Metal GPU port** — DONE: FP32 GPU matches FP64 CPU to printed precision
+      on both gates (Sod L1 0.0042 identical; Sedov R 0.776 / 0.8% / comp 3.12 identical).
+      Per-cell divergence (MUSCL+HLLC, 13-pt stencil) + RK2; regular grid = clean GPU map.
 - [ ] **M2 Tillotson EOS + multi-material VOF + vacuum/free surface** — gate: 2-material
       shock; clean static free surface (no spurious flow).
 - [ ] **M3 strength (elastic-plastic, Jaumann, von Mises)** — THE HARD PART (advecting
@@ -49,5 +51,6 @@ M3 or M5 won't validate.**
       3-way figure: MOLA | SPH | euler.
 
 ## Status
-**M1a DONE** (CPU hydro): Sod (MUSCL) + Sedov 3-D both PASS vs analytic. Next: M1b
-Metal GPU port (validate GPU vs CPU). SPH (../gpu/) runs in parallel as the oracle.
+**M1 DONE** — CPU reference + Metal GPU port both validated (Sod + Sedov; GPU==CPU to
+printed precision). Next: M2 (Tillotson EOS + multi-material VOF + vacuum/free surface).
+SPH (../gpu/) runs in parallel as the oracle.
