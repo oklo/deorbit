@@ -23,6 +23,7 @@ ap.add_argument("--xlo", type=float, default=-400e3); ap.add_argument("--xhi", t
 ap.add_argument("--yhalf", type=float, default=200e3)
 ap.add_argument("--depth", type=float, default=120e3, help="slab depth (m)")
 ap.add_argument("--x0", type=float, default=-250e3, help="impactor start x center (m)")
+ap.add_argument("--slab-only", action="store_true", help="omit impactor (for substrate relaxation)")
 ap.add_argument("--out", default="orcus_ic.bin")
 A = ap.parse_args()
 
@@ -46,23 +47,26 @@ print(f"slab: {n:,} ({len(xs)}x{len(ys)}x{len(zs)}), fixed {int(fixed.sum()):,},
       f"u_bottom={u_litho.max():.2e} J/kg (melt thresh 1e6)")
 
 # --- basalt impactor sphere, grazing at theta, heading +x ---
-th = np.radians(A.theta); vx = A.U*np.cos(th); vz = -A.U*np.sin(th)
-z0 = a + 5e3                      # bottom starts 5 km above the surface
-na = int(np.ceil(a/dx)) + 1
-ix, iy, iz = np.meshgrid(*(np.arange(-na, na+1),)*3, indexing="ij")
-mask = (ix*dx)**2 + (iy*dx)**2 + (iz*dx)**2 <= a*a
-xp = ix[mask]*dx + A.x0; yp = iy[mask]*dx; zp = iz[mask]*dx + z0; ni = xp.size
-imp = np.column_stack([xp, yp, zp,
-    np.full(ni, vx), np.zeros(ni), np.full(ni, vz),
-    np.full(ni, m_part), np.zeros(ni), np.full(ni, 2.0), np.zeros(ni)])  # mat=2: basalt impactor (trackable)
-KE = 0.5*ni*m_part*A.U**2
-print(f"impactor: {ni:,}, D={A.D/1e3:.0f}km, v=({vx:.0f},0,{vz:.0f}), "
-      f"center=({A.x0/1e3:.0f},0,{z0/1e3:.0f})km, CPPR={a/dx:.1f}, KE={KE:.2e} J ({KE/4.184e18:.2e} Gt)")
-
-data = np.vstack([slab, imp]); N = data.shape[0]
+if A.slab_only:
+    data = slab; print("slab-only (no impactor) -- for substrate relaxation")
+else:
+    th = np.radians(A.theta); vx = A.U*np.cos(th); vz = -A.U*np.sin(th)
+    z0 = a + 5e3                      # bottom starts 5 km above the surface
+    na = int(np.ceil(a/dx)) + 1
+    ix, iy, iz = np.meshgrid(*(np.arange(-na, na+1),)*3, indexing="ij")
+    mask = (ix*dx)**2 + (iy*dx)**2 + (iz*dx)**2 <= a*a
+    xp = ix[mask]*dx + A.x0; yp = iy[mask]*dx; zp = iz[mask]*dx + z0; ni = xp.size
+    imp = np.column_stack([xp, yp, zp,
+        np.full(ni, vx), np.zeros(ni), np.full(ni, vz),
+        np.full(ni, m_part), np.zeros(ni), np.full(ni, 2.0), np.zeros(ni)])  # mat=2: basalt impactor (trackable)
+    KE = 0.5*ni*m_part*A.U**2
+    print(f"impactor: {ni:,}, D={A.D/1e3:.0f}km, v=({vx:.0f},0,{vz:.0f}), "
+          f"center=({A.x0/1e3:.0f},0,{z0/1e3:.0f})km, CPPR={a/dx:.1f}, KE={KE:.2e} J ({KE/4.184e18:.2e} Gt)")
+    data = np.vstack([slab, imp])
+N = data.shape[0]
 xlo, xhi = A.xlo-dx, A.xhi+dx
 ylo, yhi = -A.yhalf-dx, A.yhalf+dx
-zlo, zhi = -A.depth-dx, z0+a+50e3
+zlo, zhi = -A.depth-dx, (80e3 if A.slab_only else z0+a+50e3)
 hdr = np.array([xlo, xhi, ylo, yhi, zlo, zhi, float(N)], dtype="<f8")
 with open(A.out, "wb") as f:
     hdr.tofile(f); data.astype("<f8").tofile(f)

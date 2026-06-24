@@ -35,8 +35,8 @@ static void run(MTL::ComputePipelineState* p,uint32_t n,std::vector<MTL::Buffer*
 static double now(){ return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 
 int main(int argc,char** argv){
-    bool frac=false; float gz=0.0f; float snap_dt=0.05f; std::vector<char*> av;
-    for(int i=0;i<argc;i++){ std::string s=argv[i]; if(s=="--frac") frac=true; else if(s=="--g"&&i+1<argc){ gz=atof(argv[++i]); } else if(s=="--snap"&&i+1<argc){ snap_dt=atof(argv[++i]); } else av.push_back(argv[i]); }
+    bool frac=false; float gz=0.0f; float snap_dt=0.05f; float damp=1.0f; std::vector<char*> av;
+    for(int i=0;i<argc;i++){ std::string s=argv[i]; if(s=="--frac") frac=true; else if(s=="--g"&&i+1<argc){ gz=atof(argv[++i]); } else if(s=="--snap"&&i+1<argc){ snap_dt=atof(argv[++i]); } else if(s=="--damp"&&i+1<argc){ damp=atof(argv[++i]); } else av.push_back(argv[i]); }
     if(av.size()<4){ printf("usage: gpu_ic ic.bin dx t_end [walltime] [--frac] [--g g_mars]\n"); return 1; }
     const char* icf=av[1]; float dx=atof(av[2]); float t_end=atof(av[3]); double walltime=av.size()>4?atof(av[4]):1e30;
 
@@ -133,7 +133,7 @@ int main(int argc,char** argv){
         a=now(); density(); T_dens+=now()-a;
         a=now(); force_eval(); T_force+=now()-a;
         a=now(); run(PG,n,{bsig,bD,beps,bmat,brho,bmats},{{&h_init,4},{&eta,4},{&dt,4},{&nn,4}});
-        run(PFN,n,{bvel,bacc,bu,bS,bdudt,bduold,bdSdt,bdSold,bfix,bmat,bmats},{{&dt,4},{&gz,4},{&nn,4}}); T_small+=now()-a;
+        run(PFN,n,{bvel,bacc,bu,bS,bdudt,bduold,bdSdt,bdSold,bfix,bmat,bmats},{{&dt,4},{&gz,4},{&damp,4},{&nn,4}}); T_small+=now()-a;
         t+=dt; step++;
         if(step%25==0||t>=t_end) report(t,step,now()-wall0);
         if(t>=next_snap){ snapshot(isnap++); next_snap+=snap_dt; }
