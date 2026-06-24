@@ -35,7 +35,8 @@ def load(fn):
     with open(fn,"rb") as f:
         n=int(np.fromfile(f,dtype=np.int64,count=1)[0]); return np.fromfile(f,dtype=np.float64,count=10*n).reshape(n,10)
 s=load(sorted(glob.glob("../gpu/gpu_snap_*.bin"))[-1]); mat=s[:,9]; x,y,z=s[:,0],s[:,1],s[:,2]
-sb=mat==0; xs,ys,zs=x[sb],y[sb],z[sb]; bs=4000.0
+vmag=np.linalg.norm(s[:,3:6],axis=1)
+sb=(mat==0)&(vmag<500.0); xs,ys,zs=x[sb],y[sb],z[sb]; bs=4000.0   # |v|<500: settled ground (mask airborne ejecta)
 ix=np.floor((xs-xs.min())/bs).astype(int); iy=np.floor((ys-ys.min())/bs).astype(int)
 nx,ny=ix.max()+1,iy.max()+1; g=np.full((nx,ny),-1e9); np.maximum.at(g,(ix,iy),zs)
 surf=np.where(g>-1e8,g,np.nan); surf=surf-np.nanmedian(surf)
@@ -47,6 +48,15 @@ xi=near(xc_km,cxk,BOX_W/2); yi=near(yc_km,cyk,BOX_H/2)
 O=np.nan_to_num(surf[np.ix_(xi,yi)].T, nan=0.0)
 print("OURS box: %.0f x %.0f km"%(xi.sum()*bs/1e3,yi.sum()*bs/1e3))
 
+# ---------------- measured basin dimensions (depression extent) ----------------
+def dims(arr,pxx,pyy,thr):
+    m=arr<thr
+    if not m.any(): return 0.,0.,0.
+    rr,cc=np.where(m); L=(cc.max()-cc.min()+1)*pxx/1e3; W=(rr.max()-rr.min()+1)*pyy/1e3
+    return L,W,L/max(W,1e-9)
+Ld,Wd,ed=dims(R,pxlon,pxlat,-400.); Lo,Wo,eo=dims(O,bs,bs,-600.)
+print("REAL basin %.0fx%.0f km e=%.2f | OURS basin %.0fx%.0f km e=%.2f"%(Ld,Wd,ed,Lo,Wo,eo))
+
 # ---------------- plot: same scale, colorbar below ----------------
 ls=LightSource(azdeg=315,altdeg=45); cmap=plt.cm.terrain; vmin,vmax=-2.5,2.0
 fig=plt.figure(figsize=(14,6.5))
@@ -54,9 +64,13 @@ a1=fig.add_axes([0.04,0.18,0.45,0.74]); a2=fig.add_axes([0.51,0.18,0.45,0.74])
 rgb1=ls.shade(R,cmap=cmap,vert_exag=3,dx=pxlon,dy=pxlat,blend_mode="soft",vmin=vmin*1e3,vmax=vmax*1e3)
 a1.imshow(rgb1,extent=[0,BOX_W,0,BOX_H],origin="lower",aspect="equal")
 a1.set_title("REAL Orcus Patera (MOLA)"); a1.set_xlabel("km"); a1.set_ylabel("km")
+a1.text(0.03,0.96,"%.0f x %.0f km   e=%.1f"%(Ld,Wd,ed),transform=a1.transAxes,va="top",
+        fontsize=11,bbox=dict(fc="white",alpha=0.75,ec="none"))
 rgb2=ls.shade(O,cmap=cmap,vert_exag=28,dx=bs,dy=bs,blend_mode="soft",vmin=vmin*1e3,vmax=vmax*1e3)
 a2.imshow(rgb2,extent=[0,BOX_W,0,BOX_H],origin="lower",aspect="equal")
 a2.set_title("OUR SPH impact (40 km, 10 km/s, 5deg; transient)"); a2.set_xlabel("km")
+a2.text(0.03,0.96,"%.0f x %.0f km   e=%.1f"%(Lo,Wo,eo),transform=a2.transAxes,va="top",
+        fontsize=11,bbox=dict(fc="white",alpha=0.75,ec="none"))
 cax=fig.add_axes([0.30,0.07,0.40,0.035])
 sm=plt.cm.ScalarMappable(cmap=cmap,norm=plt.Normalize(vmin,vmax))
 fig.colorbar(sm,cax=cax,orientation="horizontal",label="elevation rel. to plain (km)")
