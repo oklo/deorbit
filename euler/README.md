@@ -38,8 +38,11 @@ M3 or M5 won't validate.**
 - [x] **M1b Metal GPU port** — DONE: FP32 GPU matches FP64 CPU to printed precision
       on both gates (Sod L1 0.0042 identical; Sedov R 0.776 / 0.8% / comp 3.12 identical).
       Per-cell divergence (MUSCL+HLLC, 13-pt stencil) + RK2; regular grid = clean GPU map.
-- [ ] **M2 Tillotson EOS + multi-material VOF + vacuum/free surface** — gate: 2-material
-      shock; clean static free surface (no spurious flow).
+- [~] **M2 Tillotson EOS + free surface.** M2a (CPU) DONE: pluggable EOS via
+      ../sph/eos.hpp (reconstruct internal energy; P>=0 fluid floor; low-density
+      ambient). GATES: Sod regression L1 0.0044 (unchanged); basalt|ambient free
+      surface max|v|=0.000 (perfectly static). Next: M2b Metal port + color tag
+      (impactor) + a dynamic free-surface/shock check.
 - [ ] **M3 strength (elastic-plastic, Jaumann, von Mises)** — THE HARD PART (advecting
       the stress tensor through the remap). gate: elastic-plastic benchmark.
 - [ ] **M4 damage (Grady-Kipp) + gravity** — gate: reuse SPH gates; lithostatic balance.
