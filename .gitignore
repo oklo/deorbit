@@ -80,3 +80,7 @@ sph/ground_test.png
 # rendered run movies (regenerable from gpu_snap_* / frames/)
 gpu/*.mp4
 gpu/*.gif
+
+# Orcus: MOLA tiles (downloadable) + large 1km ICs (regenerable)
+mars_data/
+sph/orcus*.bin
