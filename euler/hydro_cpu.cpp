@@ -31,17 +31,17 @@ static F5 hllc(double rL,double vnL,double t1L,double t2L,double eL,double rR,do
     return star(rR,vnR,t1R,t2R,pR,ER,SR,Fp(rR,vnR,t1R,t2R,pR,ER));
 }
 static inline double mm(double a,double b){ return (a*b<=0)?0.0:(fabs(a)<fabs(b)?a:b); }
-struct Grid { int nx,ny,nz; double dx; vector<double> r,mu,mv,mw,E, Sxx,Syy,Szz,Sxy,Sxz,Syz;
+struct Grid { int nx,ny,nz; double dx; vector<double> r,mu,mv,mw,E, Sxx,Syy,Szz,Sxy,Sxz,Syz, D;
     int idx(int i,int j,int k)const{ return (i*ny+j)*nz+k; }
     Grid(int X,int Y,int Z,double d):nx(X),ny(Y),nz(Z),dx(d){ int n=X*Y*Z; r.assign(n,0);mu.assign(n,0);mv.assign(n,0);mw.assign(n,0);E.assign(n,0);
-        Sxx.assign(n,0);Syy.assign(n,0);Szz.assign(n,0);Sxy.assign(n,0);Sxz.assign(n,0);Syz.assign(n,0);} };
+        Sxx.assign(n,0);Syy.assign(n,0);Szz.assign(n,0);Sxy.assign(n,0);Sxz.assign(n,0);Syz.assign(n,0);D.assign(n,0);} };
 static inline double eint(const Grid&g,int c){ double ke=0.5*(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c]; return (g.E[c]-ke)/g.r[c]; }
 static inline double Pcell(const Grid&g,int c){ double p,cs; eos_pc(g.r[c],eint(g,c),p,cs); return p; }
 
-struct DU { vector<double> r,mu,mv,mw,E,Sxx,Syy,Szz,Sxy,Sxz,Syz; DU(int n){r.assign(n,0);mu.assign(n,0);mv.assign(n,0);mw.assign(n,0);E.assign(n,0);Sxx.assign(n,0);Syy.assign(n,0);Szz.assign(n,0);Sxy.assign(n,0);Sxz.assign(n,0);Syz.assign(n,0);} };
+struct DU { vector<double> r,mu,mv,mw,E,Sxx,Syy,Szz,Sxy,Sxz,Syz,D; DU(int n){r.assign(n,0);mu.assign(n,0);mv.assign(n,0);mw.assign(n,0);E.assign(n,0);Sxx.assign(n,0);Syy.assign(n,0);Szz.assign(n,0);Sxy.assign(n,0);Sxz.assign(n,0);Syz.assign(n,0);D.assign(n,0);} };
 static void Lop(const Grid&g, DU&d){
     int n=g.nx*g.ny*g.nz; double invdx=1.0/g.dx; double G=MAT.G;
-    for(int q=0;q<n;q++){d.r[q]=d.mu[q]=d.mv[q]=d.mw[q]=d.E[q]=0;d.Sxx[q]=d.Syy[q]=d.Szz[q]=d.Sxy[q]=d.Sxz[q]=d.Syz[q]=0;}
+    for(int q=0;q<n;q++){d.r[q]=d.mu[q]=d.mv[q]=d.mw[q]=d.E[q]=0;d.Sxx[q]=d.Syy[q]=d.Szz[q]=d.Sxy[q]=d.Sxz[q]=d.Syz[q]=0;d.D[q]=0;}
     auto prim=[&](int c,double*W){ W[0]=g.r[c]; W[1]=g.mu[c]/W[0]; W[2]=g.mv[c]/W[0]; W[3]=g.mw[c]/W[0]; W[4]=eint(g,c); };
     // ---- hydro: unsplit MUSCL+HLLC (P only) ----
     auto sweep=[&](int dir){
@@ -97,6 +97,7 @@ static void Lop(const Grid&g, DU&d){
         d.Sxy[c]+=2*G*exy+Jm[0][1]-adv(g.Sxy);
         d.Sxz[c]+=2*G*exz+Jm[0][2]-adv(g.Sxz);
         d.Syz[c]+=2*G*eyz+Jm[1][2]-adv(g.Syz);
+        d.D[c]+=-adv(g.D);   // damage advects with the flow (Grady-Kipp growth applied post-step)
         // deviatoric stress -> momentum (div S) + energy (div(S.v)), central diffs
         double dSxx_x=(g.Sxx[xp]-g.Sxx[xm])/hx, dSxy_y=(g.Sxy[yp]-g.Sxy[ym])/hy, dSxz_z=(g.Sxz[zp]-g.Sxz[zm])/hz;
         double dSxy_x=(g.Sxy[xp]-g.Sxy[xm])/hx, dSyy_y=(g.Syy[yp]-g.Syy[ym])/hy, dSyz_z=(g.Syz[zp]-g.Syz[zm])/hz;
@@ -109,21 +110,28 @@ static void Lop(const Grid&g, DU&d){
         d.E[c]+=(Svx(xp)-Svx(xm))/hx+(Svy(yp)-Svy(ym))/hy+(Svz(zp)-Svz(zm))/hz;
     }
 }
-static void vonmises(Grid&g){ double Y=MAT.Y; if(Y<=0)return; int n=g.nx*g.ny*g.nz;
-    for(int c=0;c<n;c++){ double sxx=g.Sxx[c],syy=g.Syy[c],szz=g.Szz[c],sxy=g.Sxy[c],sxz=g.Sxz[c],syz=g.Syz[c];
+static void vonmises(Grid&g){ double Y0=MAT.Y; if(Y0<=0)return; int n=g.nx*g.ny*g.nz;
+    for(int c=0;c<n;c++){ double Y=(1.0-g.D[c])*Y0;   // damage degrades shear strength
+        double sxx=g.Sxx[c],syy=g.Syy[c],szz=g.Szz[c],sxy=g.Sxy[c],sxz=g.Sxz[c],syz=g.Syz[c];
         double J2=0.5*(sxx*sxx+syy*syy+szz*szz)+sxy*sxy+sxz*sxz+syz*syz; double vm=sqrt(3.0*J2);
-        if(vm>Y){double f=Y/vm; g.Sxx[c]*=f;g.Syy[c]*=f;g.Szz[c]*=f;g.Sxy[c]*=f;g.Sxz[c]*=f;g.Syz[c]*=f;} } }
+        if(vm>Y){double f=(vm>0?Y/vm:0.0); g.Sxx[c]*=f;g.Syy[c]*=f;g.Szz[c]*=f;g.Sxy[c]*=f;g.Sxz[c]*=f;g.Syz[c]*=f;} } }
+static void grow_damage(Grid&g,double dt){ double Em=MAT.Emod,wk=MAT.wk,wm=MAT.wm; if(Em<=0||wk<=0)return;
+    double dx=g.dx,eps_act=pow(1.0/(wk*dx*dx*dx),1.0/wm); int n=g.nx*g.ny*g.nz;   // weakest-flaw activation strain
+    for(int c=0;c<n;c++){ if(g.D[c]>=1.0)continue; double P=Pcell(g,c);
+        double sigmax=max(-P+g.Sxx[c],max(-P+g.Syy[c],-P+g.Szz[c]));   // max tensile principal stress (diagonal proxy)
+        if(sigmax>0.0 && sigmax/Em>eps_act){ double cg=0.4*sqrt(Em/max(g.r[c],1e-30)),Rs=0.5*dx;
+            double d13=pow(g.D[c],1.0/3.0)+(cg/Rs)*dt; g.D[c]=min(1.0,d13*d13*d13); } } }
 static double maxspeed(const Grid&g){ double s=1e-30; int n=g.r.size(); double G=MAT.G;
     for(int c=0;c<n;c++){ double p,cs; eos_pc(g.r[c],eint(g,c),p,cs); double cel=sqrt(cs*cs+ (G>0?(4.0/3.0)*G/g.r[c]:0.0));
         double v=sqrt(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c]; s=max(s,v+cel);} return s; }
 static void step_rk2(Grid&g,double dt){ int n=g.r.size(); DU d(n); Grid g1=g;
     Lop(g,d);
     for(int c=0;c<n;c++){g1.r[c]=g.r[c]+dt*d.r[c];g1.mu[c]=g.mu[c]+dt*d.mu[c];g1.mv[c]=g.mv[c]+dt*d.mv[c];g1.mw[c]=g.mw[c]+dt*d.mw[c];g1.E[c]=g.E[c]+dt*d.E[c];
-        g1.Sxx[c]=g.Sxx[c]+dt*d.Sxx[c];g1.Syy[c]=g.Syy[c]+dt*d.Syy[c];g1.Szz[c]=g.Szz[c]+dt*d.Szz[c];g1.Sxy[c]=g.Sxy[c]+dt*d.Sxy[c];g1.Sxz[c]=g.Sxz[c]+dt*d.Sxz[c];g1.Syz[c]=g.Syz[c]+dt*d.Syz[c];}
+        g1.Sxx[c]=g.Sxx[c]+dt*d.Sxx[c];g1.Syy[c]=g.Syy[c]+dt*d.Syy[c];g1.Szz[c]=g.Szz[c]+dt*d.Szz[c];g1.Sxy[c]=g.Sxy[c]+dt*d.Sxy[c];g1.Sxz[c]=g.Sxz[c]+dt*d.Sxz[c];g1.Syz[c]=g.Syz[c]+dt*d.Syz[c];g1.D[c]=g.D[c]+dt*d.D[c];}
     vonmises(g1); Lop(g1,d);
     for(int c=0;c<n;c++){g.r[c]=0.5*(g.r[c]+g1.r[c]+dt*d.r[c]);g.mu[c]=0.5*(g.mu[c]+g1.mu[c]+dt*d.mu[c]);g.mv[c]=0.5*(g.mv[c]+g1.mv[c]+dt*d.mv[c]);g.mw[c]=0.5*(g.mw[c]+g1.mw[c]+dt*d.mw[c]);g.E[c]=0.5*(g.E[c]+g1.E[c]+dt*d.E[c]);
-        g.Sxx[c]=0.5*(g.Sxx[c]+g1.Sxx[c]+dt*d.Sxx[c]);g.Syy[c]=0.5*(g.Syy[c]+g1.Syy[c]+dt*d.Syy[c]);g.Szz[c]=0.5*(g.Szz[c]+g1.Szz[c]+dt*d.Szz[c]);g.Sxy[c]=0.5*(g.Sxy[c]+g1.Sxy[c]+dt*d.Sxy[c]);g.Sxz[c]=0.5*(g.Sxz[c]+g1.Sxz[c]+dt*d.Sxz[c]);g.Syz[c]=0.5*(g.Syz[c]+g1.Syz[c]+dt*d.Syz[c]);}
-    vonmises(g);
+        g.Sxx[c]=0.5*(g.Sxx[c]+g1.Sxx[c]+dt*d.Sxx[c]);g.Syy[c]=0.5*(g.Syy[c]+g1.Syy[c]+dt*d.Syy[c]);g.Szz[c]=0.5*(g.Szz[c]+g1.Szz[c]+dt*d.Szz[c]);g.Sxy[c]=0.5*(g.Sxy[c]+g1.Sxy[c]+dt*d.Sxy[c]);g.Sxz[c]=0.5*(g.Sxz[c]+g1.Sxz[c]+dt*d.Sxz[c]);g.Syz[c]=0.5*(g.Syz[c]+g1.Syz[c]+dt*d.Syz[c]);g.D[c]=0.5*(g.D[c]+g1.D[c]+dt*d.D[c]);}
+    grow_damage(g,dt); vonmises(g);
 }
 static void exact_sod(double S,double&r,double&u,double&p){
     double rL=1,uL=0,pL=1,rR=0.125,uR=0,pR=0.1,g=GAM;double cL=sqrt(g*pL/rL),cR=sqrt(g*pR/rR);
@@ -187,6 +195,14 @@ int main(int argc,char**argv){
         double vmax=0;for(int k=80;k<120;k++){int c=g.idx(0,0,k);vmax=max(vmax,fabs(g.mw[c]/g.r[c]));}  // deep interior, pre-boundary-contamination
         printf("Hydrostatic atmosphere (interior balance): deep max|v|=%.3f m/s  cs=%.0f  ratio=%.4f  t=%.2fs\n",vmax,cs,vmax/cs,t);
         printf("GATE (interior well-balanced, max|v|<0.02*cs): %s\n",(vmax<0.02*cs)?"PASS":"CHECK");
+    } else if(mode=="tensile"){ // stretch a basalt block -> tensile damage grows -> shear strength degrades
+        MAT=Material::basalt(); int N=100;double L=10e3,dx=L/N,tend=0.1,CFL=0.3; double rho0=2700,rate=1e-2,Y=MAT.Y;
+        Grid g(N,1,1,dx);
+        for(int i=0;i<N;i++){double x=(i+0.5)*dx;int c=g.idx(i,0,0);g.r[c]=rho0;double vx=rate*(x-0.5*L);g.mu[c]=rho0*vx;g.E[c]=0.5*rho0*vx*vx;}
+        double t=0;int s=0;while(t<tend){double dt=CFL*dx/maxspeed(g);if(t+dt>tend)dt=tend-t;step_rk2(g,dt);t+=dt;s++;}
+        double Dmax=0,Sxxmax=0;for(int i=20;i<N-20;i++){int c=g.idx(i,0,0);Dmax=max(Dmax,g.D[c]);Sxxmax=max(Sxxmax,fabs(g.Sxx[c]));}
+        printf("Tensile damage: max D=%.4f  max|Sxx|=%.3e (Y=%.3e, ratio %.4f)\n",Dmax,Sxxmax,Y,Sxxmax/Y);
+        printf("GATE (D>0.9 grows & strength degrades Sxx<0.5Y): %s\n",(Dmax>0.9&&Sxxmax<0.5*Y)?"PASS":"CHECK");
     } else { // surface
         MAT=Material::basalt();int N=64;double L=200e3,dx=L/N,tend=2.0,CFL=0.4;Grid g(1,1,N,dx);
         for(int k=0;k<N;k++){double z=(k+0.5)*dx;double rr=z<0.5*L?2700:0.27;int c=g.idx(0,0,k);g.r[c]=rr;g.E[c]=0;}

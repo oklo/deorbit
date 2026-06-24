@@ -50,10 +50,11 @@ M3 or M5 won't validate.**
       GATES (CPU==GPU): elastic shear wave c_s 2863 vs sqrt(G/rho) 2900 (1.3%); von
       Mises cap sqrt(3J2)->Y exactly; Sod/surface regress (strength no-op for ideal gas).
       THE FLAGGED RISK GATE PASSES on both paths. Metal kernels: strength/vonmises/rk1s/rk2s.
-- [~] **M4 damage (Grady-Kipp) + gravity.** Gravity DONE (CPU + GPU): body-force source
-      (-rho*g momentum, -rho*g*v_z energy). GATES: free-fall v=-g*t exact (err 3e-5);
-      hydrostatic atmosphere interior well-balanced (deep max|v| 0.002, 5e-4 of cs).
-      (Full hydrostatic column needs a floor BC -> M7 substrate prep.) Next: Grady-Kipp damage.
+- [~] **M4 damage (Grady-Kipp) + gravity.** Gravity DONE (CPU+GPU): body-force source;
+      free-fall v=-g*t exact, hydrostatic atmosphere interior well-balanced (5e-4 of cs).
+      Damage CPU DONE: D scalar advected, grows via crack ODE d^(1/3)+=(cg/Rs)dt when
+      tensile strain sigmax/Emod > Weibull activation (1/(wk*dx^3))^(1/wm); degrades
+      Y->(1-D)Y. GATE: tensile stretch -> D->1, shear strength -> 0. Next: M4 damage GPU.
 - [ ] **M5 Pierazzo et al. (2008) Al-on-Al impact benchmark** — THE CREDIBILITY GATE:
       match the published code-comparison results. Pass/fail for the whole effort.
 - [ ] **M6 acoustic fluidization (block model)** — gate: reproduce a known complex
