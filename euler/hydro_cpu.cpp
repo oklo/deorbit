@@ -17,6 +17,7 @@ static double GZ = 0.0;   // gravity (accel toward -z), m/s^2
 static double TDEC = 0.0;  // acoustic-fluidization decay time (s); 0 = AF off
 static double ETA_AF = 0.0; // acoustic-fluidization viscosity (Pa.s); damps fluidized flow (Wunnemann-Ivanov)
 static double RHO_CFL = 0.0; // exclude near-void cells (rho<RHO_CFL) from the CFL (their hi-v dynamics are negligible)
+static double DAMP = 1.0;    // relaxation velocity damping per step (route 2: settle a gravity-loaded substrate); 1 = off
 static inline void eos_pc(double rho,double e,double&p,double&cs){ p=MAT.pressure(rho,e); if(p<0)p=0; cs=MAT.sound_speed(rho,e); }
 struct F5 { double r, mn, mt1, mt2, E; };
 static F5 hllc(double rL,double vnL,double t1L,double t2L,double eL,double rR,double vnR,double t1R,double t2R,double eR){
@@ -140,6 +141,7 @@ static void step_rk2(Grid&g,double dt){ int n=g.r.size(); DU d(n); Grid g1=g;
         g.Sxx[c]=0.5*(g.Sxx[c]+g1.Sxx[c]+dt*d.Sxx[c]);g.Syy[c]=0.5*(g.Syy[c]+g1.Syy[c]+dt*d.Syy[c]);g.Szz[c]=0.5*(g.Szz[c]+g1.Szz[c]+dt*d.Szz[c]);g.Sxy[c]=0.5*(g.Sxy[c]+g1.Sxy[c]+dt*d.Sxy[c]);g.Sxz[c]=0.5*(g.Sxz[c]+g1.Sxz[c]+dt*d.Sxz[c]);g.Syz[c]=0.5*(g.Syz[c]+g1.Syz[c]+dt*d.Syz[c]);g.D[c]=0.5*(g.D[c]+g1.D[c]+dt*d.D[c]);}
     grow_damage(g,dt); vonmises(g);
     if(TDEC>0){ double f=exp(-dt/TDEC); int N=g.r.size(); for(int c=0;c<N;c++) g.af[c]*=f; }   // AF vibrations decay
+    if(DAMP<1.0){ int N=g.r.size(); for(int c=0;c<N;c++){ g.mu[c]*=DAMP; g.mv[c]*=DAMP; g.mw[c]*=DAMP; } }   // relaxation damping
 }
 static void exact_sod(double S,double&r,double&u,double&p){
     double rL=1,uL=0,pL=1,rR=0.125,uR=0,pR=0.1,g=GAM;double cL=sqrt(g*pL/rL),cR=sqrt(g*pR/rR);
@@ -229,6 +231,18 @@ int main(int argc,char**argv){
         double Phug=hugoniot_P(up);
         printf("Al-on-Al planar (U=%.0f km/s, up=%.0f m/s): peak P=%.3e Pa  Tillotson Hugoniot=%.3e (err %.1f%%)\n",2*up/1000.0,up,Pmax,Phug,100*fabs(Pmax-Phug)/Phug);
         printf("GATE (shock P matches analytic Hugoniot, <5%%): %s\n",(fabs(Pmax-Phug)/Phug<0.05)?"PASS":"CHECK");
+    } else if(mode=="substrate"){ // route 2: relaxed gravity-loaded substrate must settle stable (no rarefaction)
+        MAT=Material::basalt(); GZ=3.71; double rho0=2700,A=2.67e10; int NXc=60,NZc=60;double dx=500.0,CFL=0.4;
+        double zsurf=20e3,tend=200.0; DAMP=0.98; RHO_CFL=100.0;
+        Grid g(NXc,1,NZc,dx); int nb0=0;
+        for(int i=0;i<NXc;i++)for(int k=0;k<NZc;k++){double z=(k+0.5)*dx;int c=g.idx(i,0,k);
+            if(z<zsurf){g.r[c]=rho0*(1.0+rho0*GZ*(zsurf-z)/A);nb0++;} else g.r[c]=0.27; g.E[c]=0;}
+        double t=0;int s=0;while(t<tend){double dt=CFL*dx/maxspeed(g);if(t+dt>tend)dt=tend-t;step_rk2(g,dt);
+            for(int i=0;i<NXc;i++)for(int k=0;k<2;k++){double z=(k+0.5)*dx;int c=g.idx(i,0,k);g.r[c]=rho0*(1.0+rho0*GZ*(zsurf-z)/A);g.mu[c]=g.mv[c]=g.mw[c]=0;g.E[c]=0;}
+            t+=dt;s++;}
+        double vmx=0;int nb=0;for(int i=0;i<NXc;i++)for(int k=0;k<NZc;k++){int c=g.idx(i,0,k);if(g.r[c]>1350){vmx=max(vmx,sqrt(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c]);nb++;}}
+        printf("Substrate relax (DAMP=%.2f): max|v|=%.3f m/s, basalt cells %d->%d, steps %d\n",DAMP,vmx,nb0,nb,s);
+        printf("GATE (settled max|v|<5 m/s & no rarefaction nb>0.97*nb0): %s\n",(vmx<5.0&&nb>0.97*nb0)?"PASS":"CHECK");
     } else if(mode=="collapse"){ // acoustic-fluidization demo: a basalt step slumps if fluidized, holds if not
         MAT=Material::basalt(); GZ=3.71; double rho0=2700,A=2.67e10; int NXc=80,NZc=40;double dx=500.0,CFL=0.4;
         double zlo=10e3,h0=4e3,zhi=zlo+h0,tend=8.0; double hfin[2]; const char*lbl[2]={"AF-on ","AF-off"};

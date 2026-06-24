@@ -76,15 +76,27 @@ M3 or M5 won't validate.**
       well-balanced under gravity (surface cells get a spurious net force -> rarefy; M2
       surface gate passed only because it had no gravity). Needs a well-balanced interface
       reconstruction (or fixed-substrate treatment) -- this ALSO gates M7's loaded substrate.
-      Next focused work: free-surface + gravity well-balancing, then the collapse demo + calibration.
+      ROUTE 2 TRIED (fixed floor + relaxation damping + void-CFL): INSUFFICIENT. Damping
+      bounds the velocity (max|v|->0) but the substrate still rarefies (basalt cells
+      2400->120): the spurious motion at the sharp interface erodes MASS top-down each step
+      (a flux effect, not velocity). Root cause pinned: the minmod limiter under-resolves the
+      hydrostatic pressure gradient in the surface cell (bottom-face P ~ 3/4 of lithostatic ->
+      net downward -> erosion). FIX = ROUTE 1: well-balanced reconstruction of the pressure
+      deviation from hydrostatic (Audusse 2004 hydrostatic reconstruction). A focused numerics
+      task. Modes added: substrate, collapse. Globals: af, TDEC, ETA_AF, RHO_CFL, DAMP.
 - [ ] **M7 Orcus cross-check** — cross-validate vs SPH (early dynamics), then the
       3-way figure: MOLA | SPH | euler.
 
 ## Status
 **M5 DONE** (credibility gate, peak shock pressure). **M6 PARTIAL**: acoustic-fluidization
 mechanism implemented (strength reduction + decay + viscosity + void-CFL), regression-safe,
-but the collapse demo is blocked by free-surface + gravity well-balancing (a sharp material
-interface under gravity isn't hydrostatically balanced -> surface cells rarefy). This same
-issue gates M7's loaded substrate. **Next focused work: well-balanced free-surface gravity**
-(then M6 collapse demo + M7 Orcus 3-way). 5 of 7 milestones validated; M6/M7 need the
-well-balancing fix. SPH Orcus run done; renders committed.
+but the collapse demo is blocked by free-surface + gravity well-balancing. Route 2 (fixed
+floor + damping) TRIED and INSUFFICIENT -- damping bounds velocity but the surface erodes mass
+top-down (limiter under-resolves the hydrostatic gradient at the interface). FIX = Route 1:
+Audusse-style hydrostatic reconstruction (reconstruct P deviation from hydrostatic) -- a
+focused numerics task that gates both M6 collapse and M7's loaded substrate.
+
+**Scope today: M1-M5 fully validated** -- this is a credible cross-check of the SPH's
+EARLY impact dynamics (shock physics, strength, the Pierazzo credibility gate). The LATE
+crater morphology (collapse) needs the well-balanced free surface (Route 1) -> M6/M7.
+SPH Orcus run done; renders committed.
