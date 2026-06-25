@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "deorbit"
+version = "0.1.0"
+description = "Low-velocity capture, aerobraking deorbit, and grazing-impact dynamics for Earth/Mars impactors"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "Gregory Laughlin" }]
+keywords = ["planetary science", "impact cratering", "atmospheric capture", "orbital dynamics"]
+# The core (corridor + site_selection + impact) is PURE STDLIB by design, so the
+# 24/7 daemon and the cloud routine run with zero install. Heavy deps are extras.
+dependencies = []
+
+[project.optional-dependencies]
+highfidelity = ["rebound>=4.6", "assist>=1.2", "numpy>=2.0"]   # REBOUND/ASSIST validation layer
+dev = ["pytest>=8"]
+
+[project.urls]
+Repository = "https://github.com/oklo/deorbit"
+
+[project.scripts]
+deorbit-sweep = "deorbit.corridor.sweep:run"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/deorbit"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]          # tests import the package from src/ without an install
+testpaths = ["tests"]

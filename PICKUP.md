@@ -14,14 +14,14 @@ gap) are summarized in `README.md` and in this session's memory files.
 
 **Where things stand / next steps:**
 
-- **Phase 1a (current):** `deorbit.py` is a pure-stdlib capture-corridor sweep
-  over (v_inf, periapsis altitude) for a 1 km iron monolith. Each cell runs
-  `physics.simulate_passage` and is classified impact / capture / skip. The crux
-  question it answers: **does a km iron body get captured (eps<0) in a low-v∞
-  corridor, or does it just skip out / impact directly?** Check `state/corridor.json`
-  and `state/status.txt` for the current corridor map.
-  - Validate first: `python3 validate.py` (Kepler closure, per-pass dv vs analytic
-    column, regime sanity). Then `python3 deorbit.py --increment 60`.
+- **Phase 1a (current):** `run_corridor.py` (→ `src/deorbit/corridor/sweep.py`) is a
+  pure-stdlib capture-corridor sweep over (v_inf, periapsis altitude) for a 1 km iron
+  monolith. Each cell runs `deorbit.corridor.physics.simulate_passage` and is classified
+  impact / capture / skip. The crux question it answers: **does a km iron body get
+  captured (eps<0) in a low-v∞ corridor, or does it just skip out / impact directly?**
+  Check `state/corridor.json` and `state/status.txt` for the current corridor map.
+  - Validate first: `pytest` (Kepler closure, per-pass dv vs analytic column, regime
+    sanity; hi-fi too if installed). Then `python3 run_corridor.py --increment 60`.
   - The daemon should be running 24/7 via the launchd supervisor (see
     `~/investigations/daemons.json`, entry name `deorbit`). Confirm with
     `~/investigations/bin/board`.

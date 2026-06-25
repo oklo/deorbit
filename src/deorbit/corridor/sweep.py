@@ -15,7 +15,7 @@ State (state/): checkpoints corridor.json + status.txt/status.json for the board
 Resolution grows over time (coarse -> fine) so longer runtime sharpens the corridor.
 """
 import sys, os, json, time, argparse
-import physics
+from . import physics
 
 V_INF_LO, V_INF_HI = 0.2e3, 5.0e3          # m/s
 PERI_LO, PERI_HI = 0.0, 120e3              # m

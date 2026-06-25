@@ -32,8 +32,7 @@ import rebound
 import assist
 
 # reuse the validated stdlib atmosphere + body
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import physics  # noqa: E402
+from deorbit.corridor import physics
 
 AU = 1.495978707e11        # m
 DAY = 86400.0              # s
@@ -42,7 +41,14 @@ MU_E = physics.MU          # m^3/s^2
 ENTRY_ALT = physics.ENTRY_ALT
 OMEGA_E = 7.2921159e-5     # Earth rotation rate, rad/s (axis ~ ICRF z in geo frame)
 
-_DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+# JPL ephemerides are large external data (gitignored). Resolve the directory from
+# $DEORBIT_EPHEM_DIR, else the repo-root data/, else the legacy highfidelity/data/.
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+_CANDIDATES = [os.environ.get("DEORBIT_EPHEM_DIR"),
+               os.path.join(_ROOT, "data"),
+               os.path.join(_ROOT, "highfidelity", "data")]
+_DATA = next((d for d in _CANDIDATES if d and os.path.exists(os.path.join(d, "linux_p1550p2650.440"))),
+             os.path.join(_ROOT, "data"))
 PLANET_EPH = os.path.join(_DATA, "linux_p1550p2650.440")
 SMALLBODY_EPH = os.path.join(_DATA, "sb441-n16.bsp")
 

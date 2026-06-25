@@ -102,3 +102,9 @@ euler/pierazzo_decay.txt
 
 # stale/empty checkpoint blob (was tracked at root)
 state.out
+
+# python packaging / test artifacts
+*.egg-info/
+.pytest_cache/
+build/
+dist/

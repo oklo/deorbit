@@ -5,7 +5,7 @@ Run: python3 validate.py
 Distinguishes "the integrator says X" from "X is verified" per CLAUDE.md.
 """
 import math
-import physics as P
+from deorbit.corridor import physics as P
 
 
 def check_kepler_closes():
@@ -81,8 +81,21 @@ def check_regimes():
     return ok
 
 
+# --- pytest entry points (the check_* helpers above are the actual physics) ---
+def test_kepler_closes():
+    assert check_kepler_closes()
+
+
+def test_dv_vs_analytic():
+    assert check_dv_vs_analytic()
+
+
+def test_regimes():
+    assert check_regimes()
+
+
 if __name__ == "__main__":
     import sys
     results = [check_kepler_closes(), check_dv_vs_analytic(), check_regimes()]
     print("\nALL PASS" if all(results) else "\nSOME CHECKS FAILED")
-    sys.exit(0 if all(results) else 1)   # nonzero exit on failure so CI/automation can detect it
+    sys.exit(0 if all(results) else 1)

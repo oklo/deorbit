@@ -18,8 +18,8 @@ Usage:
 """
 import os, sys, json, time, math, argparse
 import numpy as np
-import hifi
-from hifi import AU, DAY, RE, MU_E, ENTRY_ALT
+from . import hifi
+from .hifi import AU, DAY, RE, MU_E, ENTRY_ALT
 
 
 def osculating(r, v):
@@ -67,7 +67,7 @@ def classify(outcome, rows):
 
 def run(vinf_kms, peri_km, inc_deg, max_passes, statedir,
         diameter=1000.0, cd=1.0, epoch_days=0.0, max_walltime=None):
-    import physics
+    from deorbit.corridor import physics
     body = physics.Body(diameter_m=diameter, cd=cd)
     os.makedirs(statedir, exist_ok=True)
     rowsf = os.path.join(statedir, "passes.json")

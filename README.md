@@ -33,25 +33,28 @@ planet swap.
 
 ## Layers (per the budget principle)
 
-- **Free local daemon** — `deorbit.py`, the capture-corridor sweep. Pure stdlib.
+- **Free local daemon** — `run_corridor.py`, the capture-corridor sweep. Pure stdlib.
 - **Sparse cloud routine** — daily bounded `--increment`, commits/pushes state.
 
 ## Run
 
 ```bash
-python3 validate.py                 # ground-truth physics checks
-python3 deorbit.py --increment 60   # bounded sweep step (seconds)
-python3 deorbit.py --daemon         # 24/7 local, refines the corridor grid
+pytest                                  # ground-truth physics checks (stdlib corridor + hi-fi if installed)
+python3 run_corridor.py --increment 60  # bounded sweep step (seconds)
+python3 run_corridor.py --daemon        # 24/7 local, refines the corridor grid
 ```
 
-Outputs land in `state/`: `corridor.json` (full grid + summary),
-`status.txt` / `status.json` (board/dashboard).
+The Python code is the `deorbit` package under `src/`; the core (corridor, site
+selection, impact) is **pure stdlib** so the daemon and cloud routine run with no
+install. The REBOUND/ASSIST high-fidelity layer is an optional extra:
+`pip install -e ".[highfidelity]"`. Outputs land in `state/`: `corridor.json`
+(full grid + summary), `status.txt` / `status.json` (board/dashboard).
 
 ## Files
 
-- `physics.py` — atmosphere, single-passage integrator, outcome classifier.
-- `deorbit.py` — (v_inf, periapsis) corridor sweep daemon.
-- `validate.py` — Kepler closure, per-pass dv vs analytic column, regime sanity.
+- `src/deorbit/corridor/physics.py` — atmosphere, single-passage integrator, outcome classifier.
+- `src/deorbit/corridor/sweep.py` — (v_inf, periapsis) corridor sweep; `run_corridor.py` is the root entry point.
+- `tests/` — `pytest` ground-truth checks (Kepler closure, per-pass dv vs analytic, regime sanity, hi-fi).
 - `PICKUP.md` — restart prompt for an interactive session after a reboot.
 
 `iSALE2D/` (gitignored) is the gated shock-physics code, kept for Phase-2
@@ -72,7 +75,7 @@ Phase 1a: capture-corridor map (does km iron get captured, and where is the
 corridor?) — stdlib daemon, running. Phase 1b: high-fidelity engine **built +
 validated**; next is the multi-pass aerobraking sequence to test which captures
 survive the Moon and the J2-steered terminal great circle (Chimborazo/Cayambe).
-Phase 1c: site selection (`site_selection.py`) — the equatorial bulge dominates
+Phase 1c: site selection (`src/deorbit/site_selection.py`) — the equatorial bulge dominates
 geocentric radius, so a slowly-decaying grazing body is steered to the global
 geocentric-radius maximum in its latitude band: **Chimborazo/Cayambe** (validated
 against the known "farthest point from Earth's center" ranking). Phase 2:

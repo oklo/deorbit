@@ -16,7 +16,7 @@ Local daemon (free, heavy):  ../.venv/bin/python aerobrake_sweep.py --daemon
 Bounded step:                ../.venv/bin/python aerobrake_sweep.py --increment 1200
 """
 import os, sys, json, time, math, argparse
-import aerobrake
+from . import aerobrake
 
 # IC grid (periapsis altitude in km controls the first apogee)
 PERI_KM = [6, 8, 10, 12, 14, 16, 18, 20, 24, 28]

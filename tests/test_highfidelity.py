@@ -4,9 +4,12 @@
 Run:  .venv/bin/python highfidelity/validate_hifi.py
 """
 import math
-import numpy as np
-import hifi
-from hifi import AU, DAY, RE, MU_E
+import pytest
+np = pytest.importorskip("numpy")          # auto-skip when the heavy stack is absent (e.g. CI)
+pytest.importorskip("rebound")
+pytest.importorskip("assist")
+from deorbit.highfidelity import hifi
+from deorbit.highfidelity.hifi import AU, DAY, RE, MU_E
 
 
 def check_kepler_energy():
@@ -35,7 +38,7 @@ def check_kepler_energy():
 def check_drag_vs_stdlib():
     """Per-pass dv from the split-drag hi-fi integrator vs the validated stdlib
     integrator (physics.simulate_passage) at low v_inf grazing passes."""
-    import physics
+    from deorbit.corridor import physics
     body = physics.Body()
     print(f"[drag] beta = {body.beta:.3e} kg/m^2")
     allok = True
@@ -105,6 +108,23 @@ def check_moon_present():
     ok = 3.5e8 < d < 4.1e8
     print(f"[moon] geocentric distance at J2000 = {d/1e3:,.0f} km  -> {'OK' if ok else 'FAIL'}")
     return ok
+
+
+# --- pytest entry points (skipped automatically without rebound/assist/numpy) ---
+def test_kepler_energy():
+    assert check_kepler_energy()
+
+
+def test_moon_present():
+    assert check_moon_present()
+
+
+def test_j2_nodal_regression():
+    assert check_j2_nodal_regression()
+
+
+def test_drag_vs_stdlib():
+    assert check_drag_vs_stdlib()
 
 
 if __name__ == "__main__":

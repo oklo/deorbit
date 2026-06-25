@@ -1,5 +1,0 @@
-# High-fidelity capture dynamics (NOT needed for the stdlib corridor sweep).
-# Install into a local venv:  python3 -m venv .venv && .venv/bin/pip install -r highfidelity/requirements.txt
-rebound>=4.6
-assist>=1.2
-numpy>=2.0
