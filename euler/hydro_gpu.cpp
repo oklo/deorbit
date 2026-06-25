@@ -16,6 +16,17 @@ struct GMat { float rho0,A,B,a,b,alpha,beta,u0,uiv,ucv,G,Y,Emod; };
 static GMat BASALT={2700,2.67e10f,2.67e10f,0.5f,1.5f,5,5,4.87e8f,4.72e6f,1.82e7f,2.27e10f,3.5e8f,5.306e10f};
 static GMat AL={2700,7.52e10f,6.5e10f,0.5f,1.63f,5,5,5.0e6f,3.0e6f,1.39e7f,0,0,0};   // aluminum, hydro (Pierazzo)
 static float GAM=1.4f;
+// host Tillotson pressure (mirrors hydro.metal till) -- for the route-1 hydrostatic reference P0
+static float tillP(float rho,float u,const GMat&m){
+    if(rho<=0.0f) return 0.0f;
+    float eta=rho/m.rho0, mu=eta-1.0f, w0=u/(m.u0*eta*eta)+1.0f;
+    float Pc=(m.a+m.b/w0)*rho*u+m.A*mu+m.B*mu*mu;
+    if(rho>=m.rho0||u<=m.uiv) return Pc;
+    float z=m.rho0/rho-1.0f;
+    float Pe=m.a*rho*u+(m.b*rho*u/w0+m.A*mu*expf(-m.beta*z))*expf(-m.alpha*z*z);
+    if(u>=m.ucv) return Pe;
+    return ((u-m.uiv)*Pe+(m.ucv-u)*Pc)/(m.ucv-m.uiv);
+}
 static MTL::Device* D_; static MTL::CommandQueue* Q_; static MTL::Library* L_;
 static MTL::Buffer* buf(size_t b){ auto p=D_->newBuffer(b, MTL::ResourceStorageModeShared); memset(p->contents(),0,b); return p; }
 static MTL::ComputePipelineState* pso(const char* nm){ NS::Error* e=nullptr;
@@ -41,8 +52,9 @@ static void exact_sod(double S,double&r,double&u,double&p){
 }
 int main(int argc,char**argv){
     string mode=argc>1?argv[1]:"sod"; double rho0=2700,G=BASALT.G,Y=BASALT.Y,csb=sqrt(G/rho0);
-    int nx,ny,nz,emode; double Ldom,tend,CFL; float gz=0.0f;
+    int nx,ny,nz,emode; double Ldom,tend,CFL; float gz=0.0f, rcfl=0.0f; int wb=0;
     if(mode=="sod"){nx=200;ny=nz=1;Ldom=1.0;tend=0.2;CFL=0.4;emode=0;}
+    else if(mode=="substrate"){nx=60;ny=1;nz=60;Ldom=30000.0;tend=200.0;CFL=0.4;emode=1;gz=3.71f;wb=1;rcfl=100.0f;}  // route 1: well-balanced gravity-loaded substrate
     else if(mode=="sedov"){nx=ny=nz=64;Ldom=2.0;tend=0.5;CFL=0.3;emode=0;}
     else if(mode=="surface"){nx=1;ny=1;nz=64;Ldom=200e3;tend=2.0;CFL=0.4;emode=1;}
     else if(mode=="bshock"){nx=400;ny=nz=1;Ldom=400e3;tend=4.0;CFL=0.4;emode=1;}
@@ -66,11 +78,13 @@ int main(int argc,char**argv){
     auto sxx1=buf(n*4),syy1=buf(n*4),szz1=buf(n*4),sxy1=buf(n*4),sxz1=buf(n*4),syz1=buf(n*4);
     auto bD=buf(n*4),bdD=buf(n*4),bD1=buf(n*4);   // damage, rate, RK temp
     auto bPmax=buf(n*4);   // peak pressure each cell experiences (M5b Pierazzo decay)
+    auto bRR0=buf(n*4),bRP0=buf(n*4);   // route 1: frozen hydrostatic reference (density, pressure)
     float*r=(float*)br->contents(),*mu=(float*)bmu->contents(),*mv=(float*)bmv->contents(),*mw=(float*)bmw->contents(),*E=(float*)bE->contents();
     float*pxy=(float*)bxy->contents(); // for shear/yield diagnostics
     if(mode=="sod"){for(int i=0;i<nx;i++){double x=(i+0.5)*dx;float rr=x<0.5?1.0f:0.125f,pp=x<0.5?1.0f:0.1f;r[i]=rr;E[i]=pp/(GAM-1);}}
     else if(mode=="sedov"){for(uint32_t c=0;c<n;c++){r[c]=1;E[c]=1e-4/(GAM-1);}int ic=nx/2;E[(ic*ny+ic)*nz+ic]+=1.0/(dx*dx*dx);}
     else if(mode=="surface"){for(int k=0;k<nz;k++){double z=(k+0.5)*dx;r[k]=z<0.5*Ldom?2700.0f:0.27f;E[k]=0;}}
+    else if(mode=="substrate"){float A=2.67e10f;for(int i=0;i<nx;i++)for(int k=0;k<nz;k++){double z=(k+0.5)*dx;int c=i*nz+k;if(z<20e3)r[c]=2700.0f*(1.0f+2700.0f*gz*(20e3-z)/A);else r[c]=0.27f;E[c]=0;}}
     else if(mode=="bshock"){for(int i=0;i<nx;i++){double x=(i+0.5)*dx;float rr=x<0.5*Ldom?3000.0f:2700.0f,ee=x<0.5*Ldom?1e6f:0.0f;r[i]=rr;E[i]=rr*ee;}}
     else if(mode=="freefall"){for(int k=0;k<nz;k++){r[k]=1.0f;E[k]=1e5/(GAM-1);}}
     else if(mode=="atmos"){double H=1e5/9.8;for(int k=0;k<nz;k++){double z=(k+0.5)*dx;r[k]=exp(-z/H);E[k]=(1e5*exp(-z/H))/(GAM-1);}}
@@ -83,29 +97,36 @@ int main(int argc,char**argv){
             else {r[c]=0.27f;E[c]=0;}                                      // low-density ambient
         }}
     else {double x0=0.3*Ldom,wid=8e3,A=(mode=="shear"?1.0:2000.0);for(int i=0;i<nx;i++){double x=(i+0.5)*dx;r[i]=rho0;double vy=A*exp(-((x-x0)/wid)*((x-x0)/wid));mv[i]=rho0*vy;E[i]=0.5*rho0*vy*vy;}}
-    auto Plop=pso("lop"),Pws=pso("wavespeed"),Prk1=pso("rk1"),Prk2=pso("rk2"),Pstr=pso("strength"),Pvm=pso("vonmises"),Prk1s=pso("rk1s"),Prk2s=pso("rk2s"),Pgd=pso("grow_damage"),Ppm=pso("pmax_update");
+    auto Plop=pso("lop"),Pws=pso("wavespeed"),Prk1=pso("rk1"),Prk2=pso("rk2"),Pstr=pso("strength"),Pvm=pso("vonmises"),Prk1s=pso("rk1s"),Prk2s=pso("rk2s"),Pgd=pso("grow_damage"),Ppm=pso("pmax_update"),Pvoid=pso("voidzero"),Pdamp=pso("damp");
+    float dampf=1.0f;   // route 1: relaxation damping (1 = off; the void/strength fix makes the substrate stable without it)
     int NX=nx,NY=ny,NZ=nz;
-    auto lopA=vector<pair<const void*,size_t>>{{&NX,4},{&NY,4},{&NZ,4},{&invdx,4},{&emode,4},{&gam,4},{&MG,sizeof(GMat)},{&n,4},{&gz,4}};
-    auto strA=vector<pair<const void*,size_t>>{{&NX,4},{&NY,4},{&NZ,4},{&invdx,4},{&MG,sizeof(GMat)},{&n,4}};
+    float*RR0=(float*)bRR0->contents(),*RP0=(float*)bRP0->contents();
+    if(wb){ for(uint32_t c=0;c<n;c++){ RR0[c]=r[c]; float p=tillP(r[c],0.0f,MG); RP0[c]=p<0?0:p; } }   // route 1: freeze IC as the hydrostatic reference
+    auto lopA=vector<pair<const void*,size_t>>{{&NX,4},{&NY,4},{&NZ,4},{&invdx,4},{&emode,4},{&gam,4},{&MG,sizeof(GMat)},{&n,4},{&gz,4},{&wb,4}};
+    auto strA=vector<pair<const void*,size_t>>{{&NX,4},{&NY,4},{&NZ,4},{&invdx,4},{&MG,sizeof(GMat)},{&n,4},{&rcfl,4}};
     auto vmA=vector<pair<const void*,size_t>>{{&MG,sizeof(GMat)},{&n,4}};
     double t=0;int step=0;
     while(t<tend){
-        run(Pws,n,{br,bmu,bmv,bmw,bE,bsp},{{&emode,4},{&gam,4},{&MG,sizeof(GMat)},{&n,4}});
+        run(Pws,n,{br,bmu,bmv,bmw,bE,bsp},{{&emode,4},{&gam,4},{&MG,sizeof(GMat)},{&n,4},{&rcfl,4}});
         float*sp=(float*)bsp->contents();double smax=1e-30;for(uint32_t c=0;c<n;c++)smax=max(smax,(double)sp[c]);
         float dt=CFL*dx/smax;if(t+dt>tend)dt=tend-t; auto dtA=vector<pair<const void*,size_t>>{{&dt,4},{&n,4}};
         auto gdA=vector<pair<const void*,size_t>>{{&MG,sizeof(GMat)},{&epsact,4},{&invdx,4},{&dt,4},{&n,4}};
-        run(Plop,n,{br,bmu,bmv,bmw,bE,bdr,bdmu,bdmv,bdmw,bdE},lopA);
+        run(Plop,n,{br,bmu,bmv,bmw,bE,bdr,bdmu,bdmv,bdmw,bdE,bRR0,bRP0},lopA);
         if(strn) run(Pstr,n,{br,bmu,bmv,bmw,bE,bxx,byy,bzz,bxy,bxz,byz,bdmu,bdmv,bdmw,bdE,dxx,dyy,dzz,dxy,dxz,dyz,bD,bdD},strA);
         run(Prk1,n,{br,bmu,bmv,bmw,bE,bdr,bdmu,bdmv,bdmw,bdE,br1,bmu1,bmv1,bmw1,bE1},dtA);
         if(strn){ run(Prk1s,n,{bxx,byy,bzz,bxy,bxz,byz,dxx,dyy,dzz,dxy,dxz,dyz,sxx1,syy1,szz1,sxy1,sxz1,syz1,bD,bdD,bD1},dtA);
                   run(Pvm,n,{sxx1,syy1,szz1,sxy1,sxz1,syz1,bD1},vmA); }
-        run(Plop,n,{br1,bmu1,bmv1,bmw1,bE1,bdr,bdmu,bdmv,bdmw,bdE},lopA);
+        if(rcfl>0) run(Pvoid,n,{bmu1,bmv1,bmw1,br1,bE1,sxx1,syy1,szz1,sxy1,sxz1,syz1,bRR0},{{&rcfl,4},{&n,4}});   // clean predictor void cells before strength reads near-vacuum velocity/stress
+        run(Plop,n,{br1,bmu1,bmv1,bmw1,bE1,bdr,bdmu,bdmv,bdmw,bdE,bRR0,bRP0},lopA);
         if(strn) run(Pstr,n,{br1,bmu1,bmv1,bmw1,bE1,sxx1,syy1,szz1,sxy1,sxz1,syz1,bdmu,bdmv,bdmw,bdE,dxx,dyy,dzz,dxy,dxz,dyz,bD1,bdD},strA);
         run(Prk2,n,{br,bmu,bmv,bmw,bE,br1,bmu1,bmv1,bmw1,bE1,bdr,bdmu,bdmv,bdmw,bdE},dtA);
         if(strn){ run(Prk2s,n,{bxx,byy,bzz,bxy,bxz,byz,sxx1,syy1,szz1,sxy1,sxz1,syz1,dxx,dyy,dzz,dxy,dxz,dyz,bD,bD1,bdD},dtA);
                   run(Pgd,n,{br,bmu,bmv,bmw,bE,bxx,byy,bzz,bD},gdA);
                   run(Pvm,n,{bxx,byy,bzz,bxy,bxz,byz,bD},vmA); }
         if(mode=="pierazzo") run(Ppm,n,{br,bmu,bmv,bmw,bE,bPmax},{{&MG,sizeof(GMat)},{&n,4}});
+        if(dampf<1.0f) run(Pdamp,n,{bmu,bmv,bmw},{{&dampf,4},{&n,4}});   // route 1: quench FP32-noise velocities
+        if(rcfl>0) run(Pvoid,n,{bmu,bmv,bmw,br,bE,bxx,byy,bzz,bxy,bxz,byz,bRR0},{{&rcfl,4},{&n,4}});   // route 1: void cells = passive vacuum (reset to reference)
+        if(mode=="substrate"){ for(int i=0;i<nx;i++)for(int kk=0;kk<2;kk++){int c=i*nz+kk;r[c]=RR0[c];mu[c]=mv[c]=mw[c]=0;E[c]=0;} }  // pin deep far-field floor to reference
         t+=dt;step++;
     }
     if(mode=="sod"){
@@ -115,6 +136,10 @@ int main(int argc,char**argv){
     } else if(mode=="surface"){
         double vmax=0;for(int k=0;k<nz;k++)vmax=max(vmax,(double)fabs(mw[k]/r[k]));
         printf("GPU free surface max|v|=%.3f m/s  GATE(static): %s\n",vmax,vmax<5.0?"PASS":"CHECK");
+    } else if(mode=="substrate"){
+        int nb0=0,nb=0;double vmx=0;for(int i=0;i<nx;i++)for(int k=0;k<nz;k++){double z=(k+0.5)*dx;if(z<20e3)nb0++;}
+        for(uint32_t c=0;c<n;c++){if(r[c]>1350){double v=sqrt(mu[c]*mu[c]+mv[c]*mv[c]+mw[c]*mw[c])/r[c];vmx=max(vmx,v);nb++;}}
+        printf("GPU substrate (route 1): max|v|=%.3f m/s, basalt cells %d->%d, steps %d  GATE(==CPU,<5 & nb>0.97): %s\n",vmx,nb0,nb,step,(vmx<5.0&&nb>0.97*nb0)?"PASS":"CHECK");
     } else if(mode=="shear"){
         double x0=0.3*Ldom; int ip0=(int)(x0/dx); double pk=0,xpk=0;for(int i=ip0+3;i<nx-2;i++){double vy=mv[i]/r[i];if(vy>pk){pk=vy;xpk=(i+0.5)*dx;}}
         double cs_num=(xpk-x0)/t;
