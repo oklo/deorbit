@@ -86,6 +86,21 @@ by operator-splitting. Validated (Kepler closure, J2 nodal regression vs.
 analytic, drag Δv vs. the stdlib model). Local-only — needs the `[highfidelity]`
 extra + `data/fetch.sh`; the cloud routine stays pure stdlib.
 
+## Capture-corridor uncertainty
+
+`python3 -m deorbit.corridor.ensemble` Monte-Carlos the physically-relevant
+uncertainties and reports the corridor as a **probability band** + a sensitivity
+ranking (`results/corridor_ensemble.json` + an ASCII P(capture) map), instead of a
+single deterministic boundary. Grounding: a β≈5×10⁶ iron body sheds its capture
+energy at periapsis **2–45 km** (stratosphere/lower mesosphere), so the large
+thermospheric solar-cycle density variability is irrelevant — the body never samples
+it. Result (N=160): the max v∞ that still captures is **≈4.0 km/s nominal, 3.3–5.0 km/s
+(p05–p95)**; its spread is controlled by the body's **drag coefficient Cd (β∝1/Cd) ≈48%**
+and **lower-atmosphere density ≈47%**, with Earth co-rotation and scale-height ≈2% each.
+So the corridor is **narrow but robust** — set by the body and the well-constrained lower
+atmosphere, not the variable upper atmosphere. (The p95 touches the 5 km/s sweep edge;
+favorable Cd+density draws capture beyond it.)
+
 ## Status
 
 Phase 1a: capture-corridor map (does km iron get captured, and where is the
