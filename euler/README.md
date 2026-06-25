@@ -67,36 +67,49 @@ M3 or M5 won't validate.**
       far-field domain + higher cppr convergence study would pin it -- a refinement, not done
       here per the option-1 physics-based plan). The shock-capture + EOS give correct impact
       pressures -> the cross-check is credible. Metal: pmax_update kernel; mode 'pierazzo'.
-- [~] **M6 acoustic fluidization (block model) — PARTIAL (honest checkpoint).** AF
-      mechanism IMPLEMENTED + regression-safe: fluidization field `af` reduces shear
-      strength Y->(1-D)(1-af)Y; Maxwell-style decay (TDEC); Newtonian viscosity
-      ETA_AF (eta*grad^2 v) to damp fluidized flow; void-CFL exclusion (RHO_CFL) so
-      near-vacuum ambient cells don't tank dt. BLOCKED on the collapse DEMO by a
-      separate numerics issue: the sharp basalt|ambient free surface is NOT hydrostatically
-      well-balanced under gravity (surface cells get a spurious net force -> rarefy; M2
-      surface gate passed only because it had no gravity). Needs a well-balanced interface
-      reconstruction (or fixed-substrate treatment) -- this ALSO gates M7's loaded substrate.
-      ROUTE 2 TRIED (fixed floor + relaxation damping + void-CFL): INSUFFICIENT. Damping
-      bounds the velocity (max|v|->0) but the substrate still rarefies (basalt cells
-      2400->120): the spurious motion at the sharp interface erodes MASS top-down each step
-      (a flux effect, not velocity). Root cause pinned: the minmod limiter under-resolves the
-      hydrostatic pressure gradient in the surface cell (bottom-face P ~ 3/4 of lithostatic ->
-      net downward -> erosion). FIX = ROUTE 1: well-balanced reconstruction of the pressure
-      deviation from hydrostatic (Audusse 2004 hydrostatic reconstruction). A focused numerics
-      task. Modes added: substrate, collapse. Globals: af, TDEC, ETA_AF, RHO_CFL, DAMP.
+- [x] **Route 1 — well-balanced free surface under gravity (DONE, CPU+GPU).** The loaded
+      basalt substrate with a free surface is hydrostatically well-balanced with NO damping
+      (CPU DAMP=1.0, GPU dampf=1.0). Five ingredients:
+      (1) **Audusse hydrostatic reconstruction** (z-sweep only; x,y unchanged) -- reconstruct the
+      pressure DEVIATION from a frozen reference P0(z) and inject it linearly into a pressure-aware
+      HLLC (`hllc_p`); the reference face pressure = EOS(avg reference density), so it is exactly
+      lithostatic in the bulk and ~0 at the free surface (avg density falls on the cold expanded
+      branch). The well-balanced gravity source cancels the reference flux divergence to machine
+      precision; the limiter only ever touches the (smooth, ~0) deviation.
+      (2) **void cells = passive vacuum** -- cells with rho<RHO_CFL are reset to the reference
+      (momentum/density/energy/stress) each step; the tenuous ambient has ~no mass, so any residual
+      force gives runaway velocity (a free-surface instability, not a balancing failure). Also
+      excluded from the CFL (their huge expanded-EOS sound speed would crush dt).
+      (3) **void-aware strength** -- the strength solver uses the CENTRE velocity for void
+      neighbours (zero velocity gradient toward vacuum = traction-free free surface) and runs no
+      strength in void cells; otherwise the near-vacuum velocity (mu/rho_tiny) feeds spurious
+      deviatoric stress into the surface cells (catastrophic in FP32). The predictor's void cells
+      are cleaned before the strength read.
+      (4) **deep far-field floor** pinned to the reference (a transmissive bottom drains the column).
+      GATE `substrate` (CPU & GPU): basalt cells 2400->2400 (zero rarefaction), max|v|~1.4 m/s,
+      stable over 200 s, no damping. All M1-M5 gates stay PASS. Metal: hllc_p, faceflux_wb,
+      voidzero, damp kernels; lop takes the reference buffers + wb flag; wavespeed & strength take rcfl.
+- [~] **M6 acoustic fluidization (block model) — PARTIAL.** AF mechanism IMPLEMENTED +
+      regression-safe (fluidization field `af` reduces Y->(1-D)(1-af)Y; TDEC decay; ETA_AF
+      viscosity). The horizontal substrate is now well-balanced (route 1), but the `collapse`
+      DEMO uses a basalt STEP whose vertical CLIFF is a free surface in the X-direction; route 1
+      well-balances only Z (gravity), so the cliff/vacuum interface still explodes (max|v|~1e9 in
+      ~50 steps). NEXT: generalize the void/free-surface handling to the x,y sweeps (or zero void
+      momentum inside the RK substeps), then tune AF (TDEC, ETA_AF) for the collapse depth.
+      Modes: substrate (PASS), collapse (blocked on the cliff). Globals: af, TDEC, ETA_AF, RHO_CFL, DAMP.
 - [ ] **M7 Orcus cross-check** — cross-validate vs SPH (early dynamics), then the
       3-way figure: MOLA | SPH | euler.
 
 ## Status
-**M5 DONE** (credibility gate, peak shock pressure). **M6 PARTIAL**: acoustic-fluidization
-mechanism implemented (strength reduction + decay + viscosity + void-CFL), regression-safe,
-but the collapse demo is blocked by free-surface + gravity well-balancing. Route 2 (fixed
-floor + damping) TRIED and INSUFFICIENT -- damping bounds velocity but the surface erodes mass
-top-down (limiter under-resolves the hydrostatic gradient at the interface). FIX = Route 1:
-Audusse-style hydrostatic reconstruction (reconstruct P deviation from hydrostatic) -- a
-focused numerics task that gates both M6 collapse and M7's loaded substrate.
+**M5 DONE** (credibility gate, peak shock pressure). **Route 1 DONE (CPU+GPU)**: the
+gravity-loaded basalt substrate with a free surface is hydrostatically well-balanced
+(Audusse P-deviation reconstruction + EOS reference face pressure + void-cell vacuum +
+pinned far-field floor); `substrate` gate PASSES with no damping, all M1-M5 gates stay green.
+**M6 PARTIAL**: acoustic-fluidization mechanism implemented + regression-safe; the `collapse`
+demo is still blocked by the vertical CLIFF (an x-direction free surface that route 1's
+z-only well-balancing doesn't cover) -> generalize void/free-surface handling to x,y, then
+tune AF. **M7** (Orcus 3-way figure) now unblocked for a FLAT-substrate start.
 
-**Scope today: M1-M5 fully validated** -- this is a credible cross-check of the SPH's
-EARLY impact dynamics (shock physics, strength, the Pierazzo credibility gate). The LATE
-crater morphology (collapse) needs the well-balanced free surface (Route 1) -> M6/M7.
+**Scope: M1-M5 + Route 1 validated** -- a credible cross-check of the SPH's early impact
+dynamics, now with a stable gravity-loaded free surface for the late-stage substrate.
 SPH Orcus run done; renders committed.

@@ -79,15 +79,53 @@ inline C5 faceflux(C5 a,C5 b,C5 cc,C5 d,int dir,int mode,float gam,constant GMat
     if(dir==0){f.mu=fl.mu;f.mv=fl.mv;f.mw=fl.mw;} else if(dir==1){f.mv=fl.mu;f.mu=fl.mv;f.mw=fl.mw;} else {f.mw=fl.mu;f.mu=fl.mv;f.mv=fl.mw;}
     return f;
 }
+// route 1 (Audusse): pressure-aware HLLC -- caller supplies the well-balanced face pressures pL,pR; cs from (rho,e).
+inline C5 hllc_p(float rL,float vnL,float t1L,float t2L,float eL,float pL,
+                 float rR,float vnR,float t1R,float t2R,float eR,float pR,int mode,float gam,constant GMat&m){
+    float cL=eospc(rL,eL,mode,gam,m).y, cR=eospc(rR,eR,mode,gam,m).y; if(pL<0.0f)pL=0.0f; if(pR<0.0f)pR=0.0f;
+    float SL=min(vnL-cL,vnR-cR), SR=max(vnL+cL,vnR+cR);
+    float Ss=(pR-pL+rL*vnL*(SL-vnL)-rR*vnR*(SR-vnR))/(rL*(SL-vnL)-rR*(SR-vnR));
+    float EL=rL*eL+0.5f*rL*(vnL*vnL+t1L*t1L+t2L*t2L), ER=rR*eR+0.5f*rR*(vnR*vnR+t1R*t1R+t2R*t2R);
+    C5 FL={rL*vnL,rL*vnL*vnL+pL,rL*vnL*t1L,rL*vnL*t2L,(EL+pL)*vnL};
+    C5 FR={rR*vnR,rR*vnR*vnR+pR,rR*vnR*t1R,rR*vnR*t2R,(ER+pR)*vnR};
+    if(SL>=0.0f) return FL;
+    if(SR<=0.0f) return FR;
+    if(Ss>=0.0f){ float f=rL*(SL-vnL)/(SL-Ss); C5 U={rL,rL*vnL,rL*t1L,rL*t2L,EL};
+        C5 Us={f,f*Ss,f*t1L,f*t2L,f*(EL/rL+(Ss-vnL)*(Ss+pL/(rL*(SL-vnL))))};
+        return (C5){FL.r+SL*(Us.r-U.r),FL.mu+SL*(Us.mu-U.mu),FL.mv+SL*(Us.mv-U.mv),FL.mw+SL*(Us.mw-U.mw),FL.E+SL*(Us.E-U.E)}; }
+    float f=rR*(SR-vnR)/(SR-Ss); C5 U={rR,rR*vnR,rR*t1R,rR*t2R,ER};
+    C5 Us={f,f*Ss,f*t1R,f*t2R,f*(ER/rR+(Ss-vnR)*(Ss+pR/(rR*(SR-vnR))))};
+    return (C5){FR.r+SR*(Us.r-U.r),FR.mu+SR*(Us.mu-U.mu),FR.mv+SR*(Us.mv-U.mv),FR.mw+SR*(Us.mw-U.mw),FR.E+SR*(Us.E-U.E)};
+}
+// route 1 z-face flux: reconstruct the pressure DEVIATION from the reference; reference face P = EOS(avg ref density) => ~0 at the free surface.
+// stencil cells a,b,cc,dd = (iLL,iL,iR,iRR); p0a..p0d = REF_P0 there; r0b,r0c = REF_R0 of the two cells straddling the face.
+inline C5 faceflux_wb(C5 a,C5 b,C5 cc,C5 dd,float p0a,float p0b,float p0c,float p0d,float r0b,float r0c,int mode,float gam,constant GMat&m){
+    float Pa[5]={a.r,a.mu/a.r,a.mv/a.r,a.mw/a.r,eint(a)};
+    float Pb[5]={b.r,b.mu/b.r,b.mv/b.r,b.mw/b.r,eint(b)};
+    float Pc[5]={cc.r,cc.mu/cc.r,cc.mv/cc.r,cc.mw/cc.r,eint(cc)};
+    float Pd[5]={dd.r,dd.mu/dd.r,dd.mv/dd.r,dd.mw/dd.r,eint(dd)};
+    float L[5],R[5];
+    for(int q=0;q<5;q++){ L[q]=Pb[q]+0.5f*mmod(Pb[q]-Pa[q],Pc[q]-Pb[q]); R[q]=Pc[q]-0.5f*mmod(Pc[q]-Pb[q],Pd[q]-Pc[q]); }
+    if(L[0]<1e-9f)L[0]=Pb[0]; if(R[0]<1e-9f)R[0]=Pc[0]; if(L[4]<0.0f)L[4]=Pb[4]; if(R[4]<0.0f)R[4]=Pc[4];
+    float dPa=eospc(a.r,eint(a),mode,gam,m).x-p0a, dPb=eospc(b.r,eint(b),mode,gam,m).x-p0b;
+    float dPc=eospc(cc.r,eint(cc),mode,gam,m).x-p0c, dPd=eospc(dd.r,eint(dd),mode,gam,m).x-p0d;
+    float dLf=dPb+0.5f*mmod(dPb-dPa,dPc-dPb), dRf=dPc-0.5f*mmod(dPc-dPb,dPd-dPc);
+    float p0f=eospc(0.5f*(r0b+r0c),0.0f,mode,gam,m).x;
+    C5 fl=hllc_p(L[0],L[3],L[1],L[2],L[4],p0f+dLf, R[0],R[3],R[1],R[2],R[4],p0f+dRf, mode,gam,m);
+    C5 f; f.r=fl.r; f.E=fl.E; f.mw=fl.mu; f.mu=fl.mv; f.mv=fl.mw;   // dir==2 component remap
+    return f;
+}
 inline C5 rdc(device const float*r,device const float*mu,device const float*mv,device const float*mw,device const float*E,int c){ return (C5){r[c],mu[c],mv[c],mw[c],E[c]}; }
 
 kernel void lop(device const float*r[[buffer(0)]],device const float*mu[[buffer(1)]],device const float*mv[[buffer(2)]],
                 device const float*mw[[buffer(3)]],device const float*E[[buffer(4)]],
                 device float*dr[[buffer(5)]],device float*dmu[[buffer(6)]],device float*dmv[[buffer(7)]],
                 device float*dmw[[buffer(8)]],device float*dE[[buffer(9)]],
-                constant int&nx[[buffer(10)]],constant int&ny[[buffer(11)]],constant int&nz[[buffer(12)]],
-                constant float&invdx[[buffer(13)]],constant int&mode[[buffer(14)]],constant float&gam[[buffer(15)]],
-                constant GMat&mat[[buffer(16)]],constant uint&n[[buffer(17)]],constant float&gz[[buffer(18)]],
+                device const float*RR0[[buffer(10)]],device const float*RP0[[buffer(11)]],
+                constant int&nx[[buffer(12)]],constant int&ny[[buffer(13)]],constant int&nz[[buffer(14)]],
+                constant float&invdx[[buffer(15)]],constant int&mode[[buffer(16)]],constant float&gam[[buffer(17)]],
+                constant GMat&mat[[buffer(18)]],constant uint&n[[buffer(19)]],constant float&gz[[buffer(20)]],
+                constant int&wb[[buffer(21)]],
                 uint gid[[thread_position_in_grid]]){
     if(gid>=n) return;
     int k=gid%nz, j=(gid/nz)%ny, i=gid/(ny*nz);
@@ -101,17 +139,40 @@ kernel void lop(device const float*r[[buffer(0)]],device const float*mu[[buffer(
         else{int a=max(0,k-2),b=max(0,k-1),d=min(nz-1,k+1),e=min(nz-1,k+2);
             m2=(i*ny+j)*nz+a;m1=(i*ny+j)*nz+b;p0=(i*ny+j)*nz+k;p1=(i*ny+j)*nz+d;p2=(i*ny+j)*nz+e;}
         C5 cm2=rdc(r,mu,mv,mw,E,m2),cm1=rdc(r,mu,mv,mw,E,m1),c0=rdc(r,mu,mv,mw,E,p0),cp1=rdc(r,mu,mv,mw,E,p1),cp2=rdc(r,mu,mv,mw,E,p2);
-        C5 FRa=faceflux(cm1,c0,cp1,cp2,dir,mode,gam,mat), FLa=faceflux(cm2,cm1,c0,cp1,dir,mode,gam,mat);
+        C5 FRa,FLa;
+        if(dir==2 && wb!=0){   // route 1: well-balanced z-faces (pressure-deviation reconstruction)
+            FRa=faceflux_wb(cm1,c0,cp1,cp2, RP0[m1],RP0[p0],RP0[p1],RP0[p2], RR0[p0],RR0[p1], mode,gam,mat);
+            FLa=faceflux_wb(cm2,cm1,c0,cp1, RP0[m2],RP0[m1],RP0[p0],RP0[p1], RR0[m1],RR0[p0], mode,gam,mat);
+        } else { FRa=faceflux(cm1,c0,cp1,cp2,dir,mode,gam,mat); FLa=faceflux(cm2,cm1,c0,cp1,dir,mode,gam,mat); }
         acc.r-=(FRa.r-FLa.r);acc.mu-=(FRa.mu-FLa.mu);acc.mv-=(FRa.mv-FLa.mv);acc.mw-=(FRa.mw-FLa.mw);acc.E-=(FRa.E-FLa.E);
     }
     dr[gid]=acc.r*invdx;dmu[gid]=acc.mu*invdx;dmv[gid]=acc.mv*invdx;
-    dmw[gid]=acc.mw*invdx - gz*r[gid]; dE[gid]=acc.E*invdx - gz*mw[gid];   // gravity body force
+    if(wb!=0){   // route 1 well-balanced gravity source (EOS reference face P; cancels the reference flux divergence)
+        int ktop=(k<nz-1?gid+1:gid), kbot=(k>0?gid-1:gid);
+        float p0t=eospc(0.5f*(RR0[gid]+RR0[ktop]),0.0f,mode,gam,mat).x, p0b=eospc(0.5f*(RR0[kbot]+RR0[gid]),0.0f,mode,gam,mat).x;
+        dmw[gid]=acc.mw*invdx - gz*(r[gid]-RR0[gid]) + (p0t-p0b)*invdx; dE[gid]=acc.E*invdx - gz*mw[gid];
+    } else { dmw[gid]=acc.mw*invdx - gz*r[gid]; dE[gid]=acc.E*invdx - gz*mw[gid]; }   // plain gravity body force
+}
+// route 1: small relaxation damping to quench FP32-noise velocities in the near-equilibrium substrate (no-op for f=1)
+kernel void damp(device float*mu[[buffer(0)]],device float*mv[[buffer(1)]],device float*mw[[buffer(2)]],
+    constant float&f[[buffer(3)]],constant uint&n[[buffer(4)]],uint g[[thread_position_in_grid]]){
+    if(g>=n)return; mu[g]*=f; mv[g]*=f; mw[g]*=f;
+}
+// route 1: void cells (rho<rcfl) = passive vacuum -> reset to the reference (no runaway dynamics, no FP32 energy/stress buildup)
+kernel void voidzero(device float*mu[[buffer(0)]],device float*mv[[buffer(1)]],device float*mw[[buffer(2)]],
+    device float*r[[buffer(3)]],device float*E[[buffer(4)]],
+    device float*Sxx[[buffer(5)]],device float*Syy[[buffer(6)]],device float*Szz[[buffer(7)]],
+    device float*Sxy[[buffer(8)]],device float*Sxz[[buffer(9)]],device float*Syz[[buffer(10)]],
+    device const float*RR0[[buffer(11)]],constant float&rcfl[[buffer(12)]],constant uint&n[[buffer(13)]],uint g[[thread_position_in_grid]]){
+    if(g>=n)return; if(r[g]<rcfl){ mu[g]=0.0f; mv[g]=0.0f; mw[g]=0.0f; r[g]=RR0[g]; E[g]=0.0f;
+        Sxx[g]=0.0f; Syy[g]=0.0f; Szz[g]=0.0f; Sxy[g]=0.0f; Sxz[g]=0.0f; Syz[g]=0.0f; }
 }
 kernel void wavespeed(device const float*r[[buffer(0)]],device const float*mu[[buffer(1)]],device const float*mv[[buffer(2)]],
                 device const float*mw[[buffer(3)]],device const float*E[[buffer(4)]],device float*s[[buffer(5)]],
                 constant int&mode[[buffer(6)]],constant float&gam[[buffer(7)]],constant GMat&mat[[buffer(8)]],
-                constant uint&n[[buffer(9)]],uint g[[thread_position_in_grid]]){
-    if(g>=n)return; C5 c=rdc(r,mu,mv,mw,E,g); float2 pc=eospc(c.r,eint(c),mode,gam,mat);
+                constant uint&n[[buffer(9)]],constant float&rcfl[[buffer(10)]],uint g[[thread_position_in_grid]]){
+    if(g>=n)return; if(r[g]<rcfl){s[g]=0.0f;return;}   // void cells excluded from CFL (their hi-cs dynamics are negligible)
+    C5 c=rdc(r,mu,mv,mw,E,g); float2 pc=eospc(c.r,eint(c),mode,gam,mat);
     float cel=sqrt(pc.y*pc.y + ((mode!=0&&mat.G>0.0f)?(4.0f/3.0f)*mat.G/c.r:0.0f));   // elastic speed (strength only)
     s[g]=sqrt(c.mu*c.mu+c.mv*c.mv+c.mw*c.mw)/c.r+cel;
 }
@@ -145,17 +206,19 @@ kernel void strength(device const float*r[[buffer(0)]],device const float*mu[[bu
     device const float*Dd[[buffer(21)]],device float*dD[[buffer(22)]],
     constant int&nx[[buffer(23)]],constant int&ny[[buffer(24)]],constant int&nz[[buffer(25)]],
     constant float&invdx[[buffer(26)]],constant GMat&mat[[buffer(27)]],constant uint&n[[buffer(28)]],
-    uint gid[[thread_position_in_grid]]){
+    constant float&rcfl[[buffer(29)]],uint gid[[thread_position_in_grid]]){
     if(gid>=n)return; float G=mat.G; if(G<=0.0f)return;
+    if(r[gid]<rcfl){dSxx[gid]=dSyy[gid]=dSzz[gid]=dSxy[gid]=dSxz[gid]=dSyz[gid]=0.0f;dD[gid]=0.0f;return;}   // no strength in vacuum
     int k=gid%nz,j=(gid/nz)%ny,i=gid/(ny*nz);
     int xm=((i>0?i-1:0)*ny+j)*nz+k, xp=((i<nx-1?i+1:nx-1)*ny+j)*nz+k;
     int ym=(i*ny+(j>0?j-1:0))*nz+k, yp=(i*ny+(j<ny-1?j+1:ny-1))*nz+k;
     int zm=(i*ny+j)*nz+(k>0?k-1:0), zp=(i*ny+j)*nz+(k<nz-1?k+1:nz-1);
     float dx=1.0f/invdx;
     float hx=((i>0&&i<nx-1)?2.0f:1.0f)*dx, hy=((j>0&&j<ny-1)?2.0f:1.0f)*dx, hz=((k>0&&k<nz-1)?2.0f:1.0f)*dx;
-    #define VX(c) (mu[c]/r[c])
-    #define VY(c) (mv[c]/r[c])
-    #define VZ(c) (mw[c]/r[c])
+    // void neighbours -> use the centre velocity (zero gradient toward vacuum = traction-free free surface, no spurious shear)
+    #define VX(c) ((r[c]<rcfl)?(mu[gid]/r[gid]):(mu[c]/r[c]))
+    #define VY(c) ((r[c]<rcfl)?(mv[gid]/r[gid]):(mv[c]/r[c]))
+    #define VZ(c) ((r[c]<rcfl)?(mw[gid]/r[gid]):(mw[c]/r[c]))
     float Lxx=(VX(xp)-VX(xm))/hx, Lxy=(VX(yp)-VX(ym))/hy, Lxz=(VX(zp)-VX(zm))/hz;
     float Lyx=(VY(xp)-VY(xm))/hx, Lyy=(VY(yp)-VY(ym))/hy, Lyz=(VY(zp)-VY(zm))/hz;
     float Lzx=(VZ(xp)-VZ(xm))/hx, Lzy=(VZ(yp)-VZ(ym))/hy, Lzz=(VZ(zp)-VZ(zm))/hz;

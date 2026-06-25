@@ -1,63 +1,43 @@
-# PICKUP — Route 1: well-balanced free surface under gravity (euler code)
+# PICKUP — Route 1 DONE; next is M6 (collapse) + M7 (Orcus)
 
-Handoff for a fresh session. The euler grid code (`deorbit/euler/`) is a validation-gated
-cross-check of the SPH for impact cratering. **M1–M5 are DONE and gated** (see
-`euler/README.md` + the `deorbit-euler-code` memory). This file is ONE focused task that
-unblocks M6 (crater collapse) and M7 (the Orcus run).
+**Route 1 (well-balanced free surface under gravity) is COMPLETE and validated on CPU+GPU.**
+The gravity-loaded basalt substrate with a free surface stays hydrostatically stable with no
+damping. See `euler/README.md` (the Route-1 milestone) for the full description and the
+`deorbit-euler-code` memory. This file now just hands off the REMAINING work.
 
-## The one blocker
-A gravity-loaded basalt substrate with a free surface (basalt over a low-density ambient,
-ρ≈0.27) is **not hydrostatically well-balanced**, so the free surface erodes. Diagnosed
-precisely:
-- The minmod limiter **under-resolves the hydrostatic pressure gradient in the surface cell**
-  (it flattens the slope at the sharp basalt/ambient interface → the bottom-face reconstructed
-  P comes out ~¾ of lithostatic → a residual net downward force → the surface erodes mass
-  top-down, every step).
-- Bulk imbalance is tiny (~370 m drift over 200 s), so the problem is **specifically the
-  interface/surface**, not the bulk.
-- **Route 2 (fixed floor + relaxation damping + void-CFL) was tried and is INSUFFICIENT**:
-  damping bounds the *velocity* (max|v|→0) but mass erosion is a *flux* effect, so the
-  substrate still rarefies catastrophically (basalt cells 2400 → 120). Don't redo route 2.
+## What route 1 delivered (so you don't redo it)
+The `substrate` gate PASSES on both paths (basalt cells 2400->2400, max|v|~1.4 m/s, 200 s, no
+damping). All M1-M5 gates stay green. Build/run below. The solution (z-direction only):
+1. Audusse hydrostatic reconstruction: reconstruct the pressure DEVIATION from a frozen
+   reference P0(z), inject linearly into a pressure-aware HLLC (`hllc_p`/`faceflux_wb`);
+   reference face P = EOS(avg ref density) (=> lithostatic in bulk, ~0 at the free surface).
+   Well-balanced gravity source cancels the reference flux divergence.
+2. void cells (rho<RHO_CFL) = passive vacuum: reset to reference each step (mom/rho/E/stress);
+   excluded from the CFL.
+3. void-aware strength: centre velocity for void neighbours (traction-free surface), no strength
+   in void; predictor void-cleaned before the strength read. (This was the key FP32 fix.)
+4. deep far-field floor pinned to the reference.
+Globals/flags: REF_R0/REF_P0 (CPU) & bRR0/bRP0+wb (GPU); RHO_CFL; DAMP/dampf (=1, off).
 
-## The fix: Route 1 — hydrostatic reconstruction (Audusse et al. 2004)
-Reconstruct the pressure **deviation from a hydrostatic reference**, so a hydrostatic state
-has identically zero net flux (gravity source ↔ pressure-gradient cancel discretely) and the
-limiter can't break the balance.
+## Remaining: M6 collapse (acoustic fluidization demo)
+`./hydro_cpu collapse` and `./hydro_gpu` are still BLOCKED — but on a DIFFERENT issue than
+route 1. The collapse test uses a basalt STEP; its vertical CLIFF is a free surface in the
+**x-direction**, and route 1 well-balances only **z** (gravity). The cliff/vacuum interface
+explodes (max|v|~1e9 in ~50 steps). To unblock M6:
+- Generalize the free-surface handling to x,y: the WB hydrostatic reconstruction is z-only and
+  correct as-is (gravity is in z), but the **void/free-surface robustness** (void-cell reset +
+  void-aware strength) should already help the cliff — verify whether the cliff still explodes
+  with the current void-aware code (the collapse mode predates some of it; re-test first).
+- If it still explodes, the cliff needs proper vacuum-Riemann handling in the x-sweep (the
+  current x-flux has no special free-surface treatment) and/or the void-clean applied so the
+  cliff ambient never drives runaway flux.
+- Then tune AF (TDEC, ETA_AF) so AF-on slumps (<0.5*h0) and AF-off holds (>0.7*h0).
 
-**Suggested pragmatic implementation** (in the z-sweep of `Lop`, both `hydro_cpu.cpp` and
-`hydro.metal`):
-1. Build a fixed hydrostatic reference `P0(z)` for the substrate (the lithostatic profile from
-   the IC; for basalt `P0 = ρ0 g (z_surf − z)`, ambient `P0=0`). Pass it in (a per-k array, or
-   recompute from a stored reference density).
-2. In the z-direction reconstruction, reconstruct `δP = P − P0(z)` (and the corresponding state)
-   instead of `P`. For a near-hydrostatic column δP≈0 → smooth → the limiter doesn't flatten the
-   balance. The shock/crater perturbation lives in δP (large), so the limiter still works there.
-3. At the z-face, `P_face = P0(z_face) + δP_reconstructed`. Discretize the gravity source
-   consistently with the reference (the well-balanced source term) so a hydrostatic state has
-   exactly zero net `(flux divergence + gravity)`.
-4. The sharp basalt/ambient interface is the analogue of Audusse's discontinuous bathymetry —
-   handle the P0 jump at the interface with the standard hydrostatic-reconstruction interface
-   values (min/clip of the reconstructed depths/pressures from each side).
-
-Only the z-direction (gravity) needs this; x,y sweeps are unchanged. Keep everything else
-(MUSCL+HLLC+RK2, strength, damage, AF) as-is.
-
-## Validation gates (already coded — must flip CHECK → PASS)
-- `./hydro_cpu substrate` — relaxed gravity-loaded basalt substrate must **settle stable, no
-  rarefaction** (currently: basalt 2400→120 = FAIL). Target: basalt cell count stays ~constant,
-  max|v| small. THIS IS THE ROUTE-1 GATE.
-- `./hydro_cpu collapse` — AF-on basalt step should slump (<0.5·h0), AF-off should hold
-  (>0.7·h0). Needs the stable substrate first; this is the M6 acoustic-fluidization demo.
-- **Regression (must stay green): `for m in sod sedov surface shear yield tensile freefall
-  atmos alimpact; do ./hydro_cpu $m; done`** and the GPU equivalents — every gate prints
-  PASS/CHECK. The route-1 change must keep all M1–M5 gates PASS.
-
-## Then
-- M6: tune AF (TDEC, ETA_AF) so the fluidized transient crater collapses to the right
-  depth/diameter (calibration-dependent).
-- M7: build the Orcus IC (basalt half-space + ~50–70 km basalt impactor, ~10 km/s, ~7–10°,
-  Mars g=3.71) on the stable substrate; run; produce the 3-way figure MOLA | SPH | euler.
-  (impactor color tag: add a passive advected scalar to distinguish projectile material.)
+## Then M7 — Orcus cross-check (now unblocked for a FLAT start)
+The flat loaded substrate is stable, so M7 can start. Build the Orcus IC (basalt half-space +
+~50-70 km basalt impactor, ~10 km/s, ~7-10 deg, Mars g=3.71) on the substrate; run on GPU;
+produce the 3-way figure MOLA | SPH | euler. Add a passive advected scalar to tag projectile
+material. (Crater-collapse morphology needs M6's AF tuning.)
 
 ## Build / run
 ```
@@ -67,13 +47,7 @@ xcrun -sdk macosx metal -O3 -ffast-math -c hydro.metal -o hydro.air && \
   xcrun -sdk macosx metallib hydro.air -o hydro.metallib                          # GPU lib
 clang++ -std=c++17 -O2 -I../gpu/metal-cpp hydro_gpu.cpp \
   -framework Metal -framework Foundation -framework QuartzCore -o hydro_gpu        # GPU host
+# gates: ./hydro_cpu substrate ; ./hydro_gpu substrate ; regression: sod surface shear yield
+#        tensile freefall atmos alimpact (CPU) / + pierazzo (GPU)
 ```
-Develop route 1 on the CPU (`hydro_cpu.cpp`) first (it's the FP64 oracle), gate with
-`substrate`, then port to `hydro.metal`/`hydro_gpu.cpp` (GPU==CPU), then M6/M7.
-
-## Key files / globals
-- `hydro_cpu.cpp` (oracle), `hydro.metal` + `hydro_gpu.cpp` (FP32 GPU, metal-cpp in `../gpu/`).
-- Globals: `GZ` (gravity), `TDEC`/`ETA_AF` (acoustic fluidization), `RHO_CFL` (void-CFL),
-  `DAMP` (relaxation). Grid fields incl. `af` (fluidization), `D` (damage), `S*` (stress).
-- EOS shared from `../sph/eos.hpp` (Material::basalt/aluminum/ideal).
-- Commit as user.name='oklo' user.email='oklo@mac.com'; end messages with the Co-Authored-By line.
+Commit as user.name='oklo' user.email='oklo@mac.com'; end messages with the Co-Authored-By line.

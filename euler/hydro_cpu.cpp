@@ -18,10 +18,27 @@ static double TDEC = 0.0;  // acoustic-fluidization decay time (s); 0 = AF off
 static double ETA_AF = 0.0; // acoustic-fluidization viscosity (Pa.s); damps fluidized flow (Wunnemann-Ivanov)
 static double RHO_CFL = 0.0; // exclude near-void cells (rho<RHO_CFL) from the CFL (their hi-v dynamics are negligible)
 static double DAMP = 1.0;    // relaxation velocity damping per step (route 2: settle a gravity-loaded substrate); 1 = off
+static vector<double> REF_R0, REF_P0; // route 1 (Audusse): frozen hydrostatic reference (density,pressure) per cell; empty => WB off
 static inline void eos_pc(double rho,double e,double&p,double&cs){ p=MAT.pressure(rho,e); if(p<0)p=0; cs=MAT.sound_speed(rho,e); }
 struct F5 { double r, mn, mt1, mt2, E; };
 static F5 hllc(double rL,double vnL,double t1L,double t2L,double eL,double rR,double vnR,double t1R,double t2R,double eR){
     double pL,cL,pR,cR; eos_pc(rL,eL,pL,cL); eos_pc(rR,eR,pR,cR);
+    double SL=min(vnL-cL,vnR-cR), SR=max(vnL+cL,vnR+cR);
+    double Ss=(pR-pL+rL*vnL*(SL-vnL)-rR*vnR*(SR-vnR))/(rL*(SL-vnL)-rR*(SR-vnR));
+    double EL=rL*eL+0.5*rL*(vnL*vnL+t1L*t1L+t2L*t2L), ER=rR*eR+0.5*rR*(vnR*vnR+t1R*t1R+t2R*t2R);
+    auto Fp=[&](double r,double vn,double t1,double t2,double p,double E){ return F5{r*vn,r*vn*vn+p,r*vn*t1,r*vn*t2,(E+p)*vn}; };
+    if(SL>=0) return Fp(rL,vnL,t1L,t2L,pL,EL);
+    if(SR<=0) return Fp(rR,vnR,t1R,t2R,pR,ER);
+    auto star=[&](double r,double vn,double t1,double t2,double p,double E,double S,F5 Fk){ double f=r*(S-vn)/(S-Ss);
+        F5 Us{f,f*Ss,f*t1,f*t2,f*(E/r+(Ss-vn)*(Ss+p/(r*(S-vn))))}; F5 U{r,r*vn,r*t1,r*t2,E};
+        return F5{Fk.r+S*(Us.r-U.r),Fk.mn+S*(Us.mn-U.mn),Fk.mt1+S*(Us.mt1-U.mt1),Fk.mt2+S*(Us.mt2-U.mt2),Fk.E+S*(Us.E-U.E)}; };
+    if(Ss>=0) return star(rL,vnL,t1L,t2L,pL,EL,SL,Fp(rL,vnL,t1L,t2L,pL,EL));
+    return star(rR,vnR,t1R,t2R,pR,ER,SR,Fp(rR,vnR,t1R,t2R,pR,ER));
+}
+// pressure-aware HLLC: caller supplies the (well-balanced, deviation-reconstructed) face pressures
+// pL,pR directly; sound speeds come from (rho,e). Used only in the z-sweep under route-1 WB.
+static F5 hllc_p(double rL,double vnL,double t1L,double t2L,double eL,double pL,double rR,double vnR,double t1R,double t2R,double eR,double pR){
+    double cL=MAT.sound_speed(rL,eL), cR=MAT.sound_speed(rR,eR); if(pL<0)pL=0; if(pR<0)pR=0;
     double SL=min(vnL-cL,vnR-cR), SR=max(vnL+cL,vnR+cR);
     double Ss=(pR-pL+rL*vnL*(SL-vnL)-rR*vnR*(SR-vnR))/(rL*(SL-vnL)-rR*(SR-vnR));
     double EL=rL*eL+0.5*rL*(vnL*vnL+t1L*t1L+t2L*t2L), ER=rR*eR+0.5*rR*(vnR*vnR+t1R*t1R+t2R*t2R);
@@ -47,8 +64,9 @@ static void Lop(const Grid&g, DU&d){
     int n=g.nx*g.ny*g.nz; double invdx=1.0/g.dx; double G=MAT.G;
     for(int q=0;q<n;q++){d.r[q]=d.mu[q]=d.mv[q]=d.mw[q]=d.E[q]=0;d.Sxx[q]=d.Syy[q]=d.Szz[q]=d.Sxy[q]=d.Sxz[q]=d.Syz[q]=0;d.D[q]=0;}
     auto prim=[&](int c,double*W){ W[0]=g.r[c]; W[1]=g.mu[c]/W[0]; W[2]=g.mv[c]/W[0]; W[3]=g.mw[c]/W[0]; W[4]=eint(g,c); };
-    // ---- hydro: unsplit MUSCL+HLLC (P only) ----
-    auto sweep=[&](int dir){
+    bool WB = !REF_P0.empty();   // route 1: well-balanced hydrostatic reconstruction (z-sweep only)
+    // ---- hydro: unsplit MUSCL+HLLC (P only; z-dir reconstructs P-deviation when WB) ----
+    auto sweep=[&](int dir,bool wb){
         int nL=(dir==0?g.nx:(dir==1?g.ny:g.nz)),nA=(dir==0?g.ny:g.nx),nB=(dir==2?g.ny:g.nz);
         auto CELL=[&](int p,int a,int b){ return dir==0?g.idx(p,a,b):(dir==1?g.idx(a,p,b):g.idx(a,b,p)); };
         int in=(dir==0?1:(dir==1?2:3)),it1=(dir==0?2:1),it2=(dir==2?2:3);
@@ -58,25 +76,45 @@ static void Lop(const Grid&g, DU&d){
                 double A[5],B[5],AA[5],BB[5],L[5],R[5]; prim(CELL(iL,a,b),A);prim(CELL(iR,a,b),B);prim(CELL(iLL,a,b),AA);prim(CELL(iRR,a,b),BB);
                 for(int q=0;q<5;q++){L[q]=A[q]+0.5*mm(A[q]-AA[q],B[q]-A[q]);R[q]=B[q]-0.5*mm(B[q]-A[q],BB[q]-B[q]);}
                 if(L[0]<1e-9)L[0]=A[0];if(R[0]<1e-9)R[0]=B[0];if(L[4]<0)L[4]=A[4];if(R[4]<0)R[4]=B[4];
-                F5 fl=hllc(L[0],L[in],L[it1],L[it2],L[4],R[0],R[in],R[it1],R[it2],R[4]); Fr[f]=fl.r;Fmn[f]=fl.mn;Ft1[f]=fl.mt1;Ft2[f]=fl.mt2;FE[f]=fl.E; }
+                F5 fl;
+                if(wb){ // reconstruct the pressure DEVIATION from the reference; inject P linearly (robust); reference face P from the EOS of the averaged reference density (=> ~0 at the free surface)
+                    int cLL=CELL(iLL,a,b),cL=CELL(iL,a,b),cR=CELL(iR,a,b),cRR=CELL(iRR,a,b);
+                    double dLL=Pcell(g,cLL)-REF_P0[cLL],dL=Pcell(g,cL)-REF_P0[cL],dR=Pcell(g,cR)-REF_P0[cR],dRR=Pcell(g,cRR)-REF_P0[cRR];
+                    double dLf=dL+0.5*mm(dL-dLL,dR-dL), dRf=dR-0.5*mm(dR-dL,dRR-dR);
+                    double p0f=MAT.pressure(0.5*(REF_R0[cL]+REF_R0[cR]),0.0); if(p0f<0)p0f=0;
+                    fl=hllc_p(L[0],L[in],L[it1],L[it2],L[4],p0f+dLf, R[0],R[in],R[it1],R[it2],R[4],p0f+dRf);
+                } else fl=hllc(L[0],L[in],L[it1],L[it2],L[4],R[0],R[in],R[it1],R[it2],R[4]);
+                Fr[f]=fl.r;Fmn[f]=fl.mn;Ft1[f]=fl.mt1;Ft2[f]=fl.mt2;FE[f]=fl.E; }
             for(int p=0;p<nL;p++){ int c=CELL(p,a,b); d.r[c]+=-(Fr[p+1]-Fr[p])*invdx; d.E[c]+=-(FE[p+1]-FE[p])*invdx;
                 double dmn=-(Fmn[p+1]-Fmn[p])*invdx,dt1=-(Ft1[p+1]-Ft1[p])*invdx,dt2=-(Ft2[p+1]-Ft2[p])*invdx;
                 if(dir==0){d.mu[c]+=dmn;d.mv[c]+=dt1;d.mw[c]+=dt2;}else if(dir==1){d.mv[c]+=dmn;d.mu[c]+=dt1;d.mw[c]+=dt2;}else{d.mw[c]+=dmn;d.mu[c]+=dt1;d.mv[c]+=dt2;}
             }
         }
     };
-    sweep(0);sweep(1);sweep(2);
-    if(GZ!=0.0){ for(int c=0;c<n;c++){ d.mw[c]+=-GZ*g.r[c]; d.E[c]+=-GZ*g.mw[c]; } }   // gravity body force
+    sweep(0,false);sweep(1,false);sweep(2,WB);
+    if(GZ!=0.0){
+        if(!WB){ for(int c=0;c<n;c++){ d.mw[c]+=-GZ*g.r[c]; d.E[c]+=-GZ*g.mw[c]; } }   // plain gravity body force
+        else { for(int i=0;i<g.nx;i++)for(int j=0;j<g.ny;j++)for(int k=0;k<g.nz;k++){ int c=g.idx(i,j,k);
+            double r0t=0.5*(REF_R0[c]+REF_R0[g.idx(i,j,min(g.nz-1,k+1))]), r0b=0.5*(REF_R0[g.idx(i,j,max(0,k-1))]+REF_R0[c]);
+            double p0t=MAT.pressure(r0t,0.0); if(p0t<0)p0t=0; double p0b=MAT.pressure(r0b,0.0); if(p0b<0)p0b=0;  // EOS reference face P (matches the flux)
+            d.mw[c]+=-GZ*(g.r[c]-REF_R0[c])+(p0t-p0b)*invdx;   // WB source: cancels the reference flux divergence to machine precision
+            d.E[c]+=-GZ*g.mw[c]; } }
+    }
     if(G<=0) return;                      // no strength (ideal gas) -> done
     // ---- strength sources (per cell, central diffs; clamp at boundaries) ----
     auto vx=[&](int c){return g.mu[c]/g.r[c];}; auto vy=[&](int c){return g.mv[c]/g.r[c];}; auto vz=[&](int c){return g.mw[c]/g.r[c];};
     for(int i=0;i<g.nx;i++)for(int j=0;j<g.ny;j++)for(int k=0;k<g.nz;k++){ int c=g.idx(i,j,k);
+        if(RHO_CFL>0&&g.r[c]<RHO_CFL) continue;   // no strength in vacuum cells
         int xm=g.idx(max(0,i-1),j,k),xp=g.idx(min(g.nx-1,i+1),j,k),ym=g.idx(i,max(0,j-1),k),yp=g.idx(i,min(g.ny-1,j+1),k),zm=g.idx(i,j,max(0,k-1)),zp=g.idx(i,j,min(g.nz-1,k+1));
         double hx=( (i>0&&i<g.nx-1)?2.0:1.0)*g.dx, hy=((j>0&&j<g.ny-1)?2.0:1.0)*g.dx, hz=((k>0&&k<g.nz-1)?2.0:1.0)*g.dx;
+        // void neighbours -> centre velocity (zero gradient toward vacuum = traction-free free surface)
+        auto vxw=[&](int cc){return (RHO_CFL>0&&g.r[cc]<RHO_CFL)?g.mu[c]/g.r[c]:g.mu[cc]/g.r[cc];};
+        auto vyw=[&](int cc){return (RHO_CFL>0&&g.r[cc]<RHO_CFL)?g.mv[c]/g.r[c]:g.mv[cc]/g.r[cc];};
+        auto vzw=[&](int cc){return (RHO_CFL>0&&g.r[cc]<RHO_CFL)?g.mw[c]/g.r[c]:g.mw[cc]/g.r[cc];};
         // velocity gradient L[a][b]=d v_a / d x_b
-        double Lxx=(vx(xp)-vx(xm))/hx, Lxy=(vx(yp)-vx(ym))/hy, Lxz=(vx(zp)-vx(zm))/hz;
-        double Lyx=(vy(xp)-vy(xm))/hx, Lyy=(vy(yp)-vy(ym))/hy, Lyz=(vy(zp)-vy(zm))/hz;
-        double Lzx=(vz(xp)-vz(xm))/hx, Lzy=(vz(yp)-vz(ym))/hy, Lzz=(vz(zp)-vz(zm))/hz;
+        double Lxx=(vxw(xp)-vxw(xm))/hx, Lxy=(vxw(yp)-vxw(ym))/hy, Lxz=(vxw(zp)-vxw(zm))/hz;
+        double Lyx=(vyw(xp)-vyw(xm))/hx, Lyy=(vyw(yp)-vyw(ym))/hy, Lyz=(vyw(zp)-vyw(zm))/hz;
+        double Lzx=(vzw(xp)-vzw(xm))/hx, Lzy=(vzw(yp)-vzw(ym))/hy, Lzz=(vzw(zp)-vzw(zm))/hz;
         double exx=Lxx,eyy=Lyy,ezz=Lzz,exy=0.5*(Lxy+Lyx),exz=0.5*(Lxz+Lzx),eyz=0.5*(Lyz+Lzy),tr=(exx+eyy+ezz)/3.0;
         double Wxy=0.5*(Lxy-Lyx),Wxz=0.5*(Lxz-Lzx),Wyz=0.5*(Lyz-Lzy);   // spin (antisym)
         double sxx=g.Sxx[c],syy=g.Syy[c],szz=g.Szz[c],sxy=g.Sxy[c],sxz=g.Sxz[c],syz=g.Syz[c];
@@ -129,6 +167,12 @@ static void grow_damage(Grid&g,double dt){ double Em=MAT.Emod,wk=MAT.wk,wm=MAT.w
         double sigmax=max(-P+g.Sxx[c],max(-P+g.Syy[c],-P+g.Szz[c]));   // max tensile principal stress (diagonal proxy)
         if(sigmax>0.0 && sigmax/Em>eps_act){ double cg=0.4*sqrt(Em/max(g.r[c],1e-30)),Rs=0.5*dx;
             double d13=pow(g.D[c],1.0/3.0)+(cg/Rs)*dt; g.D[c]=min(1.0,d13*d13*d13); } } }
+static void set_ref(const Grid&g){ int n=g.nx*g.ny*g.nz; REF_R0.assign(n,0); REF_P0.assign(n,0);   // freeze IC as the hydrostatic reference (route 1)
+    for(int c=0;c<n;c++){ REF_R0[c]=g.r[c]; REF_P0[c]=Pcell(g,c); } }
+// route 1: void cells = passive vacuum (reset to reference). Also kills the near-vacuum velocity (mu/rho_tiny) that
+// would otherwise feed spurious deviatoric stress into the strength solver at the free surface.
+static void void_cells(Grid&g){ if(RHO_CFL<=0)return; bool wb=!REF_R0.empty(); int N=g.r.size();
+    for(int c=0;c<N;c++) if(g.r[c]<RHO_CFL){ g.mu[c]=g.mv[c]=g.mw[c]=0; if(wb){g.r[c]=REF_R0[c];g.E[c]=0;g.Sxx[c]=g.Syy[c]=g.Szz[c]=g.Sxy[c]=g.Sxz[c]=g.Syz[c]=0;} } }
 static double maxspeed(const Grid&g){ double s=1e-30; int n=g.r.size(); double G=MAT.G;
     for(int c=0;c<n;c++){ if(g.r[c]<RHO_CFL) continue; double p,cs; eos_pc(g.r[c],eint(g,c),p,cs); double cel=sqrt(cs*cs+ (G>0?(4.0/3.0)*G/g.r[c]:0.0));
         double v=sqrt(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c]; s=max(s,v+cel);} return s; }
@@ -136,12 +180,13 @@ static void step_rk2(Grid&g,double dt){ int n=g.r.size(); DU d(n); Grid g1=g;
     Lop(g,d);
     for(int c=0;c<n;c++){g1.r[c]=g.r[c]+dt*d.r[c];g1.mu[c]=g.mu[c]+dt*d.mu[c];g1.mv[c]=g.mv[c]+dt*d.mv[c];g1.mw[c]=g.mw[c]+dt*d.mw[c];g1.E[c]=g.E[c]+dt*d.E[c];
         g1.Sxx[c]=g.Sxx[c]+dt*d.Sxx[c];g1.Syy[c]=g.Syy[c]+dt*d.Syy[c];g1.Szz[c]=g.Szz[c]+dt*d.Szz[c];g1.Sxy[c]=g.Sxy[c]+dt*d.Sxy[c];g1.Sxz[c]=g.Sxz[c]+dt*d.Sxz[c];g1.Syz[c]=g.Syz[c]+dt*d.Syz[c];g1.D[c]=g.D[c]+dt*d.D[c];}
-    vonmises(g1); Lop(g1,d);
+    void_cells(g1); vonmises(g1); Lop(g1,d);   // clean the predictor's void cells so strength sees no near-vacuum velocity
     for(int c=0;c<n;c++){g.r[c]=0.5*(g.r[c]+g1.r[c]+dt*d.r[c]);g.mu[c]=0.5*(g.mu[c]+g1.mu[c]+dt*d.mu[c]);g.mv[c]=0.5*(g.mv[c]+g1.mv[c]+dt*d.mv[c]);g.mw[c]=0.5*(g.mw[c]+g1.mw[c]+dt*d.mw[c]);g.E[c]=0.5*(g.E[c]+g1.E[c]+dt*d.E[c]);
         g.Sxx[c]=0.5*(g.Sxx[c]+g1.Sxx[c]+dt*d.Sxx[c]);g.Syy[c]=0.5*(g.Syy[c]+g1.Syy[c]+dt*d.Syy[c]);g.Szz[c]=0.5*(g.Szz[c]+g1.Szz[c]+dt*d.Szz[c]);g.Sxy[c]=0.5*(g.Sxy[c]+g1.Sxy[c]+dt*d.Sxy[c]);g.Sxz[c]=0.5*(g.Sxz[c]+g1.Sxz[c]+dt*d.Sxz[c]);g.Syz[c]=0.5*(g.Syz[c]+g1.Syz[c]+dt*d.Syz[c]);g.D[c]=0.5*(g.D[c]+g1.D[c]+dt*d.D[c]);}
     grow_damage(g,dt); vonmises(g);
     if(TDEC>0){ double f=exp(-dt/TDEC); int N=g.r.size(); for(int c=0;c<N;c++) g.af[c]*=f; }   // AF vibrations decay
     if(DAMP<1.0){ int N=g.r.size(); for(int c=0;c<N;c++){ g.mu[c]*=DAMP; g.mv[c]*=DAMP; g.mw[c]*=DAMP; } }   // relaxation damping
+    void_cells(g);   // void cells = passive vacuum (reset to reference)
 }
 static void exact_sod(double S,double&r,double&u,double&p){
     double rL=1,uL=0,pL=1,rR=0.125,uR=0,pR=0.1,g=GAM;double cL=sqrt(g*pL/rL),cR=sqrt(g*pR/rR);
@@ -231,14 +276,15 @@ int main(int argc,char**argv){
         double Phug=hugoniot_P(up);
         printf("Al-on-Al planar (U=%.0f km/s, up=%.0f m/s): peak P=%.3e Pa  Tillotson Hugoniot=%.3e (err %.1f%%)\n",2*up/1000.0,up,Pmax,Phug,100*fabs(Pmax-Phug)/Phug);
         printf("GATE (shock P matches analytic Hugoniot, <5%%): %s\n",(fabs(Pmax-Phug)/Phug<0.05)?"PASS":"CHECK");
-    } else if(mode=="substrate"){ // route 2: relaxed gravity-loaded substrate must settle stable (no rarefaction)
+    } else if(mode=="substrate"){ // route 1: well-balanced gravity-loaded substrate must stay stable (no rarefaction), no damping
         MAT=Material::basalt(); GZ=3.71; double rho0=2700,A=2.67e10; int NXc=60,NZc=60;double dx=500.0,CFL=0.4;
-        double zsurf=20e3,tend=200.0; DAMP=0.98; RHO_CFL=100.0;
+        double zsurf=20e3,tend=200.0; DAMP=1.0; RHO_CFL=100.0;
         Grid g(NXc,1,NZc,dx); int nb0=0;
         for(int i=0;i<NXc;i++)for(int k=0;k<NZc;k++){double z=(k+0.5)*dx;int c=g.idx(i,0,k);
             if(z<zsurf){g.r[c]=rho0*(1.0+rho0*GZ*(zsurf-z)/A);nb0++;} else g.r[c]=0.27; g.E[c]=0;}
+        set_ref(g);   // route 1: freeze the lithostatic IC as the WB reference
         double t=0;int s=0;while(t<tend){double dt=CFL*dx/maxspeed(g);if(t+dt>tend)dt=tend-t;step_rk2(g,dt);
-            for(int i=0;i<NXc;i++)for(int k=0;k<2;k++){double z=(k+0.5)*dx;int c=g.idx(i,0,k);g.r[c]=rho0*(1.0+rho0*GZ*(zsurf-z)/A);g.mu[c]=g.mv[c]=g.mw[c]=0;g.E[c]=0;}
+            for(int i=0;i<NXc;i++)for(int k=0;k<2;k++){int c=g.idx(i,0,k);g.r[c]=REF_R0[c];g.mu[c]=g.mv[c]=g.mw[c]=0;g.E[c]=0;}  // deep far-field floor pinned to the undisturbed reference
             t+=dt;s++;}
         double vmx=0;int nb=0;for(int i=0;i<NXc;i++)for(int k=0;k<NZc;k++){int c=g.idx(i,0,k);if(g.r[c]>1350){vmx=max(vmx,sqrt(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c]);nb++;}}
         printf("Substrate relax (DAMP=%.2f): max|v|=%.3f m/s, basalt cells %d->%d, steps %d\n",DAMP,vmx,nb0,nb,s);
@@ -250,6 +296,7 @@ int main(int argc,char**argv){
             TDEC=(run==0?1e6:0.0); ETA_AF=(run==0?1e9:0.0); RHO_CFL=100.0; Grid g(NXc,1,NZc,dx);   // exclude only the true ambient (0.27)
             for(int i=0;i<NXc;i++)for(int k=0;k<NZc;k++){double x=(i+0.5)*dx,z=(k+0.5)*dx;int c=g.idx(i,0,k);double zs=(x<0.5*NXc*dx?zhi:zlo);
                 if(z<zs){g.r[c]=rho0*(1.0+rho0*GZ*(zs-z)/A); if(run==0)g.af[c]=1.0;} else g.r[c]=0.27; g.E[c]=0;}   // cold lithostatic step
+            set_ref(g);   // route 1: per-column lithostatic WB reference (vertical balance; the horizontal step drives the slump)
             double t=0;int s=0;while(t<tend){double dt=CFL*dx/maxspeed(g);if(t+dt>tend)dt=tend-t;step_rk2(g,dt);
                 for(int i=0;i<NXc;i++)for(int k=0;k<2;k++){double zs=(((i+0.5)*dx)<0.5*NXc*dx?zhi:zlo),z=(k+0.5)*dx;int c=g.idx(i,0,k);
                     g.r[c]=rho0*(1.0+rho0*GZ*(zs-z)/A);g.mu[c]=g.mv[c]=g.mw[c]=0;g.E[c]=0;g.Sxx[c]=g.Syy[c]=g.Szz[c]=g.Sxy[c]=g.Sxz[c]=g.Syz[c]=0;}  // held floor
