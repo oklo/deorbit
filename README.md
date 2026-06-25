@@ -89,17 +89,26 @@ extra + `data/fetch.sh`; the cloud routine stays pure stdlib.
 ## Capture-corridor uncertainty
 
 `python3 -m deorbit.corridor.ensemble` Monte-Carlos the physically-relevant
-uncertainties and reports the corridor as a **probability band** + a sensitivity
-ranking (`results/corridor_ensemble.json` + an ASCII P(capture) map), instead of a
-single deterministic boundary. Grounding: a β≈5×10⁶ iron body sheds its capture
-energy at periapsis **2–45 km** (stratosphere/lower mesosphere), so the large
-thermospheric solar-cycle density variability is irrelevant — the body never samples
-it. Result (N=160): the max v∞ that still captures is **≈4.0 km/s nominal, 3.3–5.0 km/s
-(p05–p95)**; its spread is controlled by the body's **drag coefficient Cd (β∝1/Cd) ≈48%**
-and **lower-atmosphere density ≈47%**, with Earth co-rotation and scale-height ≈2% each.
-So the corridor is **narrow but robust** — set by the body and the well-constrained lower
-atmosphere, not the variable upper atmosphere. (The p95 touches the 5 km/s sweep edge;
-favorable Cd+density draws capture beyond it.)
+uncertainties (drag coefficient Cd, lower-atmosphere density, scale height, Earth
+co-rotation) and reports the corridor as **probability bands** + a sensitivity ranking
+(`results/corridor_ensemble.json` + ASCII P-maps), instead of a single deterministic
+boundary. Grounding: a β≈5×10⁶ iron body sheds its capture energy at periapsis **2–45 km**
+(stratosphere/lower mesosphere), so the large thermospheric solar-cycle density variability
+is irrelevant — the body never samples it.
+
+Three nested corridors (N=160; v∞ swept to 6 km/s to resolve the upper tail):
+- **capture** (`eps<0`, 2-body+drag): max v∞ ≈ **4.0 km/s nominal, p05–p95 3.2–5.6**.
+- **bound** (survives the Moon — first apogee < Earth's Hill radius; calibrated to the
+  REBOUND/ASSIST layer): the *shallow*-periapsis marginal captures are barely bound → high
+  apogee → Moon-ejected, so the corridor's high-periapsis edge retreats from ~46 km to ~26 km
+  (vmax ≈ unchanged: deep captures survive).
+- **gentle** (first apogee < ~130,000 km → aerobrakes to the ultra-oblique grazing impact —
+  *the Cayambe scenario*): limited to **≈3.2 km/s nominal (p05–p95 2.2–5.0)**; above that,
+  captures still occur but the Moon pumps them into *steep* impacts, not grazing.
+
+The spread is controlled by the body's **Cd (β∝1/Cd) ≈56%** and **lower-atmosphere density
+≈40%**; Earth co-rotation ≈3%, scale height ≈1%. So the corridor is **narrow but robust** —
+set by the body and the well-constrained lower atmosphere, not the variable upper atmosphere.
 
 ## Status
 
