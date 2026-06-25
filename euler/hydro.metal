@@ -46,8 +46,26 @@ inline float2 eospc(float rho,float e,int mode,float gam,constant GMat&m){
 }
 inline float eint(C5 c){ float ke=0.5f*(c.mu*c.mu+c.mv*c.mv+c.mw*c.mw)/c.r; return (c.E-ke)/c.r; }
 
+// vacuum-aware flux: a (near-)vacuum side has ~no mass -> exact rarefaction-into-vacuum sampled at the face (x/t=0).
+// g=rho*c^2/p (=gamma for ideal gas, exact; ->large = stiff -> minimal expansion). side=+1: material LEFT, -1: material RIGHT.
+inline C5 vac_flux(float rM,float vnM,float t1M,float t2M,float eM,int side,int mode,float gam,constant GMat&m){
+    float2 pc=eospc(rM,eM,mode,gam,m); float pM=pc.x,cM=pc.y;
+    float g=clamp(rM*cM*cM/max(pM,1e-30f),1.01f,1e5f);
+    float s=(float)side, vn=s*vnM;
+    if(vn-cM>=0.0f){ float E=rM*eM+0.5f*rM*(vnM*vnM+t1M*t1M+t2M*t2M); return (C5){rM*vnM,rM*vnM*vnM+pM,rM*vnM*t1M,rM*vnM*t2M,(E+pM)*vnM}; }
+    if(vn+2.0f*cM/(g-1.0f)<=0.0f) return (C5){0,0,0,0,0};
+    float u0=2.0f/(g+1.0f)*(cM+0.5f*(g-1.0f)*vn), c0=u0;
+    float r0=rM*pow(c0/cM,2.0f/(g-1.0f)), p0=pM*pow(r0/rM,g), e0=p0/((g-1.0f)*r0), un0=s*u0;
+    float E0=r0*e0+0.5f*r0*(un0*un0+t1M*t1M+t2M*t2M);
+    return (C5){r0*un0, r0*un0*un0+p0, r0*un0*t1M, r0*un0*t2M, (E0+p0)*un0};
+}
 inline C5 hllc(float rL,float vnL,float t1L,float t2L,float eL,float rR,float vnR,float t1R,float t2R,float eR,
-               int mode,float gam,constant GMat&m){
+               int mode,float gam,constant GMat&m,float rvac){
+    if(rvac>0.0f){ bool vL=(rL<rvac), vR=(rR<rvac);
+        if(vL&&vR) return (C5){0,0,0,0,0};                                  // vacuum | vacuum
+        if(vR) return vac_flux(rL,vnL,t1L,t2L,eL,+1,mode,gam,m);            // material L | vacuum R
+        if(vL) return vac_flux(rR,vnR,t1R,t2R,eR,-1,mode,gam,m);            // vacuum L | material R
+    }
     float2 PL=eospc(rL,eL,mode,gam,m), PR=eospc(rR,eR,mode,gam,m);
     float pL=PL.x,cL=PL.y,pR=PR.x,cR=PR.y;
     float SL=min(vnL-cL,vnR-cR), SR=max(vnL+cL,vnR+cR);
@@ -65,7 +83,7 @@ inline C5 hllc(float rL,float vnL,float t1L,float t2L,float eL,float rR,float vn
     return (C5){FR.r+SR*(Us.r-U.r),FR.mu+SR*(Us.mu-U.mu),FR.mv+SR*(Us.mv-U.mv),FR.mw+SR*(Us.mw-U.mw),FR.E+SR*(Us.E-U.E)};
 }
 inline float mmod(float a,float b){ return (a*b<=0.0f)?0.0f:(fabs(a)<fabs(b)?a:b); }
-inline C5 faceflux(C5 a,C5 b,C5 cc,C5 d,int dir,int mode,float gam,constant GMat&m){
+inline C5 faceflux(C5 a,C5 b,C5 cc,C5 d,int dir,int mode,float gam,constant GMat&m,float rvac){
     float Pa[5]={a.r,a.mu/a.r,a.mv/a.r,a.mw/a.r,eint(a)};
     float Pb[5]={b.r,b.mu/b.r,b.mv/b.r,b.mw/b.r,eint(b)};
     float Pc[5]={cc.r,cc.mu/cc.r,cc.mv/cc.r,cc.mw/cc.r,eint(cc)};
@@ -74,7 +92,7 @@ inline C5 faceflux(C5 a,C5 b,C5 cc,C5 d,int dir,int mode,float gam,constant GMat
     for(int q=0;q<5;q++){ L[q]=Pb[q]+0.5f*mmod(Pb[q]-Pa[q],Pc[q]-Pb[q]); R[q]=Pc[q]-0.5f*mmod(Pc[q]-Pb[q],Pd[q]-Pc[q]); }
     if(L[0]<1e-9f)L[0]=Pb[0]; if(R[0]<1e-9f)R[0]=Pc[0]; if(L[4]<0.0f)L[4]=Pb[4]; if(R[4]<0.0f)R[4]=Pc[4];
     int in=(dir==0?1:(dir==1?2:3)), it1=(dir==0?2:1), it2=(dir==2?2:3);
-    C5 fl=hllc(L[0],L[in],L[it1],L[it2],L[4], R[0],R[in],R[it1],R[it2],R[4], mode,gam,m);
+    C5 fl=hllc(L[0],L[in],L[it1],L[it2],L[4], R[0],R[in],R[it1],R[it2],R[4], mode,gam,m,rvac);
     C5 f; f.r=fl.r; f.E=fl.E;
     if(dir==0){f.mu=fl.mu;f.mv=fl.mv;f.mw=fl.mw;} else if(dir==1){f.mv=fl.mu;f.mu=fl.mv;f.mw=fl.mw;} else {f.mw=fl.mu;f.mu=fl.mv;f.mv=fl.mw;}
     return f;
@@ -125,7 +143,7 @@ kernel void lop(device const float*r[[buffer(0)]],device const float*mu[[buffer(
                 constant int&nx[[buffer(12)]],constant int&ny[[buffer(13)]],constant int&nz[[buffer(14)]],
                 constant float&invdx[[buffer(15)]],constant int&mode[[buffer(16)]],constant float&gam[[buffer(17)]],
                 constant GMat&mat[[buffer(18)]],constant uint&n[[buffer(19)]],constant float&gz[[buffer(20)]],
-                constant int&wb[[buffer(21)]],
+                constant int&wb[[buffer(21)]],constant float&rvac[[buffer(22)]],
                 uint gid[[thread_position_in_grid]]){
     if(gid>=n) return;
     int k=gid%nz, j=(gid/nz)%ny, i=gid/(ny*nz);
@@ -143,7 +161,7 @@ kernel void lop(device const float*r[[buffer(0)]],device const float*mu[[buffer(
         if(dir==2 && wb!=0){   // route 1: well-balanced z-faces (pressure-deviation reconstruction)
             FRa=faceflux_wb(cm1,c0,cp1,cp2, RP0[m1],RP0[p0],RP0[p1],RP0[p2], RR0[p0],RR0[p1], mode,gam,mat);
             FLa=faceflux_wb(cm2,cm1,c0,cp1, RP0[m2],RP0[m1],RP0[p0],RP0[p1], RR0[m1],RR0[p0], mode,gam,mat);
-        } else { FRa=faceflux(cm1,c0,cp1,cp2,dir,mode,gam,mat); FLa=faceflux(cm2,cm1,c0,cp1,dir,mode,gam,mat); }
+        } else { FRa=faceflux(cm1,c0,cp1,cp2,dir,mode,gam,mat,rvac); FLa=faceflux(cm2,cm1,c0,cp1,dir,mode,gam,mat,rvac); }
         acc.r-=(FRa.r-FLa.r);acc.mu-=(FRa.mu-FLa.mu);acc.mv-=(FRa.mv-FLa.mv);acc.mw-=(FRa.mw-FLa.mw);acc.E-=(FRa.E-FLa.E);
     }
     dr[gid]=acc.r*invdx;dmu[gid]=acc.mu*invdx;dmv[gid]=acc.mv*invdx;

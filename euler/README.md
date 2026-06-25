@@ -89,14 +89,27 @@ M3 or M5 won't validate.**
       GATE `substrate` (CPU & GPU): basalt cells 2400->2400 (zero rarefaction), max|v|~1.4 m/s,
       stable over 200 s, no damping. All M1-M5 gates stay PASS. Metal: hllc_p, faceflux_wb,
       voidzero, damp kernels; lop takes the reference buffers + wb flag; wavespeed & strength take rcfl.
-- [~] **M6 acoustic fluidization (block model) — PARTIAL.** AF mechanism IMPLEMENTED +
-      regression-safe (fluidization field `af` reduces Y->(1-D)(1-af)Y; TDEC decay; ETA_AF
-      viscosity). The horizontal substrate is now well-balanced (route 1), but the `collapse`
-      DEMO uses a basalt STEP whose vertical CLIFF is a free surface in the X-direction; route 1
-      well-balances only Z (gravity), so the cliff/vacuum interface still explodes (max|v|~1e9 in
-      ~50 steps). NEXT: generalize the void/free-surface handling to the x,y sweeps (or zero void
-      momentum inside the RK substeps), then tune AF (TDEC, ETA_AF) for the collapse depth.
-      Modes: substrate (PASS), collapse (blocked on the cliff). Globals: af, TDEC, ETA_AF, RHO_CFL, DAMP.
+- [x] **Vacuum-aware Riemann flux (DONE, CPU+GPU).** A material|(near-)vacuum face has ~no mass
+      on the void side, so any pressure force gives it runaway velocity (the classic vacuum-Riemann
+      problem; Toro Ch.4, Einfeldt 1991). At such a face (one side rho<RHO_VAC) we replace HLLC with
+      the EXACT rarefaction-into-vacuum solution sampled at x/t=0, using an effective adiabatic
+      exponent g=rho*c^2/p (= gamma for ideal gas exactly; ->large for a stiff EOS => minimal
+      expansion, the correct near-incompressible-solid limit). This lets material expand into vacuum
+      physically instead of relying on the post-step void reset, and is what flagship codes (iSALE
+      P=0 free surface, astro positivity/vacuum-Riemann) do. GATE `vacuum` (CPU & GPU, GPU==CPU):
+      expansion into vacuum matches Toro's analytic centred-rarefaction fan, L1 rho=0.0012 u=0.0027,
+      density stays positive. Direction-independent (works for the x-cliff); all M1-M5 + route-1 gates
+      stay PASS. Metal: vac_flux; hllc/faceflux/lop take rvac. (Off by default: RHO_VAC=0.)
+- [~] **M6 acoustic fluidization (block model) — PARTIAL (numerics solid, physics to tune).** AF
+      mechanism IMPLEMENTED + regression-safe (fluidization field `af` reduces Y->(1-D)(1-af)Y; TDEC
+      decay; ETA_AF viscosity). With route 1 + the void-aware strength + the vacuum-aware flux, the
+      `collapse` step (incl. the vertical CLIFF) is now NUMERICALLY STABLE (max|v|~8-20 m/s, no
+      blowup -- down from ~1e9). The remaining gate failure is PHYSICS CALIBRATION, not numerics:
+      a 4 km step on Mars has lithostatic shear ~40 MPa << Y=350 MPa, so it holds elastically; AF-on
+      fails to slump because ETA_AF=1e9 Pa.s viscously freezes the fluidized flow. NEXT: tune AF
+      (lower ETA_AF, set TDEC) so AF-on slumps (<0.5*h0) and AF-off holds (>0.7*h0).
+      Modes: substrate (PASS), vacuum (PASS), collapse (stable; AF calibration pending).
+      Globals: af, TDEC, ETA_AF, RHO_CFL, RHO_VAC, DAMP.
 - [ ] **M7 Orcus cross-check** — cross-validate vs SPH (early dynamics), then the
       3-way figure: MOLA | SPH | euler.
 
@@ -105,10 +118,10 @@ M3 or M5 won't validate.**
 gravity-loaded basalt substrate with a free surface is hydrostatically well-balanced
 (Audusse P-deviation reconstruction + EOS reference face pressure + void-cell vacuum +
 pinned far-field floor); `substrate` gate PASSES with no damping, all M1-M5 gates stay green.
-**M6 PARTIAL**: acoustic-fluidization mechanism implemented + regression-safe; the `collapse`
-demo is still blocked by the vertical CLIFF (an x-direction free surface that route 1's
-z-only well-balancing doesn't cover) -> generalize void/free-surface handling to x,y, then
-tune AF. **M7** (Orcus 3-way figure) now unblocked for a FLAT-substrate start.
+**Vacuum-aware Riemann flux DONE** (gate `vacuum` vs Toro, CPU+GPU): material expands into vacuum
+physically (exact rarefaction-into-vacuum at the face). **M6**: the `collapse` cliff is now
+numerically stable (~10 m/s, was ~1e9); the residual is AF physics calibration (ETA_AF too high),
+not numerics. **M7** (Orcus 3-way figure) now unblocked for a FLAT-substrate start.
 
 **Scope: M1-M5 + Route 1 validated** -- a credible cross-check of the SPH's early impact
 dynamics, now with a stable gravity-loaded free surface for the late-stage substrate.

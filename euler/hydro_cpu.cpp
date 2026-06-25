@@ -18,10 +18,30 @@ static double TDEC = 0.0;  // acoustic-fluidization decay time (s); 0 = AF off
 static double ETA_AF = 0.0; // acoustic-fluidization viscosity (Pa.s); damps fluidized flow (Wunnemann-Ivanov)
 static double RHO_CFL = 0.0; // exclude near-void cells (rho<RHO_CFL) from the CFL (their hi-v dynamics are negligible)
 static double DAMP = 1.0;    // relaxation velocity damping per step (route 2: settle a gravity-loaded substrate); 1 = off
+static double RHO_VAC = 0.0; // vacuum-aware Riemann flux: a face side with rho<RHO_VAC is treated as vacuum (free surface); 0 = off
 static vector<double> REF_R0, REF_P0; // route 1 (Audusse): frozen hydrostatic reference (density,pressure) per cell; empty => WB off
 static inline void eos_pc(double rho,double e,double&p,double&cs){ p=MAT.pressure(rho,e); if(p<0)p=0; cs=MAT.sound_speed(rho,e); }
 struct F5 { double r, mn, mt1, mt2, E; };
+// vacuum-aware flux: a (near-)vacuum side has ~no mass -> any pressure force gives it runaway velocity.
+// Replace HLLC there with the exact rarefaction-into-vacuum solution sampled at the cell face (x/t=0).
+// Effective adiabatic exponent g=rho*c^2/p (=gamma for ideal gas, exact; ->large = stiff -> minimal expansion).
+static F5 vac_flux(double rM,double vnM,double t1M,double t2M,double eM,int side){ // side=+1: material is LEFT, vacuum right; -1: material RIGHT
+    double pM,cM; eos_pc(rM,eM,pM,cM);
+    double g=rM*cM*cM/max(pM,1e-30); if(g<1.01)g=1.01; if(g>1e5)g=1e5;
+    double s=(double)side, vn=s*vnM;                 // map to "material expanding to the right" frame
+    if(vn-cM>=0){ double E=rM*eM+0.5*rM*(vnM*vnM+t1M*t1M+t2M*t2M); return F5{rM*vnM,rM*vnM*vnM+pM,rM*vnM*t1M,rM*vnM*t2M,(E+pM)*vnM}; } // supersonic outflow: whole state
+    if(vn+2*cM/(g-1)<=0) return F5{0,0,0,0,0};        // face already inside vacuum
+    double u0=2.0/(g+1)*(cM+0.5*(g-1)*vn), c0=u0;     // sample the rarefaction fan at x/t=0 (u=c there)
+    double r0=rM*pow(c0/cM,2.0/(g-1)), p0=pM*pow(r0/rM,g), e0=p0/((g-1)*r0), un0=s*u0;  // map back
+    double E0=r0*e0+0.5*r0*(un0*un0+t1M*t1M+t2M*t2M);
+    return F5{r0*un0, r0*un0*un0+p0, r0*un0*t1M, r0*un0*t2M, (E0+p0)*un0};
+}
 static F5 hllc(double rL,double vnL,double t1L,double t2L,double eL,double rR,double vnR,double t1R,double t2R,double eR){
+    if(RHO_VAC>0){ bool vL=(rL<RHO_VAC), vR=(rR<RHO_VAC);
+        if(vL&&vR) return F5{0,0,0,0,0};                                      // vacuum | vacuum
+        if(vR) return vac_flux(rL,vnL,t1L,t2L,eL,+1);                          // material L | vacuum R
+        if(vL) return vac_flux(rR,vnR,t1R,t2R,eR,-1);                          // vacuum L | material R
+    }
     double pL,cL,pR,cR; eos_pc(rL,eL,pL,cL); eos_pc(rR,eR,pR,cR);
     double SL=min(vnL-cL,vnR-cR), SR=max(vnL+cL,vnR+cR);
     double Ss=(pR-pL+rL*vnL*(SL-vnL)-rR*vnR*(SR-vnR))/(rL*(SL-vnL)-rR*(SR-vnR));
@@ -239,6 +259,18 @@ int main(int argc,char**argv){
         double smax=0;for(int i=0;i<N;i++){int c=g.idx(i,0,0);double J2=0.5*(g.Sxx[c]*g.Sxx[c]+g.Syy[c]*g.Syy[c]+g.Szz[c]*g.Szz[c])+g.Sxy[c]*g.Sxy[c]+g.Sxz[c]*g.Sxz[c]+g.Syz[c]*g.Syz[c];smax=max(smax,sqrt(3*J2));}
         printf("Yield: max sqrt(3 J2)=%.4e  Y=%.4e  ratio=%.4f\n",smax,Y,smax/Y);
         printf("GATE (von Mises cap, max<=1.01*Y & yield reached >0.9*Y): %s\n",(smax<=1.01*Y&&smax>0.9*Y)?"PASS":"CHECK");
+    } else if(mode=="vacuum"){ // Toro expansion-into-vacuum: material at rest (left) expands into vacuum (right) -> centred rarefaction
+        MAT=Material::ideal(1.4); GAM=1.4; RHO_VAC=1e-3;
+        int N=400;double dx=1.0/N,CFL=0.4,tend=0.10; double rL=1.0,pL=1.0,cL=sqrt(GAM*pL/rL); Grid g(N,1,1,dx);
+        for(int i=0;i<N;i++){double x=(i+0.5)*dx;int c=g.idx(i,0,0); if(x<0.5){g.r[c]=rL;g.E[c]=pL/(GAM-1);} else {g.r[c]=1e-6;g.E[c]=1e-6/(GAM-1);}}
+        double t=0;while(t<tend){double dt=CFL*dx/maxspeed(g);if(t+dt>tend)dt=tend-t;step_rk2(g,dt);t+=dt;}
+        double l1r=0,l1u=0,rmin=1e30;int np=0;   // compare vs analytic left-rarefaction-into-vacuum (u_L=0)
+        for(int i=0;i<N;i++){int c=g.idx(i,0,0);double x=(i+0.5)*dx,S=(x-0.5)/t,ra,ua;
+            if(S<=-cL){ra=rL;ua=0;} else if(S<2*cL/(GAM-1)){double u=2.0/(GAM+1)*(cL+S),cc=2.0/(GAM+1)*(cL-0.5*(GAM-1)*S);ra=rL*pow(cc/cL,2.0/(GAM-1));ua=u;} else {ra=0;ua=0;}
+            rmin=min(rmin,g.r[c]); if(ra>0.02){l1r+=fabs(g.r[c]-ra);l1u+=fabs(g.mu[c]/g.r[c]-ua);np++;} }
+        l1r/=np;l1u/=np;
+        printf("Vacuum expansion (Toro): L1 rho=%.4f u=%.4f (npts=%d), min rho=%.2e\n",l1r,l1u,np,rmin);
+        printf("GATE (matches Toro fan, L1 rho<0.03 & u<0.05 & positive): %s\n",(l1r<0.03&&l1u<0.05&&rmin>0)?"PASS":"CHECK");
     } else if(mode=="bshock"){
         MAT=Material::basalt();int N=400;double L=400e3,dx=L/N,tend=4.0,CFL=0.4;Grid g(N,1,1,dx);
         for(int i=0;i<N;i++){double x=(i+0.5)*dx;double rr=x<0.5*L?3000:2700,ee=x<0.5*L?1e6:0;int c=g.idx(i,0,0);g.r[c]=rr;g.E[c]=rr*ee;}
@@ -293,7 +325,7 @@ int main(int argc,char**argv){
         MAT=Material::basalt(); GZ=3.71; double rho0=2700,A=2.67e10; int NXc=80,NZc=40;double dx=500.0,CFL=0.4;
         double zlo=10e3,h0=4e3,zhi=zlo+h0,tend=8.0; double hfin[2]; const char*lbl[2]={"AF-on ","AF-off"};
         for(int run=0;run<2;run++){
-            TDEC=(run==0?1e6:0.0); ETA_AF=(run==0?1e9:0.0); RHO_CFL=100.0; Grid g(NXc,1,NZc,dx);   // exclude only the true ambient (0.27)
+            TDEC=(run==0?1e6:0.0); ETA_AF=(run==0?1e9:0.0); RHO_CFL=100.0; RHO_VAC=100.0; Grid g(NXc,1,NZc,dx);   // ambient(0.27): void-CFL + vacuum-aware free surface (the vertical cliff)
             for(int i=0;i<NXc;i++)for(int k=0;k<NZc;k++){double x=(i+0.5)*dx,z=(k+0.5)*dx;int c=g.idx(i,0,k);double zs=(x<0.5*NXc*dx?zhi:zlo);
                 if(z<zs){g.r[c]=rho0*(1.0+rho0*GZ*(zs-z)/A); if(run==0)g.af[c]=1.0;} else g.r[c]=0.27; g.E[c]=0;}   // cold lithostatic step
             set_ref(g);   // route 1: per-column lithostatic WB reference (vertical balance; the horizontal step drives the slump)

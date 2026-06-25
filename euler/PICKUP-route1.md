@@ -19,19 +19,23 @@ damping). All M1-M5 gates stay green. Build/run below. The solution (z-direction
 4. deep far-field floor pinned to the reference.
 Globals/flags: REF_R0/REF_P0 (CPU) & bRR0/bRP0+wb (GPU); RHO_CFL; DAMP/dampf (=1, off).
 
-## Remaining: M6 collapse (acoustic fluidization demo)
-`./hydro_cpu collapse` and `./hydro_gpu` are still BLOCKED — but on a DIFFERENT issue than
-route 1. The collapse test uses a basalt STEP; its vertical CLIFF is a free surface in the
-**x-direction**, and route 1 well-balances only **z** (gravity). The cliff/vacuum interface
-explodes (max|v|~1e9 in ~50 steps). To unblock M6:
-- Generalize the free-surface handling to x,y: the WB hydrostatic reconstruction is z-only and
-  correct as-is (gravity is in z), but the **void/free-surface robustness** (void-cell reset +
-  void-aware strength) should already help the cliff — verify whether the cliff still explodes
-  with the current void-aware code (the collapse mode predates some of it; re-test first).
-- If it still explodes, the cliff needs proper vacuum-Riemann handling in the x-sweep (the
-  current x-flux has no special free-surface treatment) and/or the void-clean applied so the
-  cliff ambient never drives runaway flux.
-- Then tune AF (TDEC, ETA_AF) so AF-on slumps (<0.5*h0) and AF-off holds (>0.7*h0).
+## Vacuum-aware Riemann flux — ALSO DONE (gate `vacuum`, CPU+GPU)
+Material expanding into (near-)vacuum is handled by the exact rarefaction-into-vacuum flux sampled
+at the face (effective gamma g=rho*c^2/p; exact for ideal gas, stiff-limit for Tillotson). Gated
+vs Toro's analytic centred rarefaction (L1 rho=0.0012, u=0.0027, positive; GPU==CPU). Off by
+default (RHO_VAC=0); on for collapse. Files: vac_flux + RHO_VAC (CPU); vac_flux + rvac threaded
+through hllc/faceflux/lop (GPU).
+
+## Remaining: M6 collapse — now PHYSICS calibration, not numerics
+The collapse cliff (vertical x-direction free surface) is now NUMERICALLY STABLE — the void-aware
+strength + vacuum-aware flux brought max|v| from ~1e9 down to ~8-20 m/s, no blowup. The `collapse`
+gate still CHECKs, but for a PHYSICS reason: a 4 km basalt step on Mars has lithostatic shear
+~40 MPa << Y=350 MPa, so it holds elastically (AF-off correctly holds). AF-on fails to slump
+because ETA_AF=1e9 Pa.s viscously freezes the fluidized flow (eta*grad v ~ 125 MPa resists it).
+NEXT (M6 tuning, CPU oracle first): lower ETA_AF (try 1e6-1e8), set a finite TDEC, until AF-on
+slumps (<0.5*h0) while AF-off holds (>0.7*h0). Then add a `collapse` mode to the GPU host and
+re-gate GPU==CPU. (Note: the WB z-path `hllc_p` does NOT yet have vacuum-awareness; for M7 ejecta
+flying up into vacuum, consider threading RHO_VAC into faceflux_wb too.)
 
 ## Then M7 — Orcus cross-check (now unblocked for a FLAT start)
 The flat loaded substrate is stable, so M7 can start. Build the Orcus IC (basalt half-space +

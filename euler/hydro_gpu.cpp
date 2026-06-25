@@ -52,9 +52,10 @@ static void exact_sod(double S,double&r,double&u,double&p){
 }
 int main(int argc,char**argv){
     string mode=argc>1?argv[1]:"sod"; double rho0=2700,G=BASALT.G,Y=BASALT.Y,csb=sqrt(G/rho0);
-    int nx,ny,nz,emode; double Ldom,tend,CFL; float gz=0.0f, rcfl=0.0f; int wb=0;
+    int nx,ny,nz,emode; double Ldom,tend,CFL; float gz=0.0f, rcfl=0.0f, rvac=0.0f; int wb=0;
     if(mode=="sod"){nx=200;ny=nz=1;Ldom=1.0;tend=0.2;CFL=0.4;emode=0;}
     else if(mode=="substrate"){nx=60;ny=1;nz=60;Ldom=30000.0;tend=200.0;CFL=0.4;emode=1;gz=3.71f;wb=1;rcfl=100.0f;}  // route 1: well-balanced gravity-loaded substrate
+    else if(mode=="vacuum"){nx=400;ny=nz=1;Ldom=1.0;tend=0.10;CFL=0.4;emode=0;rvac=1e-3f;}  // Toro expansion-into-vacuum
     else if(mode=="sedov"){nx=ny=nz=64;Ldom=2.0;tend=0.5;CFL=0.3;emode=0;}
     else if(mode=="surface"){nx=1;ny=1;nz=64;Ldom=200e3;tend=2.0;CFL=0.4;emode=1;}
     else if(mode=="bshock"){nx=400;ny=nz=1;Ldom=400e3;tend=4.0;CFL=0.4;emode=1;}
@@ -85,6 +86,7 @@ int main(int argc,char**argv){
     else if(mode=="sedov"){for(uint32_t c=0;c<n;c++){r[c]=1;E[c]=1e-4/(GAM-1);}int ic=nx/2;E[(ic*ny+ic)*nz+ic]+=1.0/(dx*dx*dx);}
     else if(mode=="surface"){for(int k=0;k<nz;k++){double z=(k+0.5)*dx;r[k]=z<0.5*Ldom?2700.0f:0.27f;E[k]=0;}}
     else if(mode=="substrate"){float A=2.67e10f;for(int i=0;i<nx;i++)for(int k=0;k<nz;k++){double z=(k+0.5)*dx;int c=i*nz+k;if(z<20e3)r[c]=2700.0f*(1.0f+2700.0f*gz*(20e3-z)/A);else r[c]=0.27f;E[c]=0;}}
+    else if(mode=="vacuum"){for(int i=0;i<nx;i++){double x=(i+0.5)*dx;if(x<0.5){r[i]=1.0f;E[i]=1.0f/(GAM-1);}else{r[i]=1e-6f;E[i]=1e-6f/(GAM-1);}}}  // material at rest | vacuum
     else if(mode=="bshock"){for(int i=0;i<nx;i++){double x=(i+0.5)*dx;float rr=x<0.5*Ldom?3000.0f:2700.0f,ee=x<0.5*Ldom?1e6f:0.0f;r[i]=rr;E[i]=rr*ee;}}
     else if(mode=="freefall"){for(int k=0;k<nz;k++){r[k]=1.0f;E[k]=1e5/(GAM-1);}}
     else if(mode=="atmos"){double H=1e5/9.8;for(int k=0;k<nz;k++){double z=(k+0.5)*dx;r[k]=exp(-z/H);E[k]=(1e5*exp(-z/H))/(GAM-1);}}
@@ -102,7 +104,7 @@ int main(int argc,char**argv){
     int NX=nx,NY=ny,NZ=nz;
     float*RR0=(float*)bRR0->contents(),*RP0=(float*)bRP0->contents();
     if(wb){ for(uint32_t c=0;c<n;c++){ RR0[c]=r[c]; float p=tillP(r[c],0.0f,MG); RP0[c]=p<0?0:p; } }   // route 1: freeze IC as the hydrostatic reference
-    auto lopA=vector<pair<const void*,size_t>>{{&NX,4},{&NY,4},{&NZ,4},{&invdx,4},{&emode,4},{&gam,4},{&MG,sizeof(GMat)},{&n,4},{&gz,4},{&wb,4}};
+    auto lopA=vector<pair<const void*,size_t>>{{&NX,4},{&NY,4},{&NZ,4},{&invdx,4},{&emode,4},{&gam,4},{&MG,sizeof(GMat)},{&n,4},{&gz,4},{&wb,4},{&rvac,4}};
     auto strA=vector<pair<const void*,size_t>>{{&NX,4},{&NY,4},{&NZ,4},{&invdx,4},{&MG,sizeof(GMat)},{&n,4},{&rcfl,4}};
     auto vmA=vector<pair<const void*,size_t>>{{&MG,sizeof(GMat)},{&n,4}};
     double t=0;int step=0;
@@ -136,6 +138,13 @@ int main(int argc,char**argv){
     } else if(mode=="surface"){
         double vmax=0;for(int k=0;k<nz;k++)vmax=max(vmax,(double)fabs(mw[k]/r[k]));
         printf("GPU free surface max|v|=%.3f m/s  GATE(static): %s\n",vmax,vmax<5.0?"PASS":"CHECK");
+    } else if(mode=="vacuum"){
+        double cL=sqrt(GAM*1.0/1.0),l1r=0,l1u=0,rmin=1e30;int np=0;   // vs Toro left-rarefaction-into-vacuum (u_L=0)
+        for(int i=0;i<nx;i++){double x=(i+0.5)*dx,S=(x-0.5)/t,ra,ua;
+            if(S<=-cL){ra=1.0;ua=0;} else if(S<2*cL/(GAM-1)){double u=2.0/(GAM+1)*(cL+S),cc=2.0/(GAM+1)*(cL-0.5*(GAM-1)*S);ra=pow(cc/cL,2.0/(GAM-1));ua=u;} else {ra=0;ua=0;}
+            rmin=min(rmin,(double)r[i]); if(ra>0.02){l1r+=fabs(r[i]-ra);l1u+=fabs(mu[i]/r[i]-ua);np++;} }
+        l1r/=np;l1u/=np;
+        printf("GPU vacuum expansion (Toro): L1 rho=%.4f u=%.4f (npts=%d) min rho=%.2e  GATE(==CPU,L1 rho<0.03&u<0.05&pos): %s\n",l1r,l1u,np,rmin,(l1r<0.03&&l1u<0.05&&rmin>0)?"PASS":"CHECK");
     } else if(mode=="substrate"){
         int nb0=0,nb=0;double vmx=0;for(int i=0;i<nx;i++)for(int k=0;k<nz;k++){double z=(k+0.5)*dx;if(z<20e3)nb0++;}
         for(uint32_t c=0;c<n;c++){if(r[c]>1350){double v=sqrt(mu[c]*mu[c]+mv[c]*mv[c]+mw[c]*mw[c])/r[c];vmx=max(vmx,v);nb++;}}
