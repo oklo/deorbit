@@ -57,9 +57,18 @@ install. The REBOUND/ASSIST high-fidelity layer is an optional extra:
 - `tests/` — `pytest` ground-truth checks (Kepler closure, per-pass dv vs analytic, regime sanity, hi-fi).
 - `PICKUP.md` — restart prompt for an interactive session after a reboot.
 
-`iSALE2D/` (gitignored) is the gated shock-physics code, kept for Phase-2
-terminal-impact runs; the public repo is a stub — the real code is the
-iSALE-Dellen release tarball.
+## Hydrocodes (`hydrocodes/`)
+
+Two from-scratch, validation-gated impact hydrocodes for the Phase-2 terminal
+cratering, each with a CPU (FP64) oracle and a Metal GPU port, sharing one
+Tillotson EOS:
+- `hydrocodes/sph/` — 3D SPH solver (CPU oracle + Metal GPU port). Bespoke/lumpy
+  impactors and early dynamics (Cayambe, Orcus early-time).
+- `hydrocodes/euler/` — Eulerian shock-physics cross-check ("mini-iSALE"):
+  MUSCL+HLLC+strength+damage+acoustic-fluidization. Late-stage morphology /
+  collapse where SPH is weak. Build + gates: `hydrocodes/euler/gates.sh`.
+- `hydrocodes/common/` — shared `eos.hpp` (Tillotson) used by both codes, plus
+  the vendored (gitignored) `metal-cpp/` bindings.
 
 ## High-fidelity dynamics (`highfidelity/`)
 

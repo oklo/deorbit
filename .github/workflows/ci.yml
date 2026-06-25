@@ -23,7 +23,7 @@ jobs:
         run: pytest -q
 
       - name: build euler CPU oracle (FP64, no Metal)
-        run: g++ -std=c++17 -O2 euler/hydro_cpu.cpp -o hydro_cpu
+        run: g++ -std=c++17 -O2 hydrocodes/euler/hydro_cpu.cpp -o hydro_cpu
 
       - name: euler CPU gates (skip the slow 64^3 sedov)
         run: |
@@ -39,7 +39,7 @@ jobs:
 
       - name: build + run SPH CPU unit gates (EOS, strength)
         run: |
-          cd sph
+          cd hydrocodes/sph
           g++ -std=c++17 -O2 -pthread eos_test.cpp -o eos_test
           g++ -std=c++17 -O2 -pthread strength_test.cpp -o strength_test
           ./eos_test      | tail -1 | grep -q 'ALL PASS' || { echo "eos_test FAILED"; exit 1; }

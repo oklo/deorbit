@@ -108,3 +108,23 @@ state.out
 .pytest_cache/
 build/
 dist/
+
+# hydrocodes/: source dirs that accumulate build artifacts + large run outputs.
+# Policy: ignore everything, re-include only source (robust to new binary/output names).
+hydrocodes/common/*
+!hydrocodes/common/*.hpp
+hydrocodes/euler/*
+!hydrocodes/euler/*.cpp
+!hydrocodes/euler/*.metal
+!hydrocodes/euler/*.sh
+!hydrocodes/euler/*.md
+hydrocodes/sph/*
+!hydrocodes/sph/*.cpp
+!hydrocodes/sph/*.hpp
+!hydrocodes/sph/*.metal
+!hydrocodes/sph/*.py
+!hydrocodes/sph/*.sh
+!hydrocodes/sph/*.md
+!hydrocodes/sph/Makefile
+!hydrocodes/sph/requirements-viz.txt
+!hydrocodes/sph/pi_scaling_results.txt
