@@ -93,6 +93,7 @@ euler/*.metallib
 euler/*.png
 euler/hydro_gpu
 euler/*.txt
+euler/.clang-module-cache/
 sph/hframes/
 sph/orcus_hero.gif
 sph/*.log

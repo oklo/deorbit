@@ -31,12 +31,24 @@ standard benchmarks. Every milestone is gated against an oracle (analytic or
 published). **We do not advance on an unvalidated stage, and we stop honestly if
 M3 or M5 won't validate.**
 
+## Build & run the gates
+`./gates.sh` (in `euler/`) does the ordered build (CPU oracle -> Metal lib -> GPU host) and
+runs every gate, each printing PASS/CHECK. `./gates.sh quick` skips the slow 64^3 FP64 CPU
+`sedov` (the GPU `sedov` still runs, fast). Unknown modes are FATAL (exit 2) on both binaries
+so a misspelled mode can never silently validate the wrong physics. GPU gates need a Mac with
+Metal; `hydro_gpu` loads `hydro.metallib` relative to the executable (not the CWD) and prints
+the real `NS::Error` if the load fails. (`collapse` is the M6 AF-calibration demo, not yet a
+pass/fail gate.)
+
 ## Milestones (gated)
 - [x] **M1a Euler hydro (ideal gas), CPU reference** — gates PASSED: Sod MUSCL L1
-      rho=0.004/p=0.003/u=0.008 vs exact Riemann; Sedov 3-D shock radius 0.8% vs
-      analytic. Unsplit MUSCL(minmod)+HLLC+SSP-RK2. (peak compression resolution-limited.)
-- [x] **M1b Metal GPU port** — DONE: FP32 GPU matches FP64 CPU to printed precision
-      on both gates (Sod L1 0.0042 identical; Sedov R 0.776 / 0.8% / comp 3.12 identical).
+      rho=0.004/p=0.003/u=0.008 vs exact Riemann (mode `sod`); Sedov 3-D point blast
+      shock radius R=0.750 vs analytic 0.783, 4.2% (mode `sedov`, 64^3, peak-density radius,
+      RESOLUTION-LIMITED -- the front leads the peak cell by ~1 cell; compression 3.85 vs
+      strong-shock 6). Gate is <10% (a 64^3 blast is not 1%-accurate -- the old "0.8%" claim
+      was optimistic). MUSCL(minmod)+HLLC+SSP-RK2. (CPU sedov is the slow ~5 min FP64 oracle.)
+- [x] **M1b Metal GPU port** — DONE: FP32 GPU matches FP64 CPU on Sod (L1 0.0042, bit-identical)
+      and resolves the Sedov radius to R=0.735 / 6.1% (same 64^3, FP32; both within the 10% gate).
       Per-cell divergence (MUSCL+HLLC, 13-pt stencil) + RK2; regular grid = clean GPU map.
 - [x] **M2 Tillotson EOS + free surface — DONE (CPU + GPU).** Pluggable EOS
       (ideal | Tillotson via ../sph/eos.hpp & MSL port of sph_force.metal's

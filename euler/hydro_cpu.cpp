@@ -237,6 +237,18 @@ int main(int argc,char**argv){
         double t=0;int s=0;while(t<tend){double dt=CFL*dx/maxspeed(g);if(t+dt>tend)dt=tend-t;step_rk2(g,dt);t+=dt;s++;}
         double l1r=0,l1p=0,l1u=0;for(int i=0;i<N;i++){double x=(i+0.5)*dx,re,ue,pe;exact_sod((x-0.5)/tend,re,ue,pe);int c=g.idx(i,0,0);l1r+=fabs(g.r[c]-re);l1p+=fabs(Pcell(g,c)-pe);l1u+=fabs(g.mu[c]/g.r[c]-ue);}
         printf("Sod (M3 regression) L1: rho=%.4f p=%.4f u=%.4f  GATE: %s\n",l1r/N,l1p/N,l1u/N,(l1r/N<0.007)?"PASS":"CHECK");
+    } else if(mode=="sedov"){ // 3D Sedov-Taylor point blast: shock radius vs analytic self-similar solution
+        MAT=Material::ideal(1.4); GAM=1.4; int N=64;double L=2.0,dx=L/N,CFL=0.3,tend=0.5; double E0=1.0,rho0=1.0; Grid g(N,N,N,dx);
+        for(int c=0;c<N*N*N;c++){g.r[c]=rho0;g.E[c]=1e-4/(GAM-1);}
+        int ic=N/2; g.E[g.idx(ic,ic,ic)]+=E0/(dx*dx*dx);   // point energy in the central cell
+        double t=0;int s=0;while(t<tend){double dt=CFL*dx/maxspeed(g);if(t+dt>tend)dt=tend-t;step_rk2(g,dt);t+=dt;s++;}
+        double rpk=0,rhomax=0,cen=(ic+0.5)*dx;   // shock radius = radius of peak density; compression = max density
+        for(int i=0;i<N;i++)for(int j=0;j<N;j++)for(int k=0;k<N;k++){int c=g.idx(i,j,k);double rr=g.r[c];
+            if(rr>rhomax){rhomax=rr;double xx=(i+0.5)*dx-cen,yy=(j+0.5)*dx-cen,zz=(k+0.5)*dx-cen;rpk=sqrt(xx*xx+yy*yy+zz*zz);}}
+        double alpha=0.851;   // Sedov dimensionless energy constant, 3D gamma=1.4
+        double Ran=pow(E0/(alpha*rho0),0.2)*pow(tend,0.4);
+        printf("Sedov 3D: shock R_num=%.3f analytic=%.3f (err %.1f%%), compression=%.2f (strong-shock %.1f, resolution-limited)\n",rpk,Ran,100*fabs(rpk-Ran)/Ran,rhomax/rho0,(GAM+1)/(GAM-1));
+        printf("GATE (shock radius within 10%% of analytic Sedov, 64^3 resolution-limited): %s\n",(fabs(rpk-Ran)/Ran<0.10)?"PASS":"CHECK");
     } else if(mode=="shear"){
         // small-amplitude elastic shear pulse v_y(x); must propagate at c_s=sqrt(G/rho0)
         MAT=Material::basalt(); int N=800;double L=400e3,dx=L/N,CFL=0.3; double rho0=2700,G=MAT.G,cs=sqrt(G/rho0);
@@ -339,12 +351,15 @@ int main(int argc,char**argv){
         }
         printf("AF collapse: h0=%.1f km -> AF-on %.2f km, AF-off %.2f km\n",h0/1e3,hfin[0]/1e3,hfin[1]/1e3);
         printf("GATE (AF slumps step <0.5*h0 & no-AF holds >0.7*h0): %s\n",(hfin[0]<0.5*h0&&hfin[1]>0.7*h0)?"PASS":"CHECK");
-    } else { // surface
+    } else if(mode=="surface"){
         MAT=Material::basalt();int N=64;double L=200e3,dx=L/N,tend=2.0,CFL=0.4;Grid g(1,1,N,dx);
         for(int k=0;k<N;k++){double z=(k+0.5)*dx;double rr=z<0.5*L?2700:0.27;int c=g.idx(0,0,k);g.r[c]=rr;g.E[c]=0;}
         double t=0;int s=0;while(t<tend){double dt=CFL*dx/maxspeed(g);if(t+dt>tend)dt=tend-t;step_rk2(g,dt);t+=dt;s++;}
         double vmax=0;for(int k=0;k<N;k++){int c=g.idx(0,0,k);vmax=max(vmax,fabs(g.mw[c]/g.r[c]));}
         printf("Free surface max|v|=%.3f m/s  GATE: %s\n",vmax,vmax<5.0?"PASS":"CHECK");
+    } else {
+        fprintf(stderr,"unknown mode '%s' (modes: sod sedov shear yield vacuum bshock freefall atmos tensile alimpact substrate collapse surface)\n",mode.c_str());
+        return 2;   // fatal: never silently validate the wrong physics
     }
     return 0;
 }

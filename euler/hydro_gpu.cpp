@@ -64,13 +64,17 @@ int main(int argc,char**argv){
     else if(mode=="atmos"){nx=ny=1;nz=200;double H=1e5/9.8;Ldom=4*H;tend=0.05*Ldom/sqrt(GAM*1e5);CFL=0.4;emode=0;gz=9.8f;}
     else if(mode=="tensile"){nx=100;ny=nz=1;Ldom=10e3;tend=0.1;CFL=0.3;emode=1;}
     else if(mode=="pierazzo"){nx=ny=80;nz=100;Ldom=8.0;tend=1.2e-3;CFL=0.3;emode=1;}   // 3D Al sphere impact (dx=0.1m, a=1m=10cppr)
-    else {nx=400;ny=nz=1;Ldom=400e3;tend=15e3/csb;CFL=0.3;emode=1;}   // yield
+    else if(mode=="yield"){nx=400;ny=nz=1;Ldom=400e3;tend=15e3/csb;CFL=0.3;emode=1;}
+    else { fprintf(stderr,"unknown mode '%s' (modes: sod sedov surface bshock shear yield freefall atmos tensile pierazzo vacuum substrate)\n",mode.c_str()); return 2; }   // fatal: never silently validate the wrong physics
     double dx=Ldom/((nx==1&&ny==1)?nz:nx); uint32_t n=nx*ny*nz; float invdx=1.0f/dx; float gam=GAM;
     GMat MG=(mode=="pierazzo")?AL:BASALT; bool strn=(emode==1 && MG.G>0);   // Al = pure hydro (no strength/damage)
     float epsact=(float)pow(1.0/(1e61*dx*dx*dx),1.0/16.0);   // Weibull weakest-flaw activation strain (host: wk=1e61 overflows FP32)
-    D_=MTL::CreateSystemDefaultDevice(); Q_=D_->newCommandQueue(); NS::Error* e=nullptr;
-    L_=D_->newLibrary(NS::String::string("hydro.metallib",NS::UTF8StringEncoding),&e);
-    if(!L_){printf("metallib load failed\n");return 1;}
+    D_=MTL::CreateSystemDefaultDevice();
+    if(!D_){fprintf(stderr,"no Metal device (this gate needs a Mac GPU)\n");return 1;}
+    Q_=D_->newCommandQueue(); NS::Error* e=nullptr;
+    string exe=argv[0]; size_t sl=exe.find_last_of('/'); string libp=(sl==string::npos?string("."):exe.substr(0,sl))+"/hydro.metallib";  // resolve relative to the executable, not the CWD
+    L_=D_->newLibrary(NS::String::string(libp.c_str(),NS::UTF8StringEncoding),&e);
+    if(!L_){ fprintf(stderr,"metallib load failed: %s\n  path: %s\n",e?e->localizedDescription()->utf8String():"(no NS::Error)",libp.c_str()); return 1; }
     auto br=buf(n*4),bmu=buf(n*4),bmv=buf(n*4),bmw=buf(n*4),bE=buf(n*4);
     auto br1=buf(n*4),bmu1=buf(n*4),bmv1=buf(n*4),bmw1=buf(n*4),bE1=buf(n*4);
     auto bdr=buf(n*4),bdmu=buf(n*4),bdmv=buf(n*4),bdmw=buf(n*4),bdE=buf(n*4),bsp=buf(n*4);
@@ -135,6 +139,12 @@ int main(int argc,char**argv){
         auto pres=[&](int c){float ke=0.5f*(mu[c]*mu[c]+mv[c]*mv[c]+mw[c]*mw[c])/r[c];return (GAM-1)*(E[c]-ke);};
         double l1r=0,l1p=0,l1u=0;for(int i=0;i<nx;i++){double x=(i+0.5)*dx,re,ue,pe;exact_sod((x-0.5)/tend,re,ue,pe);l1r+=fabs(r[i]-re);l1p+=fabs(pres(i)-pe);l1u+=fabs(mu[i]/r[i]-ue);}
         printf("GPU Sod L1 vs EXACT: rho=%.4f p=%.4f u=%.4f  GATE(==CPU): %s\n",l1r/nx,l1p/nx,l1u/nx,(l1r/nx<0.007)?"PASS":"CHECK");
+    } else if(mode=="sedov"){
+        double E0=1.0,rho0=1.0,cen=0.5*nx*dx,rpk=0,rhomax=0;   // shock radius = radius of peak density
+        for(int i=0;i<nx;i++)for(int j=0;j<ny;j++)for(int k=0;k<nz;k++){double rr=r[(i*ny+j)*nz+k];
+            if(rr>rhomax){rhomax=rr;double xx=(i+0.5)*dx-cen,yy=(j+0.5)*dx-cen,zz=(k+0.5)*dx-cen;rpk=sqrt(xx*xx+yy*yy+zz*zz);}}
+        double Ran=pow(E0/(0.851*rho0),0.2)*pow(t,0.4);   // Sedov 3D, gamma=1.4 (alpha=0.851)
+        printf("GPU Sedov 3D: shock R_num=%.3f analytic=%.3f (err %.1f%%) compression=%.2f  GATE(<10%%, resolution-limited): %s\n",rpk,Ran,100*fabs(rpk-Ran)/Ran,rhomax/rho0,(fabs(rpk-Ran)/Ran<0.10)?"PASS":"CHECK");
     } else if(mode=="surface"){
         double vmax=0;for(int k=0;k<nz;k++)vmax=max(vmax,(double)fabs(mw[k]/r[k]));
         printf("GPU free surface max|v|=%.3f m/s  GATE(static): %s\n",vmax,vmax<5.0?"PASS":"CHECK");
