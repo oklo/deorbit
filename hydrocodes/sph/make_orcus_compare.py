@@ -34,7 +34,7 @@ print("REAL box: %dx%d px"%(R.shape[1],R.shape[0]))
 def load(fn):
     with open(fn,"rb") as f:
         n=int(np.fromfile(f,dtype=np.int64,count=1)[0]); return np.fromfile(f,dtype=np.float64,count=10*n).reshape(n,10)
-s=load(sorted(glob.glob("../gpu/gpu_snap_*.bin"))[-1]); mat=s[:,9]; x,y,z=s[:,0],s[:,1],s[:,2]
+s=load(sorted(glob.glob("gpu_snap_*.bin"))[-1]); mat=s[:,9]; x,y,z=s[:,0],s[:,1],s[:,2]
 vmag=np.linalg.norm(s[:,3:6],axis=1)
 sb=(mat==0)&(vmag<500.0); xs,ys,zs=x[sb],y[sb],z[sb]; bs=4000.0   # |v|<500: settled ground (mask airborne ejecta)
 ix=np.floor((xs-xs.min())/bs).astype(int); iy=np.floor((ys-ys.min())/bs).astype(int)

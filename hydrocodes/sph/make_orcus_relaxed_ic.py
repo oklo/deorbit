@@ -7,7 +7,7 @@ changed.  -> orcus_relaxed_ic.bin
 """
 import numpy as np, argparse
 ap = argparse.ArgumentParser()
-ap.add_argument("--snap", default="../gpu/gpu_snap_004.bin")
+ap.add_argument("--snap", default="gpu_snap_004.bin")
 ap.add_argument("--dx", type=float, default=3000.0)
 ap.add_argument("--D", type=float, default=40e3); ap.add_argument("--U", type=float, default=10000.0)
 ap.add_argument("--theta", type=float, default=5.0)

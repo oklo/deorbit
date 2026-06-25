@@ -41,14 +41,15 @@ MU_E = physics.MU          # m^3/s^2
 ENTRY_ALT = physics.ENTRY_ALT
 OMEGA_E = 7.2921159e-5     # Earth rotation rate, rad/s (axis ~ ICRF z in geo frame)
 
-# JPL ephemerides are large external data (gitignored). Resolve the directory from
-# $DEORBIT_EPHEM_DIR, else the repo-root data/, else the legacy highfidelity/data/.
+# JPL ephemerides are large external data (gitignored; see data/README.md). Resolve the dir from
+# $DEORBIT_EPHEM_DIR, else data/ephemerides/, else (legacy) data/ or highfidelity/data/.
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 _CANDIDATES = [os.environ.get("DEORBIT_EPHEM_DIR"),
+               os.path.join(_ROOT, "data", "ephemerides"),
                os.path.join(_ROOT, "data"),
                os.path.join(_ROOT, "highfidelity", "data")]
 _DATA = next((d for d in _CANDIDATES if d and os.path.exists(os.path.join(d, "linux_p1550p2650.440"))),
-             os.path.join(_ROOT, "data"))
+             os.path.join(_ROOT, "data", "ephemerides"))
 PLANET_EPH = os.path.join(_DATA, "linux_p1550p2650.440")
 SMALLBODY_EPH = os.path.join(_DATA, "sb441-n16.bsp")
 

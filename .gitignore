@@ -128,3 +128,9 @@ hydrocodes/sph/*
 !hydrocodes/sph/Makefile
 !hydrocodes/sph/requirements-viz.txt
 !hydrocodes/sph/pi_scaling_results.txt
+
+# data/: external input data (provenance) -- track only docs/scripts, never the large binaries
+data/*
+!data/README.md
+!data/fetch.sh
+!data/checksums.sha256

@@ -15,7 +15,12 @@ Binary format (little-endian f8): xlo xhi ylo yhi zlo zhi n, then n*[x y z vx vy
 vz mass u mat fixed].  mat: 0=basalt, 1=iron.
 """
 import numpy as np
-import argparse, sys
+import argparse, sys, os
+
+# SRTM DEM tiles are external input data (gitignored; see data/README.md):
+# $DEORBIT_DEM_DIR, else the repo-root data/dem/.
+_DEM = os.environ.get("DEORBIT_DEM_DIR") or os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "dem")
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--dx", type=float, default=30.0)
@@ -36,7 +41,7 @@ dx = A.dx; h2 = 2.0 * 1.3 * dx
 
 # --- mosaic the two tiles: lon -79..-77, lat 0..1, 30 m ---
 def load(t):
-    d = np.fromfile(f"dem/{t}.hgt", dtype=">i2").astype(np.float64).reshape(3601, 3601)
+    d = np.fromfile(os.path.join(_DEM, f"{t}.hgt"), dtype=">i2").astype(np.float64).reshape(3601, 3601)
     d[d < -1000] = np.nan
     return d
 W079, W078 = load("N00W079"), load("N00W078")

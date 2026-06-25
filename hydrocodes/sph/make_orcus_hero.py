@@ -2,7 +2,7 @@
 """Cayambe-style 3D photoreal hero animation for the Orcus impact.
 Reuses recon.reconstruct; Orcus-specific photo: vertical exaggeration (shallow
 basin), hot-ejecta incandescent glow, NO 'snow' term, oblique-aerial camera.
-  test one frame:  ../.venv/bin/python make_orcus_hero.py --test ../gpu/gpu_snap_010.bin
+  test one frame:  ../.venv/bin/python make_orcus_hero.py --test gpu_snap_010.bin
   full animation:  ../.venv/bin/python make_orcus_hero.py
 """
 import numpy as np, glob, os, subprocess, sys
@@ -56,7 +56,7 @@ def render(snap, out):
 if __name__ == "__main__":
     if len(sys.argv)>2 and sys.argv[1]=="--test":
         render(sys.argv[2], "orcus_hero_test.png"); sys.exit()
-    snaps = sorted(glob.glob("../gpu/gpu_snap_*.bin"))
+    snaps = sorted(glob.glob("gpu_snap_*.bin"))
     snaps = [s for s in snaps if os.path.getsize(s) > 3.0e9][:-1]   # complete frames only
     os.makedirs("hframes", exist_ok=True); paths=[]
     for k,s in enumerate(snaps):
