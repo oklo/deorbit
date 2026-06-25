@@ -122,11 +122,15 @@ pass/fail gate.)
       (lower ETA_AF, set TDEC) so AF-on slumps (<0.5*h0) and AF-off holds (>0.7*h0).
       Modes: substrate (PASS), vacuum (PASS), collapse (stable; AF calibration pending).
       Globals: af, TDEC, ETA_AF, RHO_CFL, RHO_VAC, DAMP.
-- [ ] **M-tag passive material tracer (prerequisite for M7 + the bounce-off cross-check).**
-      Add a passive material-fraction scalar `c` (1 = projectile/impactor, 0 = target) advected
+- [x] **M-tag passive material tracer — DONE (CPU+GPU).**
+      A passive material-fraction scalar `c` (1 = projectile/impactor, 0 = target) advected
       with the flow, so the Eulerian code can (a) COLOR the projectile in the M7 Orcus 3-way
       figure and (b) report the projectile-material PARTITION + bulk velocity for the §2
       grazing-impact fate cross-check (see `docs/bounce_off_plan.md`).
+      GATE `tracer` (CPU & GPU, GPU==CPU): a c=1 blob in a uniform v0=2 flow conserves sum(rc)
+      to 1e-7, its centroid advects at v0 to 1e-7, and c stays in [0, 0.99] (monotone). All
+      prior gates unaffected (rc=0 elsewhere -> no-op). CPU: Grid.rc + Lop species flux + RK;
+      GPU: brc/brc1/bdrc buffers, lop species flux, rk1c/rk2c kernels.
       DESIGN: carry the conserved species density `rc = rho*c` as one extra advected field with
       the standard passive-scalar-in-Godunov flux = (mass flux) x c_upwind (c taken from the
       upwind side of the HLLC contact); RK-update it alongside the other conserved vars. It rides

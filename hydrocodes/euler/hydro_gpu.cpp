@@ -55,6 +55,7 @@ int main(int argc,char**argv){
     int nx,ny,nz,emode; double Ldom,tend,CFL; float gz=0.0f, rcfl=0.0f, rvac=0.0f; int wb=0;
     if(mode=="sod"){nx=200;ny=nz=1;Ldom=1.0;tend=0.2;CFL=0.4;emode=0;}
     else if(mode=="substrate"){nx=60;ny=1;nz=60;Ldom=30000.0;tend=200.0;CFL=0.4;emode=1;gz=3.71f;wb=1;rcfl=100.0f;}  // route 1: well-balanced gravity-loaded substrate
+    else if(mode=="tracer"){nx=200;ny=nz=1;Ldom=1.0;tend=0.15;CFL=0.4;emode=0;}  // M-tag: passive material tracer advection
     else if(mode=="vacuum"){nx=400;ny=nz=1;Ldom=1.0;tend=0.10;CFL=0.4;emode=0;rvac=1e-3f;}  // Toro expansion-into-vacuum
     else if(mode=="sedov"){nx=ny=nz=64;Ldom=2.0;tend=0.5;CFL=0.3;emode=0;}
     else if(mode=="surface"){nx=1;ny=1;nz=64;Ldom=200e3;tend=2.0;CFL=0.4;emode=1;}
@@ -65,7 +66,7 @@ int main(int argc,char**argv){
     else if(mode=="tensile"){nx=100;ny=nz=1;Ldom=10e3;tend=0.1;CFL=0.3;emode=1;}
     else if(mode=="pierazzo"){nx=ny=80;nz=100;Ldom=8.0;tend=1.2e-3;CFL=0.3;emode=1;}   // 3D Al sphere impact (dx=0.1m, a=1m=10cppr)
     else if(mode=="yield"){nx=400;ny=nz=1;Ldom=400e3;tend=15e3/csb;CFL=0.3;emode=1;}
-    else { fprintf(stderr,"unknown mode '%s' (modes: sod sedov surface bshock shear yield freefall atmos tensile pierazzo vacuum substrate)\n",mode.c_str()); return 2; }   // fatal: never silently validate the wrong physics
+    else { fprintf(stderr,"unknown mode '%s' (modes: sod sedov surface bshock shear yield freefall atmos tensile pierazzo vacuum substrate tracer)\n",mode.c_str()); return 2; }   // fatal: never silently validate the wrong physics
     double dx=Ldom/((nx==1&&ny==1)?nz:nx); uint32_t n=nx*ny*nz; float invdx=1.0f/dx; float gam=GAM;
     GMat MG=(mode=="pierazzo")?AL:BASALT; bool strn=(emode==1 && MG.G>0);   // Al = pure hydro (no strength/damage)
     float epsact=(float)pow(1.0/(1e61*dx*dx*dx),1.0/16.0);   // Weibull weakest-flaw activation strain (host: wk=1e61 overflows FP32)
@@ -84,12 +85,14 @@ int main(int argc,char**argv){
     auto bD=buf(n*4),bdD=buf(n*4),bD1=buf(n*4);   // damage, rate, RK temp
     auto bPmax=buf(n*4);   // peak pressure each cell experiences (M5b Pierazzo decay)
     auto bRR0=buf(n*4),bRP0=buf(n*4);   // route 1: frozen hydrostatic reference (density, pressure)
+    auto brc=buf(n*4),brc1=buf(n*4),bdrc=buf(n*4);   // M-tag: passive material tracer rc=rho*c (+ RK temp, derivative)
     float*r=(float*)br->contents(),*mu=(float*)bmu->contents(),*mv=(float*)bmv->contents(),*mw=(float*)bmw->contents(),*E=(float*)bE->contents();
     float*pxy=(float*)bxy->contents(); // for shear/yield diagnostics
     if(mode=="sod"){for(int i=0;i<nx;i++){double x=(i+0.5)*dx;float rr=x<0.5?1.0f:0.125f,pp=x<0.5?1.0f:0.1f;r[i]=rr;E[i]=pp/(GAM-1);}}
     else if(mode=="sedov"){for(uint32_t c=0;c<n;c++){r[c]=1;E[c]=1e-4/(GAM-1);}int ic=nx/2;E[(ic*ny+ic)*nz+ic]+=1.0/(dx*dx*dx);}
     else if(mode=="surface"){for(int k=0;k<nz;k++){double z=(k+0.5)*dx;r[k]=z<0.5*Ldom?2700.0f:0.27f;E[k]=0;}}
     else if(mode=="substrate"){float A=2.67e10f;for(int i=0;i<nx;i++)for(int k=0;k<nz;k++){double z=(k+0.5)*dx;int c=i*nz+k;if(z<20e3)r[c]=2700.0f*(1.0f+2700.0f*gz*(20e3-z)/A);else r[c]=0.27f;E[c]=0;}}
+    else if(mode=="tracer"){float*RC=(float*)brc->contents();double v0=2.0;for(int i=0;i<nx;i++){double x=(i+0.5)*dx;r[i]=1.0f;mu[i]=1.0f*v0;E[i]=1.0/(GAM-1)+0.5*1.0*v0*v0;RC[i]=(x>0.3&&x<0.5)?1.0f:0.0f;}}
     else if(mode=="vacuum"){for(int i=0;i<nx;i++){double x=(i+0.5)*dx;if(x<0.5){r[i]=1.0f;E[i]=1.0f/(GAM-1);}else{r[i]=1e-6f;E[i]=1e-6f/(GAM-1);}}}  // material at rest | vacuum
     else if(mode=="bshock"){for(int i=0;i<nx;i++){double x=(i+0.5)*dx;float rr=x<0.5*Ldom?3000.0f:2700.0f,ee=x<0.5*Ldom?1e6f:0.0f;r[i]=rr;E[i]=rr*ee;}}
     else if(mode=="freefall"){for(int k=0;k<nz;k++){r[k]=1.0f;E[k]=1e5/(GAM-1);}}
@@ -103,7 +106,7 @@ int main(int argc,char**argv){
             else {r[c]=0.27f;E[c]=0;}                                      // low-density ambient
         }}
     else {double x0=0.3*Ldom,wid=8e3,A=(mode=="shear"?1.0:2000.0);for(int i=0;i<nx;i++){double x=(i+0.5)*dx;r[i]=rho0;double vy=A*exp(-((x-x0)/wid)*((x-x0)/wid));mv[i]=rho0*vy;E[i]=0.5*rho0*vy*vy;}}
-    auto Plop=pso("lop"),Pws=pso("wavespeed"),Prk1=pso("rk1"),Prk2=pso("rk2"),Pstr=pso("strength"),Pvm=pso("vonmises"),Prk1s=pso("rk1s"),Prk2s=pso("rk2s"),Pgd=pso("grow_damage"),Ppm=pso("pmax_update"),Pvoid=pso("voidzero"),Pdamp=pso("damp");
+    auto Plop=pso("lop"),Pws=pso("wavespeed"),Prk1=pso("rk1"),Prk2=pso("rk2"),Pstr=pso("strength"),Pvm=pso("vonmises"),Prk1s=pso("rk1s"),Prk2s=pso("rk2s"),Pgd=pso("grow_damage"),Ppm=pso("pmax_update"),Pvoid=pso("voidzero"),Pdamp=pso("damp"),Prk1c=pso("rk1c"),Prk2c=pso("rk2c");
     float dampf=1.0f;   // route 1: relaxation damping (1 = off; the void/strength fix makes the substrate stable without it)
     int NX=nx,NY=ny,NZ=nz;
     float*RR0=(float*)bRR0->contents(),*RP0=(float*)bRP0->contents();
@@ -111,21 +114,25 @@ int main(int argc,char**argv){
     auto lopA=vector<pair<const void*,size_t>>{{&NX,4},{&NY,4},{&NZ,4},{&invdx,4},{&emode,4},{&gam,4},{&MG,sizeof(GMat)},{&n,4},{&gz,4},{&wb,4},{&rvac,4}};
     auto strA=vector<pair<const void*,size_t>>{{&NX,4},{&NY,4},{&NZ,4},{&invdx,4},{&MG,sizeof(GMat)},{&n,4},{&rcfl,4}};
     auto vmA=vector<pair<const void*,size_t>>{{&MG,sizeof(GMat)},{&n,4}};
+    double rc0=0, cen0=0;
+    if(mode=="tracer"){float*RC=(float*)brc->contents();for(int i=0;i<nx;i++){rc0+=RC[i];cen0+=RC[i]*(i+0.5)*dx;} cen0/=rc0;}
     double t=0;int step=0;
     while(t<tend){
         run(Pws,n,{br,bmu,bmv,bmw,bE,bsp},{{&emode,4},{&gam,4},{&MG,sizeof(GMat)},{&n,4},{&rcfl,4}});
         float*sp=(float*)bsp->contents();double smax=1e-30;for(uint32_t c=0;c<n;c++)smax=max(smax,(double)sp[c]);
         float dt=CFL*dx/smax;if(t+dt>tend)dt=tend-t; auto dtA=vector<pair<const void*,size_t>>{{&dt,4},{&n,4}};
         auto gdA=vector<pair<const void*,size_t>>{{&MG,sizeof(GMat)},{&epsact,4},{&invdx,4},{&dt,4},{&n,4}};
-        run(Plop,n,{br,bmu,bmv,bmw,bE,bdr,bdmu,bdmv,bdmw,bdE,bRR0,bRP0},lopA);
+        run(Plop,n,{br,bmu,bmv,bmw,bE,bdr,bdmu,bdmv,bdmw,bdE,bRR0,bRP0,brc,bdrc},lopA);
         if(strn) run(Pstr,n,{br,bmu,bmv,bmw,bE,bxx,byy,bzz,bxy,bxz,byz,bdmu,bdmv,bdmw,bdE,dxx,dyy,dzz,dxy,dxz,dyz,bD,bdD},strA);
         run(Prk1,n,{br,bmu,bmv,bmw,bE,bdr,bdmu,bdmv,bdmw,bdE,br1,bmu1,bmv1,bmw1,bE1},dtA);
+        run(Prk1c,n,{brc,bdrc,brc1},dtA);   // tracer predictor: rc1 = rc + dt*drc
         if(strn){ run(Prk1s,n,{bxx,byy,bzz,bxy,bxz,byz,dxx,dyy,dzz,dxy,dxz,dyz,sxx1,syy1,szz1,sxy1,sxz1,syz1,bD,bdD,bD1},dtA);
                   run(Pvm,n,{sxx1,syy1,szz1,sxy1,sxz1,syz1,bD1},vmA); }
         if(rcfl>0) run(Pvoid,n,{bmu1,bmv1,bmw1,br1,bE1,sxx1,syy1,szz1,sxy1,sxz1,syz1,bRR0},{{&rcfl,4},{&n,4}});   // clean predictor void cells before strength reads near-vacuum velocity/stress
-        run(Plop,n,{br1,bmu1,bmv1,bmw1,bE1,bdr,bdmu,bdmv,bdmw,bdE,bRR0,bRP0},lopA);
+        run(Plop,n,{br1,bmu1,bmv1,bmw1,bE1,bdr,bdmu,bdmv,bdmw,bdE,bRR0,bRP0,brc1,bdrc},lopA);   // predictor reads rc1
         if(strn) run(Pstr,n,{br1,bmu1,bmv1,bmw1,bE1,sxx1,syy1,szz1,sxy1,sxz1,syz1,bdmu,bdmv,bdmw,bdE,dxx,dyy,dzz,dxy,dxz,dyz,bD1,bdD},strA);
         run(Prk2,n,{br,bmu,bmv,bmw,bE,br1,bmu1,bmv1,bmw1,bE1,bdr,bdmu,bdmv,bdmw,bdE},dtA);
+        run(Prk2c,n,{brc,brc1,bdrc},dtA);   // tracer corrector: rc = 0.5*(rc + rc1 + dt*drc)
         if(strn){ run(Prk2s,n,{bxx,byy,bzz,bxy,bxz,byz,sxx1,syy1,szz1,sxy1,sxz1,syz1,dxx,dyy,dzz,dxy,dxz,dyz,bD,bD1,bdD},dtA);
                   run(Pgd,n,{br,bmu,bmv,bmw,bE,bxx,byy,bzz,bD},gdA);
                   run(Pvm,n,{bxx,byy,bzz,bxy,bxz,byz,bD},vmA); }
@@ -139,6 +146,12 @@ int main(int argc,char**argv){
         auto pres=[&](int c){float ke=0.5f*(mu[c]*mu[c]+mv[c]*mv[c]+mw[c]*mw[c])/r[c];return (GAM-1)*(E[c]-ke);};
         double l1r=0,l1p=0,l1u=0;for(int i=0;i<nx;i++){double x=(i+0.5)*dx,re,ue,pe;exact_sod((x-0.5)/tend,re,ue,pe);l1r+=fabs(r[i]-re);l1p+=fabs(pres(i)-pe);l1u+=fabs(mu[i]/r[i]-ue);}
         printf("GPU Sod L1 vs EXACT: rho=%.4f p=%.4f u=%.4f  GATE(==CPU): %s\n",l1r/nx,l1p/nx,l1u/nx,(l1r/nx<0.007)?"PASS":"CHECK");
+    } else if(mode=="tracer"){
+        float*RC=(float*)brc->contents(); double rc1=0,cen1=0,cmin=1e30,cmax=-1e30,v0=2.0;
+        for(int i=0;i<nx;i++){double cc=RC[i]/r[i];rc1+=RC[i];cen1+=RC[i]*(i+0.5)*dx;cmin=min(cmin,cc);cmax=max(cmax,cc);}
+        cen1/=rc1; double vcen=(cen1-cen0)/t, merr=fabs(rc1-rc0)/rc0, verr=fabs(vcen-v0)/v0;
+        printf("GPU tracer: sum(rc) %.6e->%.6e (err %.2e); centroid v=%.4f vs v0=%.1f (err %.2e); c in [%.2e, %.4f]  GATE(==CPU, mass<1e-6 & v<1%% & c in[0,1]): %s\n",
+               rc0,rc1,merr,vcen,v0,verr,cmin,cmax,(merr<1e-6&&verr<0.01&&cmin>=-1e-9&&cmax<=1.0+1e-9)?"PASS":"CHECK");
     } else if(mode=="sedov"){
         double E0=1.0,rho0=1.0,cen=0.5*nx*dx,rpk=0,rhomax=0;   // shock radius = radius of peak density
         for(int i=0;i<nx;i++)for(int j=0;j<ny;j++)for(int k=0;k<nz;k++){double rr=r[(i*ny+j)*nz+k];

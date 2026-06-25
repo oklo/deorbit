@@ -72,17 +72,17 @@ static F5 hllc_p(double rL,double vnL,double t1L,double t2L,double eL,double pL,
     return star(rR,vnR,t1R,t2R,pR,ER,SR,Fp(rR,vnR,t1R,t2R,pR,ER));
 }
 static inline double mm(double a,double b){ return (a*b<=0)?0.0:(fabs(a)<fabs(b)?a:b); }
-struct Grid { int nx,ny,nz; double dx; vector<double> r,mu,mv,mw,E, Sxx,Syy,Szz,Sxy,Sxz,Syz, D, af;
+struct Grid { int nx,ny,nz; double dx; vector<double> r,mu,mv,mw,E, Sxx,Syy,Szz,Sxy,Sxz,Syz, D, af, rc;  // rc = rho*c, passive material tracer (c: 1=projectile, 0=target)
     int idx(int i,int j,int k)const{ return (i*ny+j)*nz+k; }
     Grid(int X,int Y,int Z,double d):nx(X),ny(Y),nz(Z),dx(d){ int n=X*Y*Z; r.assign(n,0);mu.assign(n,0);mv.assign(n,0);mw.assign(n,0);E.assign(n,0);
-        Sxx.assign(n,0);Syy.assign(n,0);Szz.assign(n,0);Sxy.assign(n,0);Sxz.assign(n,0);Syz.assign(n,0);D.assign(n,0);af.assign(n,0);} };
+        Sxx.assign(n,0);Syy.assign(n,0);Szz.assign(n,0);Sxy.assign(n,0);Sxz.assign(n,0);Syz.assign(n,0);D.assign(n,0);af.assign(n,0);rc.assign(n,0);} };
 static inline double eint(const Grid&g,int c){ double ke=0.5*(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c]; return (g.E[c]-ke)/g.r[c]; }
 static inline double Pcell(const Grid&g,int c){ double p,cs; eos_pc(g.r[c],eint(g,c),p,cs); return p; }
 
-struct DU { vector<double> r,mu,mv,mw,E,Sxx,Syy,Szz,Sxy,Sxz,Syz,D; DU(int n){r.assign(n,0);mu.assign(n,0);mv.assign(n,0);mw.assign(n,0);E.assign(n,0);Sxx.assign(n,0);Syy.assign(n,0);Szz.assign(n,0);Sxy.assign(n,0);Sxz.assign(n,0);Syz.assign(n,0);D.assign(n,0);} };
+struct DU { vector<double> r,mu,mv,mw,E,Sxx,Syy,Szz,Sxy,Sxz,Syz,D,rc; DU(int n){r.assign(n,0);mu.assign(n,0);mv.assign(n,0);mw.assign(n,0);E.assign(n,0);Sxx.assign(n,0);Syy.assign(n,0);Szz.assign(n,0);Sxy.assign(n,0);Sxz.assign(n,0);Syz.assign(n,0);D.assign(n,0);rc.assign(n,0);} };
 static void Lop(const Grid&g, DU&d){
     int n=g.nx*g.ny*g.nz; double invdx=1.0/g.dx; double G=MAT.G;
-    for(int q=0;q<n;q++){d.r[q]=d.mu[q]=d.mv[q]=d.mw[q]=d.E[q]=0;d.Sxx[q]=d.Syy[q]=d.Szz[q]=d.Sxy[q]=d.Sxz[q]=d.Syz[q]=0;d.D[q]=0;}
+    for(int q=0;q<n;q++){d.r[q]=d.mu[q]=d.mv[q]=d.mw[q]=d.E[q]=0;d.Sxx[q]=d.Syy[q]=d.Szz[q]=d.Sxy[q]=d.Sxz[q]=d.Syz[q]=0;d.D[q]=0;d.rc[q]=0;}
     auto prim=[&](int c,double*W){ W[0]=g.r[c]; W[1]=g.mu[c]/W[0]; W[2]=g.mv[c]/W[0]; W[3]=g.mw[c]/W[0]; W[4]=eint(g,c); };
     bool WB = !REF_P0.empty();   // route 1: well-balanced hydrostatic reconstruction (z-sweep only)
     // ---- hydro: unsplit MUSCL+HLLC (P only; z-dir reconstructs P-deviation when WB) ----
@@ -90,7 +90,7 @@ static void Lop(const Grid&g, DU&d){
         int nL=(dir==0?g.nx:(dir==1?g.ny:g.nz)),nA=(dir==0?g.ny:g.nx),nB=(dir==2?g.ny:g.nz);
         auto CELL=[&](int p,int a,int b){ return dir==0?g.idx(p,a,b):(dir==1?g.idx(a,p,b):g.idx(a,b,p)); };
         int in=(dir==0?1:(dir==1?2:3)),it1=(dir==0?2:1),it2=(dir==2?2:3);
-        vector<double> Fr(nL+1),Fmn(nL+1),Ft1(nL+1),Ft2(nL+1),FE(nL+1);
+        vector<double> Fr(nL+1),Fmn(nL+1),Ft1(nL+1),Ft2(nL+1),FE(nL+1),Frc(nL+1);
         for(int a=0;a<nA;a++)for(int b=0;b<nB;b++){
             for(int f=0;f<=nL;f++){ int iL=max(0,f-1),iR=min(nL-1,f),iLL=max(0,f-2),iRR=min(nL-1,f+1);
                 double A[5],B[5],AA[5],BB[5],L[5],R[5]; prim(CELL(iL,a,b),A);prim(CELL(iR,a,b),B);prim(CELL(iLL,a,b),AA);prim(CELL(iRR,a,b),BB);
@@ -104,8 +104,10 @@ static void Lop(const Grid&g, DU&d){
                     double p0f=MAT.pressure(0.5*(REF_R0[cL]+REF_R0[cR]),0.0); if(p0f<0)p0f=0;
                     fl=hllc_p(L[0],L[in],L[it1],L[it2],L[4],p0f+dLf, R[0],R[in],R[it1],R[it2],R[4],p0f+dRf);
                 } else fl=hllc(L[0],L[in],L[it1],L[it2],L[4],R[0],R[in],R[it1],R[it2],R[4]);
-                Fr[f]=fl.r;Fmn[f]=fl.mn;Ft1[f]=fl.mt1;Ft2[f]=fl.mt2;FE[f]=fl.E; }
-            for(int p=0;p<nL;p++){ int c=CELL(p,a,b); d.r[c]+=-(Fr[p+1]-Fr[p])*invdx; d.E[c]+=-(FE[p+1]-FE[p])*invdx;
+                Fr[f]=fl.r;Fmn[f]=fl.mn;Ft1[f]=fl.mt1;Ft2[f]=fl.mt2;FE[f]=fl.E;
+                int cl=CELL(iL,a,b),cr=CELL(iR,a,b);   // passive material tracer: species flux = mass flux * upwind c
+                Frc[f]=fl.r*(fl.r>=0.0 ? g.rc[cl]/g.r[cl] : g.rc[cr]/g.r[cr]); }
+            for(int p=0;p<nL;p++){ int c=CELL(p,a,b); d.r[c]+=-(Fr[p+1]-Fr[p])*invdx; d.E[c]+=-(FE[p+1]-FE[p])*invdx; d.rc[c]+=-(Frc[p+1]-Frc[p])*invdx;
                 double dmn=-(Fmn[p+1]-Fmn[p])*invdx,dt1=-(Ft1[p+1]-Ft1[p])*invdx,dt2=-(Ft2[p+1]-Ft2[p])*invdx;
                 if(dir==0){d.mu[c]+=dmn;d.mv[c]+=dt1;d.mw[c]+=dt2;}else if(dir==1){d.mv[c]+=dmn;d.mu[c]+=dt1;d.mw[c]+=dt2;}else{d.mw[c]+=dmn;d.mu[c]+=dt1;d.mv[c]+=dt2;}
             }
@@ -192,17 +194,17 @@ static void set_ref(const Grid&g){ int n=g.nx*g.ny*g.nz; REF_R0.assign(n,0); REF
 // route 1: void cells = passive vacuum (reset to reference). Also kills the near-vacuum velocity (mu/rho_tiny) that
 // would otherwise feed spurious deviatoric stress into the strength solver at the free surface.
 static void void_cells(Grid&g){ if(RHO_CFL<=0)return; bool wb=!REF_R0.empty(); int N=g.r.size();
-    for(int c=0;c<N;c++) if(g.r[c]<RHO_CFL){ g.mu[c]=g.mv[c]=g.mw[c]=0; if(wb){g.r[c]=REF_R0[c];g.E[c]=0;g.Sxx[c]=g.Syy[c]=g.Szz[c]=g.Sxy[c]=g.Sxz[c]=g.Syz[c]=0;} } }
+    for(int c=0;c<N;c++) if(g.r[c]<RHO_CFL){ g.mu[c]=g.mv[c]=g.mw[c]=0; if(wb){g.r[c]=REF_R0[c];g.E[c]=0;g.Sxx[c]=g.Syy[c]=g.Szz[c]=g.Sxy[c]=g.Sxz[c]=g.Syz[c]=0;g.rc[c]=0;} } }
 static double maxspeed(const Grid&g){ double s=1e-30; int n=g.r.size(); double G=MAT.G;
     for(int c=0;c<n;c++){ if(g.r[c]<RHO_CFL) continue; double p,cs; eos_pc(g.r[c],eint(g,c),p,cs); double cel=sqrt(cs*cs+ (G>0?(4.0/3.0)*G/g.r[c]:0.0));
         double v=sqrt(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c]; s=max(s,v+cel);} return s; }
 static void step_rk2(Grid&g,double dt){ int n=g.r.size(); DU d(n); Grid g1=g;
     Lop(g,d);
     for(int c=0;c<n;c++){g1.r[c]=g.r[c]+dt*d.r[c];g1.mu[c]=g.mu[c]+dt*d.mu[c];g1.mv[c]=g.mv[c]+dt*d.mv[c];g1.mw[c]=g.mw[c]+dt*d.mw[c];g1.E[c]=g.E[c]+dt*d.E[c];
-        g1.Sxx[c]=g.Sxx[c]+dt*d.Sxx[c];g1.Syy[c]=g.Syy[c]+dt*d.Syy[c];g1.Szz[c]=g.Szz[c]+dt*d.Szz[c];g1.Sxy[c]=g.Sxy[c]+dt*d.Sxy[c];g1.Sxz[c]=g.Sxz[c]+dt*d.Sxz[c];g1.Syz[c]=g.Syz[c]+dt*d.Syz[c];g1.D[c]=g.D[c]+dt*d.D[c];}
+        g1.Sxx[c]=g.Sxx[c]+dt*d.Sxx[c];g1.Syy[c]=g.Syy[c]+dt*d.Syy[c];g1.Szz[c]=g.Szz[c]+dt*d.Szz[c];g1.Sxy[c]=g.Sxy[c]+dt*d.Sxy[c];g1.Sxz[c]=g.Sxz[c]+dt*d.Sxz[c];g1.Syz[c]=g.Syz[c]+dt*d.Syz[c];g1.D[c]=g.D[c]+dt*d.D[c];g1.rc[c]=g.rc[c]+dt*d.rc[c];}
     void_cells(g1); vonmises(g1); Lop(g1,d);   // clean the predictor's void cells so strength sees no near-vacuum velocity
     for(int c=0;c<n;c++){g.r[c]=0.5*(g.r[c]+g1.r[c]+dt*d.r[c]);g.mu[c]=0.5*(g.mu[c]+g1.mu[c]+dt*d.mu[c]);g.mv[c]=0.5*(g.mv[c]+g1.mv[c]+dt*d.mv[c]);g.mw[c]=0.5*(g.mw[c]+g1.mw[c]+dt*d.mw[c]);g.E[c]=0.5*(g.E[c]+g1.E[c]+dt*d.E[c]);
-        g.Sxx[c]=0.5*(g.Sxx[c]+g1.Sxx[c]+dt*d.Sxx[c]);g.Syy[c]=0.5*(g.Syy[c]+g1.Syy[c]+dt*d.Syy[c]);g.Szz[c]=0.5*(g.Szz[c]+g1.Szz[c]+dt*d.Szz[c]);g.Sxy[c]=0.5*(g.Sxy[c]+g1.Sxy[c]+dt*d.Sxy[c]);g.Sxz[c]=0.5*(g.Sxz[c]+g1.Sxz[c]+dt*d.Sxz[c]);g.Syz[c]=0.5*(g.Syz[c]+g1.Syz[c]+dt*d.Syz[c]);g.D[c]=0.5*(g.D[c]+g1.D[c]+dt*d.D[c]);}
+        g.Sxx[c]=0.5*(g.Sxx[c]+g1.Sxx[c]+dt*d.Sxx[c]);g.Syy[c]=0.5*(g.Syy[c]+g1.Syy[c]+dt*d.Syy[c]);g.Szz[c]=0.5*(g.Szz[c]+g1.Szz[c]+dt*d.Szz[c]);g.Sxy[c]=0.5*(g.Sxy[c]+g1.Sxy[c]+dt*d.Sxy[c]);g.Sxz[c]=0.5*(g.Sxz[c]+g1.Sxz[c]+dt*d.Sxz[c]);g.Syz[c]=0.5*(g.Syz[c]+g1.Syz[c]+dt*d.Syz[c]);g.D[c]=0.5*(g.D[c]+g1.D[c]+dt*d.D[c]);g.rc[c]=0.5*(g.rc[c]+g1.rc[c]+dt*d.rc[c]);}
     grow_damage(g,dt); vonmises(g);
     if(TDEC>0){ double f=exp(-dt/TDEC); int N=g.r.size(); for(int c=0;c<N;c++) g.af[c]*=f; }   // AF vibrations decay
     if(DAMP<1.0){ int N=g.r.size(); for(int c=0;c<N;c++){ g.mu[c]*=DAMP; g.mv[c]*=DAMP; g.mw[c]*=DAMP; } }   // relaxation damping
@@ -237,6 +239,17 @@ int main(int argc,char**argv){
         double t=0;int s=0;while(t<tend){double dt=CFL*dx/maxspeed(g);if(t+dt>tend)dt=tend-t;step_rk2(g,dt);t+=dt;s++;}
         double l1r=0,l1p=0,l1u=0;for(int i=0;i<N;i++){double x=(i+0.5)*dx,re,ue,pe;exact_sod((x-0.5)/tend,re,ue,pe);int c=g.idx(i,0,0);l1r+=fabs(g.r[c]-re);l1p+=fabs(Pcell(g,c)-pe);l1u+=fabs(g.mu[c]/g.r[c]-ue);}
         printf("Sod (M3 regression) L1: rho=%.4f p=%.4f u=%.4f  GATE: %s\n",l1r/N,l1p/N,l1u/N,(l1r/N<0.007)?"PASS":"CHECK");
+    } else if(mode=="tracer"){ // M-tag: a c=1 material blob advects with a uniform flow -- must conserve, move at v0, stay in [0,1]
+        MAT=Material::ideal(1.4); GAM=1.4; int N=200;double dx=1.0/N,CFL=0.4; double rho0=1.0,p0=1.0,v0=2.0,tend=0.15; Grid g(N,1,1,dx);
+        for(int i=0;i<N;i++){double x=(i+0.5)*dx;int c=g.idx(i,0,0);g.r[c]=rho0;g.mu[c]=rho0*v0;g.E[c]=p0/(GAM-1)+0.5*rho0*v0*v0;
+            g.rc[c]=rho0*((x>0.3&&x<0.5)?1.0:0.0);}
+        double rc0=0,cen0=0;for(int i=0;i<N;i++){int c=g.idx(i,0,0);rc0+=g.rc[c];cen0+=g.rc[c]*(i+0.5)*dx;} cen0/=rc0;
+        double t=0;int s=0;while(t<tend){double dt=CFL*dx/maxspeed(g);if(t+dt>tend)dt=tend-t;step_rk2(g,dt);t+=dt;s++;}
+        double rc1=0,cen1=0,cmin=1e30,cmax=-1e30;
+        for(int i=0;i<N;i++){int c=g.idx(i,0,0);double cc=g.rc[c]/g.r[c];rc1+=g.rc[c];cen1+=g.rc[c]*(i+0.5)*dx;cmin=min(cmin,cc);cmax=max(cmax,cc);}
+        cen1/=rc1; double vcen=(cen1-cen0)/t, merr=fabs(rc1-rc0)/rc0, verr=fabs(vcen-v0)/v0;
+        printf("Tracer: sum(rc) %.6e->%.6e (err %.2e); centroid v=%.4f vs v0=%.1f (err %.2e); c in [%.2e, %.4f]\n",rc0,rc1,merr,vcen,v0,verr,cmin,cmax);
+        printf("GATE (sum(rc) conserved <1e-6 & centroid v within 1%% & c in [0,1]): %s\n",(merr<1e-6&&verr<0.01&&cmin>=-1e-9&&cmax<=1.0+1e-9)?"PASS":"CHECK");
     } else if(mode=="sedov"){ // 3D Sedov-Taylor point blast: shock radius vs analytic self-similar solution
         MAT=Material::ideal(1.4); GAM=1.4; int N=64;double L=2.0,dx=L/N,CFL=0.3,tend=0.5; double E0=1.0,rho0=1.0; Grid g(N,N,N,dx);
         for(int c=0;c<N*N*N;c++){g.r[c]=rho0;g.E[c]=1e-4/(GAM-1);}
@@ -358,7 +371,7 @@ int main(int argc,char**argv){
         double vmax=0;for(int k=0;k<N;k++){int c=g.idx(0,0,k);vmax=max(vmax,fabs(g.mw[c]/g.r[c]));}
         printf("Free surface max|v|=%.3f m/s  GATE: %s\n",vmax,vmax<5.0?"PASS":"CHECK");
     } else {
-        fprintf(stderr,"unknown mode '%s' (modes: sod sedov shear yield vacuum bshock freefall atmos tensile alimpact substrate collapse surface)\n",mode.c_str());
+        fprintf(stderr,"unknown mode '%s' (modes: sod sedov shear yield vacuum bshock freefall atmos tensile alimpact substrate collapse surface tracer)\n",mode.c_str());
         return 2;   // fatal: never silently validate the wrong physics
     }
     return 0;

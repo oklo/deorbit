@@ -140,14 +140,15 @@ kernel void lop(device const float*r[[buffer(0)]],device const float*mu[[buffer(
                 device float*dr[[buffer(5)]],device float*dmu[[buffer(6)]],device float*dmv[[buffer(7)]],
                 device float*dmw[[buffer(8)]],device float*dE[[buffer(9)]],
                 device const float*RR0[[buffer(10)]],device const float*RP0[[buffer(11)]],
-                constant int&nx[[buffer(12)]],constant int&ny[[buffer(13)]],constant int&nz[[buffer(14)]],
-                constant float&invdx[[buffer(15)]],constant int&mode[[buffer(16)]],constant float&gam[[buffer(17)]],
-                constant GMat&mat[[buffer(18)]],constant uint&n[[buffer(19)]],constant float&gz[[buffer(20)]],
-                constant int&wb[[buffer(21)]],constant float&rvac[[buffer(22)]],
+                device const float*rc[[buffer(12)]],device float*drc[[buffer(13)]],
+                constant int&nx[[buffer(14)]],constant int&ny[[buffer(15)]],constant int&nz[[buffer(16)]],
+                constant float&invdx[[buffer(17)]],constant int&mode[[buffer(18)]],constant float&gam[[buffer(19)]],
+                constant GMat&mat[[buffer(20)]],constant uint&n[[buffer(21)]],constant float&gz[[buffer(22)]],
+                constant int&wb[[buffer(23)]],constant float&rvac[[buffer(24)]],
                 uint gid[[thread_position_in_grid]]){
     if(gid>=n) return;
     int k=gid%nz, j=(gid/nz)%ny, i=gid/(ny*nz);
-    C5 acc={0,0,0,0,0};
+    C5 acc={0,0,0,0,0}; float accrc=0.0f;   // accrc: passive material tracer (rc=rho*c) flux divergence
     for(int dir=0;dir<3;dir++){
         int m2,m1,p0,p1,p2;
         if(dir==0){int a=max(0,i-2),b=max(0,i-1),d=min(nx-1,i+1),e=min(nx-1,i+2);
@@ -163,7 +164,11 @@ kernel void lop(device const float*r[[buffer(0)]],device const float*mu[[buffer(
             FLa=faceflux_wb(cm2,cm1,c0,cp1, RP0[m2],RP0[m1],RP0[p0],RP0[p1], RR0[m1],RR0[p0], mode,gam,mat);
         } else { FRa=faceflux(cm1,c0,cp1,cp2,dir,mode,gam,mat,rvac); FLa=faceflux(cm2,cm1,c0,cp1,dir,mode,gam,mat,rvac); }
         acc.r-=(FRa.r-FLa.r);acc.mu-=(FRa.mu-FLa.mu);acc.mv-=(FRa.mv-FLa.mv);acc.mw-=(FRa.mw-FLa.mw);acc.E-=(FRa.E-FLa.E);
+        float crR=(FRa.r>=0.0f? rc[p0]/c0.r : rc[p1]/cp1.r);   // species flux = mass flux * upwind c
+        float crL=(FLa.r>=0.0f? rc[m1]/cm1.r : rc[p0]/c0.r);
+        accrc-=(FRa.r*crR-FLa.r*crL);
     }
+    drc[gid]=accrc*invdx;
     dr[gid]=acc.r*invdx;dmu[gid]=acc.mu*invdx;dmv[gid]=acc.mv*invdx;
     if(wb!=0){   // route 1 well-balanced gravity source (EOS reference face P; cancels the reference flux divergence)
         int ktop=(k<nz-1?gid+1:gid), kbot=(k>0?gid-1:gid);
@@ -212,6 +217,15 @@ kernel void rk2(device float*r[[buffer(0)]],device float*mu[[buffer(1)]],device 
                 constant float&dt[[buffer(15)]],constant uint&n[[buffer(16)]],uint g[[thread_position_in_grid]]){
     if(g>=n)return; r[g]=0.5f*(r[g]+r1[g]+dt*dr[g]);mu[g]=0.5f*(mu[g]+mu1[g]+dt*dmu[g]);mv[g]=0.5f*(mv[g]+mv1[g]+dt*dmv[g]);
     mw[g]=0.5f*(mw[g]+mw1[g]+dt*dmw[g]);E[g]=0.5f*(E[g]+E1[g]+dt*dE[g]);
+}
+// passive material tracer (rc=rho*c): RK1/RK2 substeps, evolved alongside the conserved vars
+kernel void rk1c(device const float*rc[[buffer(0)]],device const float*drc[[buffer(1)]],device float*rc1[[buffer(2)]],
+                 constant float&dt[[buffer(3)]],constant uint&n[[buffer(4)]],uint g[[thread_position_in_grid]]){
+    if(g>=n)return; rc1[g]=rc[g]+dt*drc[g];
+}
+kernel void rk2c(device float*rc[[buffer(0)]],device const float*rc1[[buffer(1)]],device const float*drc[[buffer(2)]],
+                 constant float&dt[[buffer(3)]],constant uint&n[[buffer(4)]],uint g[[thread_position_in_grid]]){
+    if(g>=n)return; rc[g]=0.5f*(rc[g]+rc1[g]+dt*drc[g]);
 }
 // ---- M3: strength. ADDS div-S to momentum & div(S.v) to energy; writes dS (Jaumann+2G*edev-adv). ----
 kernel void strength(device const float*r[[buffer(0)]],device const float*mu[[buffer(1)]],device const float*mv[[buffer(2)]],
