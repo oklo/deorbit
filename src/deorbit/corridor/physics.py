@@ -24,6 +24,7 @@ MU = 3.986004418e14      # Earth GM, m^3/s^2
 RE = 6.371e6             # Earth mean radius, m
 RHO_IRON = 7800.0        # kg/m^3
 ENTRY_ALT = 200e3        # atmospheric-interface altitude for passage start/end, m
+OMEGA_EARTH = 7.2921159e-5   # Earth sidereal rotation rate, rad/s (atmosphere co-rotation)
 
 # Vallado piecewise-exponential atmosphere: (base_alt_km, rho0 kg/m^3, H_km)
 _ATM = [
@@ -40,10 +41,14 @@ _ATM = [
 ]
 
 
-def density(alt_m):
-    """Mass density (kg/m^3) at geometric altitude alt_m (m)."""
+def density(alt_m, f_rho=1.0, f_H=1.0):
+    """Mass density (kg/m^3) at geometric altitude alt_m (m).
+
+    f_rho: multiplicative density factor (lower/mid-atmosphere uncertainty proxy).
+    f_H:   multiplicative scale-height factor (temperature/structure proxy).
+    Defaults (1,1) reproduce the nominal Vallado profile exactly."""
     if alt_m <= 0.0:
-        return _ATM[0][1]
+        return f_rho * _ATM[0][1]
     h = alt_m / 1000.0
     if h >= 1000.0:
         return 0.0
@@ -54,7 +59,7 @@ def density(alt_m):
         else:
             break
     h0, rho0, H = base
-    return rho0 * math.exp(-(h - h0) / H)
+    return f_rho * rho0 * math.exp(-(h - h0) / (H * f_H))
 
 
 class Body:
@@ -72,29 +77,33 @@ class Body:
         self.k = 0.5 * cd * self.area / self.mass
 
 
-def _deriv(s, k):
+def _deriv(s, k, f_rho=1.0, f_H=1.0, omega=0.0):
     x, y, vx, vy = s
     r = math.hypot(x, y)
     ag = -MU / (r * r * r)
     ax, ay = ag * x, ag * y
-    rho = density(r - RE)
+    rho = density(r - RE, f_rho, f_H)
     if rho > 0.0:
-        v = math.hypot(vx, vy)
-        if v > 0.0:
-            fd = k * rho * v
-            ax -= fd * vx
-            ay -= fd * vy
+        # drag acts on the velocity RELATIVE to the co-rotating atmosphere.
+        # v_atm = omega x r = omega*(-y, x); omega>0 prograde (drag-reducing), <0 retrograde.
+        rvx = vx - (-omega * y)
+        rvy = vy - (omega * x)
+        vrel = math.hypot(rvx, rvy)
+        if vrel > 0.0:
+            fd = k * rho * vrel
+            ax -= fd * rvx
+            ay -= fd * rvy
     return (vx, vy, ax, ay)
 
 
-def _rk4(s, dt, k):
-    a = _deriv(s, k)
+def _rk4(s, dt, k, f_rho=1.0, f_H=1.0, omega=0.0):
+    a = _deriv(s, k, f_rho, f_H, omega)
     s2 = tuple(s[i] + 0.5 * dt * a[i] for i in range(4))
-    b = _deriv(s2, k)
+    b = _deriv(s2, k, f_rho, f_H, omega)
     s3 = tuple(s[i] + 0.5 * dt * b[i] for i in range(4))
-    c = _deriv(s3, k)
+    c = _deriv(s3, k, f_rho, f_H, omega)
     s4 = tuple(s[i] + dt * c[i] for i in range(4))
-    d = _deriv(s4, k)
+    d = _deriv(s4, k, f_rho, f_H, omega)
     return tuple(s[i] + dt / 6.0 * (a[i] + 2 * b[i] + 2 * c[i] + d[i]) for i in range(4))
 
 
@@ -113,9 +122,14 @@ def initial_state(v_inf, peri_alt_m, r0=RE + ENTRY_ALT):
     return [r0, 0.0, vr, vt], v0
 
 
-def simulate_passage(v_inf, peri_alt_m, body, max_steps=4_000_000):
+def simulate_passage(v_inf, peri_alt_m, body, max_steps=4_000_000,
+                     f_rho=1.0, f_H=1.0, omega=0.0):
     """Integrate one atmospheric passage. Returns a dict with the outcome:
-    'impact' | 'capture' | 'skip', plus diagnostics."""
+    'impact' | 'capture' | 'skip', plus diagnostics.
+
+    f_rho/f_H perturb the atmosphere; omega is the atmosphere co-rotation rate
+    (>0 prograde/drag-reducing, <0 retrograde). Defaults reproduce the nominal,
+    non-rotating model (so validate.py and the daemon are unchanged)."""
     r0 = RE + ENTRY_ALT
     s, v0 = initial_state(v_inf, peri_alt_m, r0)
     k = body.k
@@ -131,7 +145,9 @@ def simulate_passage(v_inf, peri_alt_m, body, max_steps=4_000_000):
         if alt < min_alt:
             min_alt = alt
         v = math.hypot(vx, vy)
-        q = 0.5 * density(alt) * v * v
+        rvx = vx - (-omega * y); rvy = vy - (omega * x)   # atmosphere-relative (ram) velocity
+        vrel = math.hypot(rvx, rvy)
+        q = 0.5 * density(alt, f_rho, f_H) * vrel * vrel
         if q > peak_q:
             peak_q = q
         if alt <= 0.0:
@@ -150,7 +166,7 @@ def simulate_passage(v_inf, peri_alt_m, body, max_steps=4_000_000):
             dt = max(0.02, min(0.5, 200.0 / (abs(vr) + 10.0)))
         else:
             dt = 20.0
-        s = _rk4(s, dt, k)
+        s = _rk4(s, dt, k, f_rho, f_H, omega)
         steps += 1
 
     x, y, vx, vy = s

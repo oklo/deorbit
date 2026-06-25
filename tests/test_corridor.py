@@ -81,9 +81,27 @@ def check_regimes():
     return ok
 
 
+def check_uncertainty_knobs():
+    """The ensemble knobs perturb drag the right way: +density and retrograde
+    co-rotation increase the per-pass dv; prograde decreases it; defaults are a no-op."""
+    b = P.Body()
+    base = P.simulate_passage(1.0e3, 30e3, b)["dv_ms"]
+    assert P.simulate_passage(1.0e3, 30e3, b, f_rho=1.0, omega=0.0)["dv_ms"] == base   # defaults unchanged
+    denser = P.simulate_passage(1.0e3, 30e3, b, f_rho=1.3)["dv_ms"]
+    prog = P.simulate_passage(1.0e3, 30e3, b, omega=+P.OMEGA_EARTH)["dv_ms"]
+    retro = P.simulate_passage(1.0e3, 30e3, b, omega=-P.OMEGA_EARTH)["dv_ms"]
+    ok = denser > base and prog < base < retro
+    print(f"[uncert] base dv={base:.2f}  +30%rho={denser:.2f}  prograde={prog:.2f}  retro={retro:.2f} -> {'OK' if ok else 'FAIL'}")
+    return ok
+
+
 # --- pytest entry points (the check_* helpers above are the actual physics) ---
 def test_kepler_closes():
     assert check_kepler_closes()
+
+
+def test_uncertainty_knobs():
+    assert check_uncertainty_knobs()
 
 
 def test_dv_vs_analytic():
