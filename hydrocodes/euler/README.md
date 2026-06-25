@@ -122,8 +122,26 @@ pass/fail gate.)
       (lower ETA_AF, set TDEC) so AF-on slumps (<0.5*h0) and AF-off holds (>0.7*h0).
       Modes: substrate (PASS), vacuum (PASS), collapse (stable; AF calibration pending).
       Globals: af, TDEC, ETA_AF, RHO_CFL, RHO_VAC, DAMP.
+- [ ] **M-tag passive material tracer (prerequisite for M7 + the bounce-off cross-check).**
+      Add a passive material-fraction scalar `c` (1 = projectile/impactor, 0 = target) advected
+      with the flow, so the Eulerian code can (a) COLOR the projectile in the M7 Orcus 3-way
+      figure and (b) report the projectile-material PARTITION + bulk velocity for the §2
+      grazing-impact fate cross-check (see `docs/bounce_off_plan.md`).
+      DESIGN: carry the conserved species density `rc = rho*c` as one extra advected field with
+      the standard passive-scalar-in-Godunov flux = (mass flux) x c_upwind (c taken from the
+      upwind side of the HLLC contact); RK-update it alongside the other conserved vars. It rides
+      the existing MUSCL+HLLC machinery -- NOT tied to strength (advect always, ideal or
+      Tillotson). IC sets c=1 in projectile cells. Diagnostics: projectile mass = sum(rc*dV),
+      momentum = sum(rc*v), bulk v_out = momentum/mass, c-weighted centroid.
+      GATE `tracer` (CPU & GPU, GPU==CPU): a c=1 blob in a uniform flow advects at the flow speed
+      with sum(rc) conserved to <1e-6, centroid velocity within 1% of the flow, and c in [0,1]
+      (monotone, no new extrema). Files: hydro_cpu.cpp (Grid field rc + Lop species flux + RK +
+      mode), hydro.metal + hydro_gpu.cpp (buffer + lop flux + rk). Effort ~1 day; risk LOW.
+      CAVEAT (honest, drives the SPH/Euler division of labor): Eulerian advection is DIFFUSIVE --
+      the tracer smears over many steps, so it gives partition + bulk velocity well but NOT fine
+      coherence/fragmentation. That stays SPH's job; Euler owns morphology + the diffusive partition.
 - [ ] **M7 Orcus cross-check** — cross-validate vs SPH (early dynamics), then the
-      3-way figure: MOLA | SPH | euler.
+      3-way figure: MOLA | SPH | euler (projectile colored via the M-tag tracer).
 
 ## Status
 **M5 DONE** (credibility gate, peak shock pressure). **Route 1 DONE (CPU+GPU)**: the
