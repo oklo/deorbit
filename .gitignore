@@ -99,3 +99,6 @@ sph/orcus_hero.gif
 sph/*.log
 sph/shear_cpu.txt
 euler/pierazzo_decay.txt
+
+# stale/empty checkpoint blob (was tracked at root)
+state.out

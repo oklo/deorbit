@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "deorbit: low-velocity capture, aerobraking deorbit, and grazing-impact dynamics"
+abstract: >-
+  A research codebase for the capture and atmospheric deorbit of low-velocity
+  Earth/Mars impactors and the resulting grazing impacts: a stdlib capture-corridor
+  engine, a REBOUND/ASSIST high-fidelity validation layer, WGS84 site selection, a
+  reduced-order grazing-impact model, and two validation-gated hydrocodes (an SPH
+  solver and an Eulerian shock-physics cross-check) sharing one Tillotson EOS.
+type: software
+authors:
+  - family-names: Laughlin
+    given-names: Gregory
+    # affiliation: ""                              # TODO: confirm affiliation
+    # orcid: "https://orcid.org/0000-0000-0000-0000"  # TODO: add ORCID
+repository-code: "https://github.com/oklo/deorbit"
+license: MIT
+keywords:
+  - planetary science
+  - impact cratering
+  - atmospheric capture
+  - smoothed-particle hydrodynamics
+  - shock physics

@@ -1,0 +1,43 @@
+name: gates
+# Fast validation on every push/PR. Runs the stdlib science layer and the FP64 CPU
+# oracle gates (pure C++17, no Metal). The Metal *_gpu gates need a Mac GPU and are
+# validated locally against these oracles; they are out of scope for CI.
+on:
+  push:
+  pull_request:
+
+jobs:
+  fast-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: stdlib corridor validation (Kepler closure, grazing dv, capture regimes)
+        run: python3 validate.py
+
+      - name: build euler CPU oracle (FP64, no Metal)
+        run: g++ -std=c++17 -O2 euler/hydro_cpu.cpp -o hydro_cpu
+
+      - name: euler CPU gates (skip the slow 64^3 sedov)
+        run: |
+          fail=0
+          for m in sod vacuum substrate shear yield tensile freefall atmos alimpact; do
+            out=$(./hydro_cpu "$m" 2>/dev/null)
+            line=$(printf '%s\n' "$out" | grep -i 'gate' | tail -1)
+            echo "[$m] $line"
+            printf '%s\n' "$out" | grep -qi 'GATE.*PASS' || { echo "  -> no PASS ($m)"; fail=1; }
+            printf '%s\n' "$out" | grep -qi 'CHECK'      && { echo "  -> CHECK  ($m)"; fail=1; }
+          done
+          exit $fail
+
+      - name: build + run SPH CPU unit gates (EOS, strength)
+        run: |
+          cd sph
+          g++ -std=c++17 -O2 -pthread eos_test.cpp -o eos_test
+          g++ -std=c++17 -O2 -pthread strength_test.cpp -o strength_test
+          ./eos_test      | tail -1 | grep -q 'ALL PASS' || { echo "eos_test FAILED"; exit 1; }
+          ./strength_test | tail -1 | grep -q 'ALL PASS' || { echo "strength_test FAILED"; exit 1; }
