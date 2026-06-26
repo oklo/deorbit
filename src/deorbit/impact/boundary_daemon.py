@@ -150,11 +150,13 @@ def build_grazing_ic(theta_deg, v, path, cppr=8, D=1000.0):
     return dx, N
 
 
-def classify_regime(snap_path, v_esc, imp_mat):
+def classify_regime(snap_path, v_esc, imp_mat, peak_melt=None):
     """Regime from the final snapshot's projectile (mat==imp_mat) particles. Pure stdlib.
-    INITIAL thresholds -- CALIBRATE against the first runs (e.g. a Cayambe-like grazing point
-    should give I). gpu_ic snapshot = [int64 N] then N*[x y z vx vy vz u rho h mat] f8 (mat
-    col 9, equal-mass projectile particles -> unweighted means)."""
+    gpu_ic snapshot = [int64 N] then N*[x y z vx vy vz u rho h mat] f8 (mat col 9, equal-mass
+    projectile particles -> unweighted means). For the intact/dispersed split, melt is judged on
+    PEAK shock-melt (peak_melt, the max over the encounter from the run log) when available --
+    NOT the final-snapshot energy, which underreports because a ricocheted clump expands and
+    cools below the melt threshold even though it was molten at contact."""
     import array
     with open(snap_path, "rb") as f:
         nb = array.array("q"); nb.fromfile(f, 1); N = nb[0]
@@ -176,16 +178,17 @@ def classify_regime(snap_path, v_esc, imp_mat):
             var += (d[o + 3] - vbx) ** 2 + (d[o + 4] - vby) ** 2 + (d[o + 5] - vbz) ** 2
             if d[o + 6] > U_MELT_IRON:                      # specific internal energy past incipient iron melt
                 n_melt += 1
-    disp = math.sqrt(var / n_proj); melt_frac = n_melt / n_proj
+    disp = math.sqrt(var / n_proj); final_melt = n_melt / n_proj
+    melt = peak_melt if peak_melt is not None else final_melt   # peak shock-melt is the regime indicator
     diag = {"v_bulk_kms": speed / 1e3, "disp_kms": disp / 1e3, "vbx_kms": vbx / 1e3,
-            "z_mean_m": z_mean, "melt_frac": melt_frac, "n_proj": n_proj}
+            "z_mean_m": z_mean, "peak_melt": peak_melt, "final_melt": final_melt, "n_proj": n_proj}
     if speed > v_esc:
         return "E", diag                                   # bulk exceeds escape speed
     if vbx < 0.15 * speed + 1.0 and z_mean < 0.0:
         return "C", diag                                   # stopped/buried downrange -> crater
     # retained ricochet: INTACT only if both spatially coherent (low velocity dispersion) AND
-    # not predominantly melted; a mostly-molten clump is DISPERSED even if moving coherently.
-    intact = disp <= 0.3 * max(speed, 1.0) and melt_frac <= 0.5
+    # not predominantly shock-melted; a mostly-molten clump is DISPERSED even if moving coherently.
+    intact = disp <= 0.3 * max(speed, 1.0) and melt <= 0.5
     return ("I" if intact else "D"), diag
 
 
@@ -207,7 +210,16 @@ def sph_evaluate(theta, vr, statedir):
     snaps = sorted([f for f in os.listdir(rundir) if f.startswith("gpu_snap_") and f.endswith(".bin")])
     if not snaps:
         raise RuntimeError(f"no snapshot from gpu_ic in {rundir}")
-    reg, diag = classify_regime(os.path.join(rundir, snaps[-1]), SPH["v_esc"], SPH["imp_mat"])
+    peak_melt = 0.0                                         # max projectile melt fraction over the encounter (gpu_ic "melt=X%")
+    with open(os.path.join(rundir, "run.log")) as fh:
+        for line in fh:
+            i = line.find("melt=")
+            if i >= 0:
+                try:
+                    peak_melt = max(peak_melt, float(line[i + 5:line.index("%", i)]) / 100.0)
+                except ValueError:
+                    pass
+    reg, diag = classify_regime(os.path.join(rundir, snaps[-1]), SPH["v_esc"], SPH["imp_mat"], peak_melt)
     json.dump({"theta": theta, "vr": vr, "v": v, "dx": dx, "N": N, "t_end": t_end,
                "regime": reg, **diag}, open(os.path.join(rundir, "result.json"), "w"), indent=1)
     for f in os.listdir(rundir):                            # keep result.json + run.log; drop the heavy binaries
