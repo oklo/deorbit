@@ -88,6 +88,13 @@ def run(nt=24, nvr=22):
         brackets += boundaries_along("theta", vr, 1.0, 44.0, ve)
     for th in (2.0, 5.0, 8.0, 12.0):                 # vary v/v_esc: intact<->dispersed<->escape
         brackets += boundaries_along("vr", th, 0.3, 2.5, ve)
+    # The analytic crater onset (~15 deg) is the most uncertain boundary: experiments put
+    # grazing ricochet onset nearer ~30 deg (Gault & Wedekind 1978), and the SPH campaign found
+    # km iron still ricochets at ~20 deg. So widen the SPH search window for crater (->C) theta
+    # boundaries up to 45 deg, otherwise bisection caps below the true onset and converges spuriously.
+    for b in brackets:
+        if b["vary"] == "theta" and b["to"] == "C":
+            b["sph_bracket"][1] = 45.0
 
     anchors = {
         "cayambe": {"planet": "earth", "v_kms": 7.4, "theta_deg": 2.0,
