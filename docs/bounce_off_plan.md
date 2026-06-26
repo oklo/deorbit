@@ -116,6 +116,20 @@ tracer milestone" below. Honest caveat: Eulerian advection is diffusive, so the 
 the material **partition + bulk velocity** well but **not** fine coherence/fragmentation —
 which is precisely why SPH remains primary for fate.
 
+## Campaign status
+
+- **Step 1 (reduced-order scout) — DONE.** `python3 -m deorbit.impact.scout`
+  (`src/deorbit/impact/scout.py`, pure stdlib; result `results/bounce_off_scout.json`)
+  classifies the (θ, v/v_esc) plane into **C** crater / **I** intact ricochet / **D** dispersed
+  ricochet / **E** escape, sub-splitting ricochet by the contact-pressure-vs-iron-melt
+  criterion. Topology confirmed and both anchors land correctly: **Cayambe → I**, **Orcus → C**.
+  Key boundaries (Earth fiducial, to be refined by SPH): crater onset θ≈15° (search [8,22]°);
+  intact→dispersed at v/v_esc≈0.78 (iron-melt threshold, v·cosθ≈8.7 km/s); dispersed→escape at
+  v/v_esc≈1.44 (θ=2°), rising with θ. The scout emits a widened SPH search bracket per transition.
+- **Step 2 (SPH bisection) — NEXT.** Refine each scout bracket with CPPR≳8 GPU SPH runs
+  (the `engine.py` boundary daemon); steps 3–5 (convergence, SPH↔Euler+tracer cross-check,
+  experiment + Pierazzo&Melosh validation) follow.
+
 ## 7. Deliverable + novelty
 
 A dimensionless **(θ, v/v_esc) phase diagram** — crater / suborbital-ricochet / escape — for
