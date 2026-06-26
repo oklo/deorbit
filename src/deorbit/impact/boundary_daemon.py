@@ -150,7 +150,27 @@ def build_grazing_ic(theta_deg, v, path, cppr=8, D=1000.0):
     return dx, N
 
 
-def classify_regime(snap_path, v_esc, imp_mat, peak_melt=None):
+def regime_from_diag(diag, v_esc, v_imp):
+    """Pure regime decision from the projectile diagnostics (so cached runs re-label without the
+    snapshot). diag carries v_bulk_kms, vbx_kms, disp_kms, z_mean_m, peak_melt (or final_melt)."""
+    speed = diag["v_bulk_kms"] * 1e3
+    z_mean = diag["z_mean_m"]
+    disp = diag["disp_kms"] * 1e3
+    melt = diag.get("peak_melt"); melt = diag.get("final_melt", 0.0) if melt is None else melt
+    if speed > v_esc:
+        return "E"                                          # bulk exceeds escape speed
+    # crater/retention: the projectile ends up BURIED below the surface (z_mean below -0.2*D, i.e.
+    # the clump centre sank past ~a fifth of a body diameter) AND decelerated to a small fraction
+    # of the impact speed -> it will not re-emerge. (The old test compared a velocity FRACTION to an
+    # absolute m/s, so a buried-but-slowly-ploughing body was never caught -> crater never fired.)
+    if z_mean < -0.2 * SPH["D"] and speed < 0.3 * v_imp:
+        return "C"
+    # retained ricochet: INTACT only if both spatially coherent (low velocity dispersion) AND not
+    # predominantly shock-melted; a mostly-molten clump is DISPERSED even if moving coherently.
+    return "I" if (disp <= 0.3 * max(speed, 1.0) and melt <= 0.5) else "D"
+
+
+def classify_regime(snap_path, v_esc, imp_mat, peak_melt=None, v_imp=None):
     """Regime from the final snapshot's projectile (mat==imp_mat) particles. Pure stdlib.
     gpu_ic snapshot = [int64 N] then N*[x y z vx vy vz u rho h mat] f8 (mat col 9, equal-mass
     projectile particles -> unweighted means). For the intact/dispersed split, melt is judged on
@@ -179,17 +199,9 @@ def classify_regime(snap_path, v_esc, imp_mat, peak_melt=None):
             if d[o + 6] > U_MELT_IRON:                      # specific internal energy past incipient iron melt
                 n_melt += 1
     disp = math.sqrt(var / n_proj); final_melt = n_melt / n_proj
-    melt = peak_melt if peak_melt is not None else final_melt   # peak shock-melt is the regime indicator
     diag = {"v_bulk_kms": speed / 1e3, "disp_kms": disp / 1e3, "vbx_kms": vbx / 1e3,
             "z_mean_m": z_mean, "peak_melt": peak_melt, "final_melt": final_melt, "n_proj": n_proj}
-    if speed > v_esc:
-        return "E", diag                                   # bulk exceeds escape speed
-    if vbx < 0.15 * speed + 1.0 and z_mean < 0.0:
-        return "C", diag                                   # stopped/buried downrange -> crater
-    # retained ricochet: INTACT only if both spatially coherent (low velocity dispersion) AND
-    # not predominantly shock-melted; a mostly-molten clump is DISPERSED even if moving coherently.
-    intact = disp <= 0.3 * max(speed, 1.0) and melt <= 0.5
-    return ("I" if intact else "D"), diag
+    return regime_from_diag(diag, v_esc, v_imp if v_imp is not None else speed), diag
 
 
 def sph_evaluate(theta, vr, statedir):
@@ -197,6 +209,13 @@ def sph_evaluate(theta, vr, statedir):
     v = vr * SPH["v_esc"]
     rundir = os.path.join(statedir, "runs", f"th{theta:.2f}_vr{vr:.3f}")
     os.makedirs(rundir, exist_ok=True)
+    resf = os.path.join(rundir, "result.json")
+    if os.path.exists(resf):                                # cached run: re-derive the regime with the CURRENT
+        cached = json.load(open(resf))                      # classifier from stored diagnostics (no GPU re-run)
+        reg = regime_from_diag(cached, SPH["v_esc"], v)
+        if reg != cached.get("regime"):
+            cached["regime"] = reg; json.dump(cached, open(resf, "w"), indent=1)
+        return reg
     ic = os.path.join(rundir, "ic.bin")
     dx, N = build_grazing_ic(theta, v, ic, SPH["cppr"], SPH["D"])
     t_end = 25e3 / max(v * math.cos(math.radians(theta)), 1.0)   # ~ downrange traverse time
@@ -219,7 +238,7 @@ def sph_evaluate(theta, vr, statedir):
                     peak_melt = max(peak_melt, float(line[i + 5:line.index("%", i)]) / 100.0)
                 except ValueError:
                     pass
-    reg, diag = classify_regime(os.path.join(rundir, snaps[-1]), SPH["v_esc"], SPH["imp_mat"], peak_melt)
+    reg, diag = classify_regime(os.path.join(rundir, snaps[-1]), SPH["v_esc"], SPH["imp_mat"], peak_melt, v)
     json.dump({"theta": theta, "vr": vr, "v": v, "dx": dx, "N": N, "t_end": t_end,
                "regime": reg, **diag}, open(os.path.join(rundir, "result.json"), "w"), indent=1)
     for f in os.listdir(rundir):                            # keep result.json + run.log; drop the heavy binaries
