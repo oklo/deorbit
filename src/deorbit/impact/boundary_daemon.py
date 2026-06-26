@@ -38,6 +38,7 @@ SPH = dict(D=1000.0,          # impactor diameter (m): 1 km iron
            imp_mat=1,         # material tag for the impactor (iron) in the solver
            tgt_mat=0,         # basalt target half-space
            v_esc=scout.V_ESC["earth"])
+U_MELT_IRON = 1.0e6           # incipient shock-melt specific energy for iron (J/kg; ~grazing.py E_melt)
 BISECT_TOL = 0.04             # converged when (hi-lo)/mid < this
 
 
@@ -168,19 +169,24 @@ def classify_regime(snap_path, v_esc, imp_mat):
                      "vbx_kms": 0.0, "z_mean_m": 0.0, "n_proj": 0}
     vbx /= n_proj; vby /= n_proj; vbz /= n_proj; z_mean = z_acc / n_proj
     speed = math.sqrt(vbx * vbx + vby * vby + vbz * vbz)
-    var = 0.0
+    var = 0.0; n_melt = 0
     for p in range(N):
         o = p * 10
         if abs(d[o + 9] - imp_mat) < 0.5:
             var += (d[o + 3] - vbx) ** 2 + (d[o + 4] - vby) ** 2 + (d[o + 5] - vbz) ** 2
-    disp = math.sqrt(var / n_proj)
+            if d[o + 6] > U_MELT_IRON:                      # specific internal energy past incipient iron melt
+                n_melt += 1
+    disp = math.sqrt(var / n_proj); melt_frac = n_melt / n_proj
     diag = {"v_bulk_kms": speed / 1e3, "disp_kms": disp / 1e3, "vbx_kms": vbx / 1e3,
-            "z_mean_m": z_mean, "n_proj": n_proj}
+            "z_mean_m": z_mean, "melt_frac": melt_frac, "n_proj": n_proj}
     if speed > v_esc:
         return "E", diag                                   # bulk exceeds escape speed
     if vbx < 0.15 * speed + 1.0 and z_mean < 0.0:
         return "C", diag                                   # stopped/buried downrange -> crater
-    return ("D" if disp > 0.3 * max(speed, 1.0) else "I"), diag   # retained ricochet: dispersed vs intact
+    # retained ricochet: INTACT only if both spatially coherent (low velocity dispersion) AND
+    # not predominantly melted; a mostly-molten clump is DISPERSED even if moving coherently.
+    intact = disp <= 0.3 * max(speed, 1.0) and melt_frac <= 0.5
+    return ("I" if intact else "D"), diag
 
 
 def sph_evaluate(theta, vr, statedir):
