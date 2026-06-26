@@ -126,9 +126,18 @@ which is precisely why SPH remains primary for fate.
   Key boundaries (Earth fiducial, to be refined by SPH): crater onset θ≈15° (search [8,22]°);
   intact→dispersed at v/v_esc≈0.78 (iron-melt threshold, v·cosθ≈8.7 km/s); dispersed→escape at
   v/v_esc≈1.44 (θ=2°), rising with θ. The scout emits a widened SPH search bracket per transition.
-- **Step 2 (SPH bisection) — NEXT.** Refine each scout bracket with CPPR≳8 GPU SPH runs
-  (the `engine.py` boundary daemon); steps 3–5 (convergence, SPH↔Euler+tracer cross-check,
-  experiment + Pierazzo&Melosh validation) follow.
+- **Step 2 (SPH bisection daemon) — BUILT + RUNNING.** `run_bounce.py`
+  (`src/deorbit/impact/boundary_daemon.py`, pure stdlib) bisects each scout bracket with real
+  GPU-SPH grazing runs: a generic iron-on-basalt grazing IC → `gpu_ic` (CPPR=8) → a
+  projectile-clump regime classifier (bulk v_out vs v_esc; dispersion for intact-vs-dispersed).
+  Anytime/checkpointed (`state/bounce/`), `--daemon`/`--increment`, registered for 24/7
+  launchd supervision (`deorbit-bounce`) + on the dashboard. Validated end-to-end: the driver
+  (bisection/checkpoint/resume) and the SPH score on a Cayambe-like point (θ=2°, v/v_esc=0.66)
+  → **I**, v_bulk 7.19 km/s, dispersion 0.78 km/s, projectile climbing off the surface — a
+  textbook intact ricochet, matching the scout + the narrative. (Classifier thresholds for the
+  D/E boundaries are seeded by this anchor and refine as the campaign's runs accumulate.)
+- **Steps 3–5 — follow:** CPPR convergence at boundary points, SPH↔Euler+tracer cross-check,
+  experiment + Pierazzo&Melosh validation.
 
 ## 7. Deliverable + novelty
 

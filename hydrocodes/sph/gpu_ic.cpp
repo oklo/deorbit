@@ -59,8 +59,11 @@ int main(int argc,char** argv){
         for(long i=0;i<n;i++){ if(mat[i]!=1) epsact[i]=(float)std::pow(U(rng)/(1e61*V),1.0/16.0); } }  // mat 0,2 = basalt-type
 
     D_=MTL::CreateSystemDefaultDevice(); Q_=D_->newCommandQueue();
-    NS::Error* e=nullptr; L_=D_->newLibrary(NS::String::string("sph_force.metallib",NS::UTF8StringEncoding),&e);
-    if(!L_){printf("metallib load failed\n");return 1;}
+    NS::Error* e=nullptr;
+    std::string exe=argv[0]; size_t sl=exe.find_last_of('/');   // resolve the metallib relative to the executable, not the CWD (so gpu_ic runs from any dir)
+    std::string libp=(sl==std::string::npos?std::string("."):exe.substr(0,sl))+"/sph_force.metallib";
+    L_=D_->newLibrary(NS::String::string(libp.c_str(),NS::UTF8StringEncoding),&e);
+    if(!L_){fprintf(stderr,"metallib load failed: %s\n  path: %s\n",e?e->localizedDescription()->utf8String():"(no NS::Error)",libp.c_str());return 1;}
     GMat mats[3]={toG(Material::basalt()),toG(Material::iron()),toG(Material::basalt())}; uint32_t nn=n;  // mat2 = basalt impactor (trackable)
     // fixed uniform grid: cell = 4*h_init (>= 2*max clamped hh)
     float cw=4.0f*h_init, lo[3]={(float)hdr[0],(float)hdr[2],(float)hdr[4]};
