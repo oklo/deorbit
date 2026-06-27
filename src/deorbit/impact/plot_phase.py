@@ -73,14 +73,31 @@ def main():
         ax.axvline(thc, ls="-.", color="#6e4b2a", lw=2.0, zorder=2,
                    label=f"crater onset θ≈{thc:.0f}°")
 
-    # --- anchor cases ---
-    anchors = [("Cayambe\n(Earth, 7.4 km/s, 2°)", 2.0, 7400.0 / d["v_esc_earth"], (14, 12)),
-               ("Orcus-like\n(Mars, 10 km/s, 30°)", 30.0, 10000.0 / 5027.0, (-10, -28))]
+    # --- conceptual anchor cases (narrative targets) ---
+    anchors = [("Cayambe\n(Earth, 7.4 km/s, 2°)", 2.0, 7400.0 / d["v_esc_earth"], (16, 14)),
+               ("Orcus-like\n(Mars, 10 km/s, 30°)", 30.0, 10000.0 / 5027.0, (0, 16))]
     for name, th, vr, off in anchors:
         ax.scatter([th], [vr], marker="P", s=240, c="gold", edgecolors="k", linewidths=1.2, zorder=6)
         ax.annotate(name, (th, vr), textcoords="offset points", xytext=off, fontsize=9,
-                    ha="center", fontweight="bold",
-                    arrowprops=dict(arrowstyle="->", lw=1.0))
+                    ha="center", fontweight="bold", arrowprops=dict(arrowstyle="->", lw=1.0))
+
+    # --- REAL terrestrial iron-impactor validation cases (SPH-run, known outcome) ---
+    vdir = os.path.join(_REPO, "state", "validation")
+    labels = {"barringer": "Barringer\n(45°, real: crater)",
+              "campo_del_cielo": "Campo del Cielo\n(9°, real: oblique chain)"}
+    offs = {"barringer": (-60, 26), "campo_del_cielo": (52, 20)}
+    val_handle = None
+    for key, lab in labels.items():
+        rp = os.path.join(vdir, key, "result.json")
+        if not os.path.exists(rp):
+            continue
+        v = json.load(open(rp))
+        sc = ax.scatter([v["theta"]], [v["vr"]], marker="X", s=300,
+                        c=STYLE[v["regime"]][0], edgecolors="lime", linewidths=2.2, zorder=7)
+        val_handle = sc
+        ax.annotate(f"{lab} → SPH:{v['regime']}", (v["theta"], v["vr"]), textcoords="offset points",
+                    xytext=offs[key], fontsize=8.5, ha="center", fontweight="bold", color="green",
+                    arrowprops=dict(arrowstyle="->", lw=1.0, color="green"))
 
     ax.axhline(1.0, color="grey", lw=0.8, ls=":", zorder=1)
     ax.text(44.5, 1.02, "v = v_esc", ha="right", fontsize=8, color="grey")
@@ -89,8 +106,13 @@ def main():
     ax.set_title("Grazing-impact bounce-off phase diagram — km iron on rock\n"
                  f"({d['n_runs']} GPU-SPH runs, CPPR=8; {d['converged']}/{d['n_brackets']} boundaries bisected)",
                  fontsize=12)
-    ax.set_xlim(0, 45); ax.set_ylim(0.3, 2.6)
-    ax.legend(loc="upper right", fontsize=8, framealpha=0.95, ncol=1)
+    ax.set_xlim(0, 48); ax.set_ylim(0.25, 2.65)
+    h, lab = ax.get_legend_handles_labels()
+    if val_handle is not None:
+        h.append(Line2D([0], [0], marker="X", color="w", markerfacecolor="grey", markeredgecolor="lime",
+                        markeredgewidth=2.0, markersize=13, lw=0, label="real iron impactor (validated)"))
+        lab.append("real iron impactor (validated)")
+    ax.legend(h, lab, loc="upper right", fontsize=8, framealpha=0.95, ncol=1)
     ax.grid(alpha=0.25)
     fig.tight_layout()
 
