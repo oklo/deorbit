@@ -147,8 +147,21 @@ which is precisely why SPH remains primary for fate.
   Both anchors land correctly: **Cayambe → I**, the **Orcus-like steep/fast corner → C/E**.
   (Daemon continues: 4 crater brackets added at v/v_esc=0.5/0.75/1.5/2.0 to confirm the onset's
   velocity dependence, since it currently rests on the v/v_esc=1.0 line.)
-- **Steps 3–5 — NEXT:** CPPR 8→10 convergence at 2–3 boundary points (confirm thresholds are
-  resolution-independent), SPH↔Euler+tracer cross-check, experiment + Pierazzo&Melosh validation.
+- **Step 5 validation (real iron impactors) — PASSES** (`deorbit.impact.validate_craters`,
+  `state/validation/`): both terrestrial iron craters land in the predicted regime —
+  **Barringer/Meteor Crater** (45°, v/v_esc=1.14) → **C** (buried z=−1586 m, 12.8→0.80 km/s, 100%
+  melt; matches the real 1.2 km crater / destroyed projectile), and **Campo del Cielo** (9°,
+  v/v_esc=0.31) → **I** (coherent body ricochets, 89% v retained; the real strewn field's
+  fragmentation was *atmospheric* pre-breakup, not modeled — so this confirms the surface dynamics,
+  not the chain mechanism). Both overlaid on `figures/bounce_off_phase_diagram.png`. These validate
+  the REGIME in (θ, v/v_esc); an absolute crater-SIZE match needs gravity + the real (softer) target
+  + a longer run (follow-on).
+- **Steps 3–4 — NEXT:** CPPR 8→10 convergence at 2–3 boundary points (confirm thresholds are
+  resolution-independent), SPH↔Euler+tracer cross-check, and the Gault&Wedekind / Pierazzo&Melosh
+  lab/sim anchors.
+- **Figure:** `figures/bounce_off_phase_diagram.{png,pdf}` via `deorbit.impact.plot_phase`
+  (69 SPH runs by regime + located boundaries + validation anchors). First draft; region shading +
+  gap-filling (mid-θ, the steep+fast Orcus corner) still open.
 
 ## 7. Deliverable + novelty
 
