@@ -116,11 +116,16 @@ def _arange(start, stop, step):
     return out
 
 
-def build_grazing_ic(theta_deg, v, path, cppr=8, D=1000.0):
+def build_grazing_ic(theta_deg, v, path, cppr=8, D=1000.0, x_impact_frac=None, start_h=None):
     """Write a generic grazing-impact IC (iron sphere on a basalt half-space) in the gpu_ic
     format: header[xlo xhi ylo yhi zlo zhi N] + N*[x y z vx vy vz mass u mat fixed], f8.
     Pure stdlib (array module). Gravity is omitted in the run (the ~1 s traverse is shock/
-    strength-dominated), so no lithostatic pre-stress is needed. Returns (dx, N)."""
+    strength-dominated), so no lithostatic pre-stress is needed. Returns (dx, N).
+
+    Defaults (x_impact_frac=None) reproduce the campaign's grazing geometry exactly. For STEEP
+    validation cases (e.g. Barringer at 45 deg) pass x_impact_frac (where the ballistic line
+    crosses z=0, as a fraction of Lx) + start_h (release height) so the impact lands away from
+    the domain wall."""
     import array
     a = D / 2.0; dx = a / cppr; m_imp = SPH["rho_imp"] * dx ** 3
     th = math.radians(theta_deg); vx = v * math.cos(th); vz = -v * math.sin(th)
@@ -138,7 +143,9 @@ def build_grazing_ic(theta_deg, v, path, cppr=8, D=1000.0):
                 rows.extend((X, Y, Z, 0.0, 0.0, 0.0, mt, 0.0, tm, fixed))
     nslab = len(xs) * len(ys) * len(zs)
     # iron impactor sphere, entering upper-left, heading +x and down at theta
-    x0 = -0.35 * Lx; z0 = a + 3 * dx; na = int(math.ceil(a / dx)) + 1; im = float(SPH["imp_mat"]); ni = 0
+    z0 = (a + 3 * dx) if start_h is None else start_h
+    x0 = -0.35 * Lx if x_impact_frac is None else (x_impact_frac * Lx - z0 / math.tan(th))
+    na = int(math.ceil(a / dx)) + 1; im = float(SPH["imp_mat"]); ni = 0
     for i in range(-na, na + 1):
         for j in range(-na, na + 1):
             for k in range(-na, na + 1):
