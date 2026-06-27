@@ -136,8 +136,19 @@ which is precisely why SPH remains primary for fate.
   → **I**, v_bulk 7.19 km/s, dispersion 0.78 km/s, projectile climbing off the surface — a
   textbook intact ricochet, matching the scout + the narrative. (Classifier thresholds for the
   D/E boundaries are seeded by this anchor and refine as the campaign's runs accumulate.)
-- **Steps 3–5 — follow:** CPPR convergence at boundary points, SPH↔Euler+tracer cross-check,
-  experiment + Pierazzo&Melosh validation.
+- **Step 2 — CONVERGED (69 SPH runs, 13/13 boundaries; `results/bounce_off_phase_diagram.json`,
+  regenerate with `run_bounce.py --report`).** The (θ, v/v_esc) phase diagram for km iron on basalt:
+  - **crater onset** (ricochet/dispersed → retained): θ_crit = **36.2 ± 0.6°** @ v/v_esc=1.0 —
+    consistent with Gault & Wedekind (1978) ~30° grazing ricochet onset;
+  - **intact → dispersed** (shock-melt onset): v/v_esc ≈ 0.96 at θ=2–5°, dropping to ≈0.60 at θ=12°
+    (steeper ⇒ more normal-component shock ⇒ melts/disperses at lower speed);
+  - **dispersed → escape**: v/v_esc ≈ 1.09 at θ=2° rising to ≈1.43 at θ=5° (escape harder at
+    steeper angles); at v/v_esc=1.5–2.0 escape only below θ≈4–8°.
+  Both anchors land correctly: **Cayambe → I**, the **Orcus-like steep/fast corner → C/E**.
+  (Daemon continues: 4 crater brackets added at v/v_esc=0.5/0.75/1.5/2.0 to confirm the onset's
+  velocity dependence, since it currently rests on the v/v_esc=1.0 line.)
+- **Steps 3–5 — NEXT:** CPPR 8→10 convergence at 2–3 boundary points (confirm thresholds are
+  resolution-independent), SPH↔Euler+tracer cross-check, experiment + Pierazzo&Melosh validation.
 
 ## 7. Deliverable + novelty
 
