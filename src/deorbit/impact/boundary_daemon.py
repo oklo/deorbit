@@ -20,6 +20,7 @@ NumPy is imported lazily (only by the SPH score), so the driver itself stays std
 """
 import os
 import sys
+import glob
 import json
 import time
 import math
@@ -247,6 +248,44 @@ def sph_evaluate(theta, vr, statedir):
     return reg
 
 
+# ============================ report (publication artifact) ============================
+def report(statedir):
+    """Assemble the converged (theta, v/v_esc) phase diagram from the bracket state + every
+    completed run into results/bounce_off_phase_diagram.json (the §2 deliverable), and return
+    a printable ASCII regime map. Reproducible from state/ alone."""
+    st = json.load(open(os.path.join(statedir, "boundaries.json")))
+    runs = []
+    for r in sorted(glob.glob(os.path.join(statedir, "runs", "*", "result.json"))):
+        runs.append(json.load(open(r)))
+    boundaries = []
+    for b in st["brackets"]:
+        boundaries.append({"from": b["from"], "to": b["to"], "vary": b["vary"], "fixed": b["fixed"],
+                           "value": 0.5 * (b["lo"] + b["hi"]), "half_width": 0.5 * (b["hi"] - b["lo"]),
+                           "converged": b["converged"], "n_evals": len(b["evals"])})
+    out = {"campaign": "bounce-off (theta, v/v_esc) phase diagram, km iron on basalt, CPPR=%d" % SPH["cppr"],
+           "n_runs": st["n_eval"], "converged": sum(b["converged"] for b in st["brackets"]),
+           "n_brackets": len(st["brackets"]), "v_esc_earth": SPH["v_esc"],
+           "boundaries": boundaries,
+           "runs": [{k: x.get(k) for k in ("theta", "vr", "regime", "v_bulk_kms", "disp_kms",
+                                           "z_mean_m", "peak_melt", "N")} for x in runs],
+           "regime_counts": {k: sum(1 for x in runs if x.get("regime") == k) for k in "CIDE"}}
+    rp = os.path.join(_REPO, "results", "bounce_off_phase_diagram.json")
+    os.makedirs(os.path.dirname(rp), exist_ok=True)
+    json.dump(out, open(rp, "w"), indent=1)
+    # ASCII map from the actual runs (rows = v/v_esc, cols = theta)
+    lines = ["Bounce-off regime map (SPH; rows=v/v_esc, cols=theta deg). C=crater I=intact D=dispersed E=escape"]
+    ths = sorted(set(round(x["theta"]) for x in runs)); vrs = sorted(set(round(x["vr"], 2) for x in runs), reverse=True)
+    for vr in vrs:
+        row = f"{vr:4.2f} |"
+        for th in ths:
+            cell = [x for x in runs if round(x["theta"]) == th and round(x["vr"], 2) == vr]
+            row += (cell[0]["regime"] if cell else " ")
+        lines.append(row)
+    lines.append("     +" + "-" * len(ths) + f"\n      theta in {ths}")
+    lines.append(f"\nwrote {rp}  ({out['n_runs']} runs, {out['converged']}/{out['n_brackets']} boundaries converged)")
+    return "\n".join(lines)
+
+
 # ============================ daemon loop ============================
 def run():
     ap = argparse.ArgumentParser(description="bounce-off boundary-locating daemon (SPH bisection)")
@@ -254,12 +293,15 @@ def run():
     ap.add_argument("--increment", type=float, default=None, help="seconds")
     ap.add_argument("--score", choices=["reduced", "sph"], default="sph")
     ap.add_argument("--cppr", type=int, default=None, help="SPH resolution (cells/projectile-radius); default 8")
+    ap.add_argument("--report", action="store_true", help="emit results/bounce_off_phase_diagram.json + ASCII map, exit")
     ap.add_argument("--statedir", default=os.path.join(
         os.path.dirname(os.path.abspath(sys.argv[0])), "state", "bounce"))
     a = ap.parse_args()
     if a.cppr:
         SPH["cppr"] = a.cppr
     sd = a.statedir
+    if a.report:
+        print(report(sd)); return
     statef = os.path.join(sd, "boundaries.json")
     st = _load_brackets(statef)
     _save(st, sd)
