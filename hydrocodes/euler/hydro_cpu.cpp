@@ -145,7 +145,11 @@ static void Lop(const Grid&g, DU&d){
         double Lxx=(vxw(xp)-vxw(xm))/hx, Lxy=(vxw(yp)-vxw(ym))/hy, Lxz=(vxw(zp)-vxw(zm))/hz;
         double Lyx=(vyw(xp)-vyw(xm))/hx, Lyy=(vyw(yp)-vyw(ym))/hy, Lyz=(vyw(zp)-vyw(zm))/hz;
         double Lzx=(vzw(xp)-vzw(xm))/hx, Lzy=(vzw(yp)-vzw(ym))/hy, Lzz=(vzw(zp)-vzw(zm))/hz;
-        double exx=Lxx,eyy=Lyy,ezz=Lzz,exy=0.5*(Lxy+Lyx),exz=0.5*(Lxz+Lzx),eyz=0.5*(Lyz+Lzy),tr=(exx+eyy+ezz)/3.0;
+        double rcyl=(i+0.5)*g.dx;   // cylindrical radius of cell centre (AXISYM geometric terms; r_c>0 for cell centres)
+        // hoop (theta-theta) strain rate is GEOMETRIC in cylindrical coords: e_thth = u/r = v_x/r,
+        // NOT dv_y/dy (=Lyy=0 for ny=1). This also feeds the trace, hence the deviatoric strain of ALL components.
+        double eyy=AXISYM?(vx(c)/rcyl):Lyy;
+        double exx=Lxx,ezz=Lzz,exy=0.5*(Lxy+Lyx),exz=0.5*(Lxz+Lzx),eyz=0.5*(Lyz+Lzy),tr=(exx+eyy+ezz)/3.0;
         double Wxy=0.5*(Lxy-Lyx),Wxz=0.5*(Lxz-Lzx),Wyz=0.5*(Lyz-Lzy);   // spin (antisym)
         double sxx=g.Sxx[c],syy=g.Syy[c],szz=g.Szz[c],sxy=g.Sxy[c],sxz=g.Sxz[c],syz=g.Syz[c];
         // Jaumann: dS = 2G edev + (S.W - W.S);  W=[[0,Wxy,Wxz],[-Wxy,0,Wyz],[-Wxz,-Wyz,0]]
@@ -175,6 +179,9 @@ static void Lop(const Grid&g, DU&d){
         double dSxy_x=(g.Sxy[xp]-g.Sxy[xm])/hx, dSyy_y=(g.Syy[yp]-g.Syy[ym])/hy, dSyz_z=(g.Syz[zp]-g.Syz[zm])/hz;
         double dSxz_x=(g.Sxz[xp]-g.Sxz[xm])/hx, dSyz_y=(g.Syz[yp]-g.Syz[ym])/hy, dSzz_z=(g.Szz[zp]-g.Szz[zm])/hz;
         d.mu[c]+=dSxx_x+dSxy_y+dSxz_z; d.mv[c]+=dSxy_x+dSyy_y+dSyz_z; d.mw[c]+=dSxz_x+dSyz_y+dSzz_z;
+        if(AXISYM){   // geometric stress-divergence sources (curvilinear basis): (div S)_r += (S_rr-S_thth)/r, (div S)_z += S_rz/r
+            d.mu[c]+=(g.Sxx[c]-g.Syy[c])/rcyl;   // radial: the -S_thth/r curvature term plus the +S_rr/r from (1/r)d(r S_rr)/dr
+            d.mw[c]+=g.Sxz[c]/rcyl; }            // axial: the +S_rz/r from (1/r)d(r S_rz)/dr
         if(g.af[c]>0&&ETA_AF>0){ double eta=g.af[c]*ETA_AF, id2=1.0/(g.dx*g.dx);   // AF Newtonian viscosity (damps fluidized flow)
             d.mu[c]+=eta*(vx(xp)+vx(xm)+vx(yp)+vx(ym)+vx(zp)+vx(zm)-6*vx(c))*id2;
             d.mv[c]+=eta*(vy(xp)+vy(xm)+vy(yp)+vy(ym)+vy(zp)+vy(zm)-6*vy(c))*id2;
@@ -184,6 +191,7 @@ static void Lop(const Grid&g, DU&d){
         auto Svy=[&](int cc){return g.Sxy[cc]*vx(cc)+g.Syy[cc]*vy(cc)+g.Syz[cc]*vz(cc);};
         auto Svz=[&](int cc){return g.Sxz[cc]*vx(cc)+g.Syz[cc]*vy(cc)+g.Szz[cc]*vz(cc);};
         d.E[c]+=(Svx(xp)-Svx(xm))/hx+(Svy(yp)-Svy(ym))/hy+(Svz(zp)-Svz(zm))/hz;
+        if(AXISYM) d.E[c]+=Svx(c)/rcyl;   // cylindrical geometric term of div(S.v): + (S.v)_r/r
     }
 }
 static void vonmises(Grid&g){ double Y0=MAT.Y; if(Y0<=0)return; int n=g.nx*g.ny*g.nz;
@@ -302,6 +310,35 @@ int main(int argc,char**argv){
         double alpha=0.851, Ran=pow(E0/(alpha*rho0),0.2)*pow(tend,0.4);
         printf("Sedov axisym (on-axis point blast = 3D spherical): shock R_num=%.3f analytic=%.3f (err %.1f%%), compression=%.2f\n",rpk,Ran,100*fabs(rpk-Ran)/Ran,rhomax/rho0);
         printf("GATE (cylindrical geometry: shock radius within 10%% of spherical Sedov): %s\n",(fabs(rpk-Ran)/Ran<0.10)?"PASS":"CHECK");
+    } else if(mode=="lame"){ // Phase-2b: validate cylindrical elastic STRENGTH -- hoop strain rate + geometric stress divergence -- vs the analytic Lame thick-cylinder solution
+        MAT=Material::basalt(); AXISYM=true; double G=MAT.G, dx=500.0; bool A=false,B=false;
+        // (A) HOOP STRAIN RATE: a uniform radial expansion u(r)=edot*r must drive dS via e_thth=u/r (geometric), not dv_y/dy(=0).
+        //     From zero stress: e_rr=e_thth=edot, e_zz=0, tr=2edot/3 -> dS_rr=dS_thth=2G(edot-tr), dS_zz=2G(-tr); Jaumann+advection vanish (S=0).
+        {   int Nr=40; Grid g(Nr,1,1,dx); double edot=1e-6;   // tiny rate -> stress stays << yield over one Lop
+            for(int i=0;i<Nr;i++){int c=g.idx(i,0,0); g.r[c]=MAT.rho0; g.E[c]=0; g.mu[c]=MAT.rho0*edot*((i+0.5)*dx);}
+            DU d(Nr); Lop(g,d);
+            int c=g.idx(Nr/2,0,0); double trc=2.0*edot/3.0;
+            double an_rr=2*G*(edot-trc), an_th=2*G*(edot-trc), an_zz=2*G*(0.0-trc);
+            double err=fabs(d.Sxx[c]-an_rr)+fabs(d.Syy[c]-an_th)+fabs(d.Szz[c]-an_zz), scale=fabs(an_rr)+fabs(an_zz)+1e-30;
+            A=(err/scale<1e-3);
+            printf("Lame (A hoop): dS_rr=%.4e/%.4e  dS_thth=%.4e/%.4e  dS_zz=%.4e/%.4e (num/analytic, rel err %.2e)\n",
+                d.Sxx[c],an_rr,d.Syy[c],an_th,d.Szz[c],an_zz,err/scale); }
+        // (B) LAME STATIC EQUILIBRIUM: prescribe the deviatoric stress of a thick cylinder under internal pressure,
+        //     S_rr=-Bc/r^2, S_thth=+Bc/r^2, S_zz=0 (traceless), at rest with uniform P=0. The continuum radial balance
+        //     dS_rr/dr + (S_rr-S_thth)/r = 0 is exact, so the discrete radial-momentum residual d.mu must be truncation-small.
+        {   int Nr=200; int ia=20,ib=180; double ia_r=(ia+0.5)*dx, Bc=2.0e6*ia_r*ia_r;   // ~2 MPa peak at inner wall, << Y
+            Grid g(Nr,1,1,dx);
+            for(int i=0;i<Nr;i++){int c=g.idx(i,0,0); g.r[c]=MAT.rho0; g.E[c]=0; double rr=(i+0.5)*dx;
+                if(i>=ia&&i<=ib){ g.Sxx[c]=-Bc/(rr*rr); g.Syy[c]=Bc/(rr*rr); g.Szz[c]=0; } }
+            DU d(Nr); Lop(g,d);
+            double resmax=0,termmax=0,baremax=0;
+            for(int i=ia+2;i<=ib-2;i++){int c=g.idx(i,0,0); double rr=(i+0.5)*dx;
+                resmax=max(resmax,fabs(d.mu[c]));                       // full residual (should cancel to truncation)
+                termmax=max(termmax,fabs((g.Sxx[c]-g.Syy[c])/rr));      // scale of the geometric source being cancelled
+                baremax=max(baremax,fabs(d.mu[c]-(g.Sxx[c]-g.Syy[c])/rr)); } // residual WITHOUT the geometric term (~the bare dS_rr/dr)
+            B=(resmax<1e-2*termmax);
+            printf("Lame (B equilib): max|d.mu|=%.3e  geom-term scale=%.3e (ratio %.2e)  vs no-geom residual=%.3e\n",resmax,termmax,resmax/termmax,baremax); }
+        printf("GATE (cylindrical strength: hoop strain rate exact & Lame equilibrium balances): %s\n",(A&&B)?"PASS":"CHECK");
     } else if(mode=="shear"){
         // small-amplitude elastic shear pulse v_y(x); must propagate at c_s=sqrt(G/rho0)
         MAT=Material::basalt(); int N=800;double L=400e3,dx=L/N,CFL=0.3; double rho0=2700,G=MAT.G,cs=sqrt(G/rho0);
@@ -434,7 +471,7 @@ int main(int argc,char**argv){
         double vmax=0;for(int k=0;k<N;k++){int c=g.idx(0,0,k);vmax=max(vmax,fabs(g.mw[c]/g.r[c]));}
         printf("Free surface max|v|=%.3f m/s  GATE: %s\n",vmax,vmax<5.0?"PASS":"CHECK");
     } else {
-        fprintf(stderr,"unknown mode '%s' (modes: sod sedov shear yield vacuum bshock freefall atmos tensile alimpact substrate collapse surface tracer af_activate sedov_axi)\n",mode.c_str());
+        fprintf(stderr,"unknown mode '%s' (modes: sod sedov shear yield vacuum bshock freefall atmos tensile alimpact substrate collapse surface tracer af_activate sedov_axi lame)\n",mode.c_str());
         return 2;   // fatal: never silently validate the wrong physics
     }
     return 0;
