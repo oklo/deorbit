@@ -65,47 +65,64 @@ def append_row(row):
             w.writeheader()
         w.writerow(row)
 
-def run_one(label, a, Tfrac, Efrac, Yd0, TDEC, ETA):
+def job_key(j):
+    return (j[0], str(int(j[1])))   # (af_label, a) -- unique per run
+
+def launch(job):
+    label, a, Tfrac, Efrac, Yd0, TDEC, ETA = job
     os.makedirs(PROF, exist_ok=True)
     prof = os.path.join(PROF, f"{label}_a{int(a)}.txt")
     # crater a U TDEC ETA g cppr tend Rfac Zfac profile rock Yd0  (tend auto via -1; rock=1)
     args = [BIN, "crater", str(a), str(U), f"{TDEC:.6g}", f"{ETA:.6g}",
             str(G), str(CPPR), "-1", "18", "22", prof, "1", f"{Yd0:.6g}"]
-    t0 = time.time()
-    out = subprocess.run(args, capture_output=True, text=True).stdout
+    p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    return dict(p=p, job=job, prof=prof, t0=time.time())
+
+def reap(h):
+    label, a, Tfrac, Efrac, Yd0, TDEC, ETA = h["job"]
+    out, _ = h["p"].communicate()
     res = next((l for l in out.splitlines() if l.startswith("RESULT")), None)
     if not res:
-        print(f"  !! no RESULT for {label} a={a} (run failed?)"); return False
+        print(f"  !! no RESULT for {label} a={a} (run failed?)", flush=True); return
     _, _a, D, depth, trans, dD = res.split()
     append_row(dict(af_label=label, a_m=int(a), Tfrac=Tfrac, Efrac=Efrac, Yd0_Pa=f"{Yd0:.4g}",
                     TDEC_s=f"{TDEC:.4g}", ETA_Pas=f"{ETA:.4g}", D_app_m=D,
-                    depth_m=depth, transient_m=trans, dD=dD, profile=os.path.relpath(prof, HERE)))
-    print(f"  done {label} a={int(a)}m: depth={float(depth)/1e3:.2f}km transient={float(trans)/1e3:.2f}km ({time.time()-t0:.0f}s)")
-    return True
+                    depth_m=depth, transient_m=trans, dD=dD, profile=os.path.relpath(h["prof"], HERE)))
+    print(f"  done {label} a={int(a)}m: depth={float(depth)/1e3:.2f}km transient={float(trans)/1e3:.2f}km ({time.time()-h['t0']:.0f}s)", flush=True)
 
 def pending():
     dk = done_keys()
-    return [j for j in jobs() if (j[0], str(int(j[1]))) not in dk]
+    return [j for j in jobs() if job_key(j) not in dk]
 
 def main():
     os.makedirs(STATE, exist_ok=True)
     if "--list" in sys.argv:
         p = pending(); tot = len(SETTINGS) * len(SIZES)
         print(f"jobs: {tot} total, {tot-len(p)} done, {len(p)} pending"); return
-    inc = None
-    if "--increment" in sys.argv:
-        inc = int(sys.argv[sys.argv.index("--increment") + 1])
+    K = int(sys.argv[sys.argv.index("--jobs") + 1]) if "--jobs" in sys.argv else 1   # max concurrent runs
+    inc = int(sys.argv[sys.argv.index("--increment") + 1]) if "--increment" in sys.argv else None
     daemon = "--daemon" in sys.argv
-    n = 0
+    running, inflight, done = [], set(), 0          # handles, in-flight keys, completed count
     while True:
-        p = pending()
-        if not p:
+        # fill the pool up to K (skip done + in-flight); respect the increment budget
+        dk = done_keys() | inflight
+        for j in jobs():
+            if len(running) >= K: break
+            if inc is not None and done + len(running) >= inc: break
+            if job_key(j) in dk: continue
+            running.append(launch(j)); inflight.add(job_key(j)); dk.add(job_key(j))
+        if not running:
             if daemon:
-                print("all jobs done; sleeping 1h"); time.sleep(3600); continue
+                print("all jobs done; sleeping 1h", flush=True); time.sleep(3600); continue
             print("all jobs done."); break
-        run_one(*p[0]); n += 1
-        if inc is not None and n >= inc:
-            print(f"increment {inc} complete ({len(pending())} pending)"); break
+        time.sleep(2)
+        still = []
+        for h in running:
+            if h["p"].poll() is None: still.append(h); continue
+            reap(h); inflight.discard(job_key(h["job"])); done += 1
+        running = still
+        if inc is not None and done >= inc:
+            print(f"increment {inc} complete ({len(pending())} pending)", flush=True); break
 
 if __name__ == "__main__":
     main()
