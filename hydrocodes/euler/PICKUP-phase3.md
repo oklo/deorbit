@@ -1,110 +1,102 @@
-# PICKUP — Euler Phase 3 (AF calibration to the depth–diameter curve)
+# PICKUP — Euler Phase 3: AF + strength calibration to the depth–diameter curve
 
-Hand-off for a fresh context. Phase 2b is COMPLETE (cylindrical elastic-plastic strength + the full AF
-model — block activation, shock seeding, fluidized viscosity, vib transport — all gated, GPU==CPU; see
-PICKUP-phase2b.md). Phase 3 = calibrate the AF parameters (TDEC, ETA_AF) against the **Wünnemann & Ivanov
-2003** depth–diameter curve (Planet. Space Sci. 51:831), then apply the fixed params to the 3D oblique
-Chicxulub run (Collins et al. 2020).
+Self-contained hand-off for a fresh context. **Repo:** github.com/oklo/deorbit, code in
+`deorbit/hydrocodes/euler/` (CPU oracle `hydro_cpu.cpp`, GPU `hydro.metal` + `hydro_gpu.cpp`,
+shared EOS `../common/eos.hpp`). master == origin/master as of commit 54ddc37.
 
-## What's DONE (committed on master)
+## The goal
+Calibrate the acoustic-fluidization (AF) **and** rock-strength parameters so the Eulerian code reproduces
+the **Wünnemann & Ivanov 2003** crater depth–diameter dependence (Planet. Space Sci. 51:831), then apply the
+*fixed* parameters to the 3D oblique **Chicxulub** peak-ring impact (Collins et al. 2020, Nat. Commun. 11:1480,
+PDF in ~/Downloads/s41467-020-15269-x.pdf). Calibrating against depth–diameter (not Chicxulub) keeps Chicxulub
+a genuine prediction. Vertical craters are axisymmetric → run cheap in 2D (r,z); that's the `crater` mode.
+
+Phase 2b (cylindrical elastic-plastic strength + the full AF model — block activation, shock seeding,
+fluidized viscosity, vib transport) is COMPLETE, all gated, GPU==CPU (see PICKUP-phase2b.md).
+
+## STATUS — what's DONE (all committed on master)
 - **`crater` driver (CPU)** — commit eae390a. Axisymmetric vertical impact: a basalt impactor sphere into a
   basalt half-space under Mars gravity, composing route-1 WB substrate + vacuum-aware free surface + strength
-  + Grady-Kipp damage + the full AF model, all in axisymmetric r-z. Args:
-  `crater [a_m] [U_ms] [TDEC] [ETA_AF] [g] [cppr] [tend(<=0=auto)] [Rfac] [Zfac] [profile_path]`.
-  - Runs STABLY across sizes; stays finite (max|v| settles to ~50 m/s post-impact). Transient depth matches
-    gravity-regime π-scaling order-of-magnitude (a=500m → ~2.9 km transient).
-  - Dumps the final surface profile z_s(r)−z0 to a file for ROBUST OFFLINE depth-diameter measurement.
-    The in-loop `RESULT a D_app depth transient d/D` line is PRELIMINARY (the apparent-diameter datum-crossing
-    is fragile for broadly-disturbed large craters — see open problems).
-- **Sweep harness `sweep_crater.py`** — runs `crater` over sizes × dimensionless AF params (Tfrac, Efrac),
-  dumping every profile to state/profiles/ and a summary row to state/results.csv. Idempotent/resumable
-  (skips rows already done). `--increment N` (cloud), `--daemon` (local grind), `--list`.
-  AF scaling (impactor-scaled, W&I-style, size-INDEPENDENT so one pair calibrates the whole curve):
-  `TDEC = Tfrac·a/c_s`, `ETA_AF = Efrac·ρ·c_s·a` (c_s≈3000, ρ=2700). Grid: SIZES 300..3000 m × {off + 8 AF pairs}.
+  + Grady-Kipp damage + the full AF model in r-z. Runs STABLY across sizes; dumps the final surface profile
+  z_s(r)-z0 for offline measurement.
+  CLI: `./hydro_cpu crater [a_m=500] [U=12000] [TDEC=0] [ETA_AF=0] [g=3.71] [cppr=5] [tend(<=0=auto)] [Rfac=18] [Zfac=22] [profile] [rock=1] [Y_d0=0]`
+- **ROCK pressure-dependent friction yield (CPU commit f0ac4aa + Y_d0 6111263; GPU commit a4ffdf2; GPU==CPU).**
+  Replaces cohesion-only von Mises. Intact `Y_i(P)=Y0+mu_i*P/(1+mu_i*P/(Y_m-Y0))` (Lundborg) + damaged
+  `Y_d(P)=min(Y_d0+mu_d*P, Y_m)` (residual cohesion + friction), `Y=[(1-D)Y_i+D Y_d](1-af)`. Params (globals
+  in hydro_cpu.cpp; RockP struct on GPU): Y0=1e7, mu_i=1.2, mu_d=0.6, Y_d0=0 (default), Y_m=2.5e9. ROCK flag
+  OFF by default → all M3-M5 strength gates bit-unchanged; `crater` defaults ROCK on (arg 12=0 for A/B).
+  GATE `friction` (CPU+GPU, in gates.sh): capped stress follows Y_i(P)/Y_d(P) across P=2.7e7..1.4e9, D=0 & D=1,
+  to machine precision (CPU) / FP32 (GPU). **GPU ROCK is the only GPU crater piece done so far.**
+- **Sweep harness `sweep_crater.py`** — parallel worker pool (`--jobs K`, commit 8f15536). Grids impactor size
+  x dimensionless AF (TDEC=Tfrac*a/c_s, ETA=Efrac*rho*c_s*a, size-independent) x Y_d0. Dumps each profile +
+  a state/results.csv row; idempotent/resumable; `--list`/`--increment N`/`--daemon`/`--jobs K`.
 
-## UPDATE 2 — the REAL blocker is SETTLING (craters not relaxed at auto-tend); GPU ROCK yield is in
-- **Crater profiles at the auto-tend `2*sqrt(Rfac*a/g)` are NOT settled** — they show concentric collapse
-  ripples (e.g. af_yd1M a=300: surface oscillates -1800/+350/-1750/+350… with radius) and central-axis
-  artifacts. So the in-loop d/D (and the datum-crossing D_app) are garbage (values >1 seen). The DEPTH
-  column IS meaningful and shows the knob working: **Y_d0=5 MPa craters are ~1.5-2x deeper than 1 MPa**
-  (monotonic) — friction/cohesion does what it should. Settling needs ~several oscillation periods
-  (period ~2π√(D/g) ~ hundreds of s) i.e. ~10x longer runs than the auto-tend -> motivates the GPU.
-- **NEXT (the unblock): run-to-settling.** Run until max|v| over dense cells drops below a small threshold
-  (capped at a max tend), so the surface is final/smooth, THEN measure (offline from the dumped profiles).
-- **The unsettled CPU first-pass results are archived at state/results_unsettled.csv** (depth signal only).
-- **GPU ROCK friction yield DONE (commit a4ffdf2):** pressure-dependent yield ported to the Metal vonmises
-  kernel (RockP struct + conserved-var buffers + EOS); GPU `friction` gate passes GPU==CPU (FP32). This
-  de-risks the trickiest part of the GPU crater port.
-- **CPU speed solved without GPU:** the slow daemon was launchd background-QoS THROTTLED (32% CPU/core).
-  Running the sweep FOREGROUND (`sweep_crater.py --jobs 14`, normal QoS) gives full speed; the supervised
-  daemon entry was removed (re-add only with a QoS fix, else it throttles). So the 2D sweep is fast on CPU;
-  the GPU is for the long SETTLED runs + the 3D Chicxulub run.
+## KEY FINDINGS (the science — read these before re-running anything)
+1. **Cohesion-only strength can't hold craters** → impact damage drives Y→0 → damaged rock flows flat under
+   gravity (a=300m crater relaxed 1.4km→0). ROCK friction FIXES this: the crater now holds.
+2. **The damaged-cohesion knob Y_d0 works** (monotonic, the calibration lever): in the first (unsettled) pass,
+   Y_d0=5 MPa craters were ~1.5-2x deeper than 1 MPa across all sizes. More cohesion → more support → deeper.
+3. **THE REAL BLOCKER — craters are NOT SETTLED at the auto-tend `2*sqrt(Rfac*a/g)`.** Profiles show
+   concentric collapse ripples (e.g. af_yd1M a=300: surface oscillates -1800/+350/-1750/+350… with radius)
+   + a central-axis artifact. So the in-loop d/D and the datum-crossing D_app are GARBAGE (values >1 seen).
+   The DEPTH column is the only trustworthy output right now. Settling needs ~several oscillation periods
+   (period ~2π√(D/g) ~ hundreds of s) i.e. **~10x longer runs** than the auto-tend.
+4. **AF viscosity has an upper bound:** ETA=Efrac~0.01 (≈2.4e7 for a=300) settles fine (max|v|~6 m/s);
+   10x (2.4e8) puts the explicit solver in a tiny-timestep regime and never settles (killed at 67 min). Keep
+   Efrac small.
+5. **CPU speed was a launchd QoS artifact, now solved:** the supervised daemon ran its children at background
+   QoS = 32% CPU/core. Running the sweep FOREGROUND (`sweep_crater.py --jobs 14`, normal QoS) = full speed
+   (a=3000 in ~5 min, the 42-run 2D pass in ~30 min). The `deorbit-crater` entry in
+   ~/investigations/daemons.json was REMOVED — re-add ONLY with a QoS fix, else it throttles. The unsettled
+   first pass is archived at state/results_unsettled.csv (depth signal only; d/D unusable).
 
-## REMAINING GPU port (after ROCK, which is done)
-Port the `crater` mode to hydro_gpu.cpp: impactor + WB-substrate + ambient IC; the step loop already exists
-(lop/strength/vonmises/update_af/grow_damage/voidzero + wb + axisym + rvac all present); add the deep-floor
-pin each step + the surface-profile diagnostic + CLI (a,U,TDEC,ETA,g,cppr,tend,Rfac,Zfac,profile,rock,Yd0) +
-run-to-settling. Validate GPU crater ~ CPU crater. Then repoint sweep_crater.py BIN to hydro_gpu, re-run a
-SETTLED pass, and do the offline d/D-vs-D analysis vs Wuennemann & Ivanov 2003.
+## NEXT STEPS (ordered — this is the remaining Phase 3 work)
+1. **Add run-to-settling to the `crater` driver (CPU first).** Replace the fixed tend: run until max|v| over
+   dense (rho>1350) cells drops below a small threshold (e.g. a few m/s, or ~0.01*sqrt(g*a)) sustained, capped
+   at a generous max tend (~10x the current auto-tend). Report the settled crater. (Optional: also report the
+   time-to-settle.) This makes profiles smooth/final so d/D is meaningful.
+2. **Port the `crater` driver to GPU** (`hydro_gpu.cpp`). The step LOOP already exists on GPU (lop/strength/
+   vonmises/update_af/grow_damage/voidzero, with wb + axisym + rvac + ROCK all present). Remaining: the
+   impactor+WB-substrate+ambient IC, the deep-floor pin each step (mirror the CPU substrate floor-pin), the
+   surface-profile diagnostic + RESULT print, the CLI parse, and run-to-settling. Validate GPU crater ≈ CPU
+   crater on one config. GPU makes the long settled runs (step 1) affordable.
+3. **Robust OFFLINE d/D measurement** from the dumped profiles (write a small analyzer): floor depth, apparent
+   diameter at the datum (robust edge logic + smoothing, handle the central-axis cell), rim crest. Apply to
+   the settled profiles → a clean d/D-vs-D table per (Y_d0, AF).
+4. **Re-run a SETTLED sweep** (GPU, `sweep_crater.py` repointed to hydro_gpu) over Y_d0 x AF x size.
+5. **Calibrate:** digitize the W&I 2003 depth–diameter curve (and Mars d–D data) as the oracle; tune
+   (Y_d0, Tfrac, Efrac) so model d/D-vs-D matches, esp. the ~7 km Mars simple→complex transition. Converge
+   resolution (cppr 8, 12 on a couple of sizes) before trusting absolute numbers.
+6. **Then → 3D oblique Chicxulub** with the FIXED calibrated params (60°, 17 km granite, 12 km/s, NE→SW;
+   500 m cells; T=300 s; diagnostics: transient→collapse→peak ring, melt>60 GPa, peak-shock tracer). NOTE the
+   EOS gap: we use Tillotson basalt (crust proxy); no ANEOS granite/dunite yet (a dunite-like denser Tillotson
+   mantle is the minimal add).
 
-## UPDATE 1 — friction/ROCK yield is now IN (commit f0ac4aa); fixes collapse-to-flat, but tuning remains
-The pressure-dependent ROCK yield (intact Lundborg + cohesionless damaged friction, AF-coupled) is implemented
-+ gated (`friction` gate, machine-precision; ROCK flag, off by default so all prior gates unchanged). It FIXES
-the collapse-to-flat blocker below: a=300 m AF-off went from 0 (flat, cohesion-only) to a HELD crater with ROCK.
-BUT it is not yet a settled simple crater: ROCK a=300 m AF-off creeps 0.45 km @76 s → 0.25 km @150 s
-(max|v| 24.6→14.3 m/s, still slowing) and is OVER-RELAXED (d/D≈0.04 vs the ~0.2 of a real simple crater).
-Root: pure cohesionless damaged friction Y_d=μ_d·P is marginal at the low confining pressure of a small/shallow
-crater. LIKELY FIX (next): add a small DAMAGED COHESION Y_d0 (iSALE keeps residual breccia cohesion: Y_d=Y_d0+μ_d·P),
-plus the AF combination + resolution convergence, then measure the SETTLED state. These are calibration knobs →
-hand to the sweep daemon (free compute), not interactive 15–30 min runs.
+## Build / run / test
+- Build CPU: `clang++ -std=c++17 -O2 hydro_cpu.cpp -o hydro_cpu`
+- Build GPU: `xcrun -sdk macosx metal -O3 -ffast-math -fmodules-cache-path=.clang-module-cache -c hydro.metal -o hydro.air && xcrun -sdk macosx metallib hydro.air -o hydro.metallib && clang++ -std=c++17 -O2 -I../common/metal-cpp hydro_gpu.cpp -framework Metal -framework Foundation -framework QuartzCore -o hydro_gpu`
+- All gates: `./gates.sh` (or `./gates.sh quick` to skip the slow CPU sedov). Every gate prints PASS/CHECK;
+  current state = all green (33 PASS in quick). Gates relevant here: `friction` (CPU+GPU).
+- One crater: `./hydro_cpu crater 500 12000 30 1e8 3.71 6 -1 18 22 /tmp/p.txt 1 5e6`
+- Sweep (FOREGROUND for speed): `python3 sweep_crater.py --jobs 14` (or --list / --increment N).
+  Results → state/results.csv; profiles → state/profiles/. state/ is gitignored (local).
 
-## (historical) the blocker this replaced — missing friction (Drucker-Prager) strength model
-The driver excavates a PHYSICAL transient crater (a=300 m, cppr=6: d/D=0.22 at t=15 s — a textbook simple
-bowl). But the crater then **slowly flows back to flat** under gravity (a=300 m AF-off: depth 1.40 km @15 s
-→ 1.10 @30 s → 0.15 @50 s → 0.00 @76 s). It is NOT ringing — it monotonically relaxes.
-ROOT CAUSE: the strength model is cohesion-only von Mises with `Y=(1−D)(1−af)·Y0`. The impact damages the
-rock (D→1), so Y→0, and **damaged rock becomes a strengthless liquid that relaxes flat under gravity**. AF
-only weakens strength further, so it cannot hold the crater either (it accelerates collapse). High AF
-viscosity merely *slows* the collapse (a=1500 m, ETA=1e9 freezes it mid-collapse at 3.4 km — not a settled
-crater).
-This is exactly why production cratering codes use a **pressure-dependent (friction) yield with a damaged
-branch** (iSALE "ROCK" model, Collins, Melosh & Ivanov 2004; Lundborg yield): damaged breccia retains
-FRICTION strength `Y_d ≈ μ_d·P` (cohesionless but pressure-dependent), which holds a simple bowl and sets
-the realistic d/D. WITHOUT it, no simple crater is held and the AF depth–diameter calibration is meaningless.
+## Code map
+- `hydro_cpu.cpp`: `crater` mode (the driver + surface diagnostic), `friction` gate, `vonmises` (ROCK branch),
+  ROCK globals (ROCK, Y_I0, MU_I, MU_D, Y_D0, Y_M) near the top with GZ/TDEC/etc. step_rk2/Lop unchanged in form.
+- `hydro.metal`: `vonmises` kernel (ROCK branch, RockP struct), `strength`/`lop`/`update_af`/`grow_damage`/
+  `voidzero` (all the crater machinery). SParams + RockP structs near the top (Metal 31-buffer cap → packed scalars).
+- `hydro_gpu.cpp`: the host step loop (the `while(t<tend)` block ~line 195-220) is what a GPU `crater` mode
+  reuses; `friction`/`lame`/`af_visc` are pre-loop single-eval gate blocks (the pattern for adding `crater`).
+- `sweep_crater.py`: SETTINGS grid (Y_d0 x AF) + SIZES; launch/reap pool; BIN points at hydro_cpu (repoint to
+  hydro_gpu after the GPU port).
 
-## NEXT STEP (the unblock) — add a ROCK-style friction yield, THEN calibrate AF
-Replace the cohesion-only cap in `vonmises` with a pressure- and damage-dependent yield (own gate first):
-  - Intact:  `Y_i(P) = Y0 + μ_i·P/(1 + μ_i·P/(Y_m − Y0))`   (Lundborg; Y0=cohesion, μ_i≈1.2, Y_m≈2.5 GPa)
-  - Damaged: `Y_d(P) = min(μ_d·P, Y_m)`                      (cohesionless friction, μ_d≈0.6)
-  - `Y = [(1−D)·Y_i + D·Y_d]·(1−af)`   (AF fluidizes the friction-supported state — the W&I picture)
-  Needs new Material params (μ_i, μ_d, Y_m, and a sensible cohesion Y0 — the current basalt Y=350 MPa is too
-  high for cohesion; iSALE basalt ~ Y0~1e7, μ_i~1.2, μ_d~0.6, Y_m~2.5e9). GATE: a confined-shear test —
-  the yield surface must follow Y_i(P)/Y_d(P) vs pressure (an analytic oracle), GPU==CPU. THEN re-run `crater`:
-  a small crater must HOLD a settled bowl (d/D~0.2) at long tend; only then does the AF sweep mean anything.
-
-## OPEN PROBLEMS / the Phase 3 grind (after the friction unblock)
-1. **Friction/ROCK yield — DONE (commit f0ac4aa), gated.** Remaining tuning: add a small damaged cohesion
-   Y_d0 (the pure-friction crater still creeps/over-relaxes, d/D≈0.04 — see UPDATE at top); pick Y0/μ_i/μ_d/Y_m/Y_d0
-   from the literature; combine with AF; converge.
-2. **Measure the SETTLED crater** (run to settling / max|v|→0), not a fixed tend — the current in-loop d/D and
-   the datum-crossing D_app are unreliable for the still-relaxing surface. Do it OFFLINE from the dumped
-   state/profiles/* (rim crest + floor + apparent diameter, robust edge logic).
-3. **Resolution convergence** (cppr 8, 12 on a couple of sizes) before trusting absolute d/D.
-4. **Digitize the W&I 2003 depth–diameter curve** (and Mars d–D data) as the oracle; tune (Tfrac, Efrac) to
-   match, esp. the ~7 km Mars simple→complex transition. The sweep harness `sweep_crater.py` is ready to grind
-   this once the friction model makes craters physical (do NOT register the 24/7 daemon before then — it would
-   only grind collapse-to-flat).
-5. **GPU port of `crater`** for the production sweep / 3D.
-6. Then → 3D oblique Chicxulub with the FIXED calibrated AF params (60°, 17 km granite, 12 km/s; Tillotson
-   basalt crust proxy — ANEOS granite/dunite still a flagged EOS gap).
-
-## Run / grind
-- Build: `clang++ -std=c++17 -O2 hydro_cpu.cpp -o hydro_cpu`
-- One crater: `./hydro_cpu crater 500 12000 30 1e8 3.71 6 -1 18 22 /tmp/p.txt`
-- Sweep: `python3 sweep_crater.py --list | --increment N | --daemon`. Results: state/results.csv; profiles: state/profiles/.
-- The local supervisor (~/investigations/daemons.json) keeps the `--daemon` grind alive 24/7 (entry `deorbit-crater`,
-  cwd hydrocodes/euler, log state/sweep.out). **LIVE as of 2026-06-28** — grinding the first 42-run pass
-  (Y_d0 in {1,5,10} MPa x AF off/on x 7 sizes, ROCK friction on). Monitor: `cat state/results.csv`,
-  `tail state/sweep.out`, `python3 sweep_crater.py --list`. Each run ~15-30 min (cppr=6), so a full pass ~12-20 h.
-  After the pass: analyse profiles OFFLINE for settled d/D-vs-D, pick the (Y_d0, AF) that holds simple craters at
-  d/D~0.2 and gives the complex transition, vs Wuennemann & Ivanov 2003.
+## Conventions
+- Commit as `user.name='oklo' user.email='oklo@mac.com'`; end messages with
+  `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`. `git fetch && rebase origin/master` before push
+  (a daily cloud routine commits there); keep history linear, no force-push.
+- CPU oracle first → gate → GPU port (GPU==CPU), the established rhythm. Ground-truth every claim with a gate.
+- euler/ only tracks `*.cpp *.metal *.sh *.md *.py` (gitignore keeps the ~130GB run outputs + binaries out).
+  Leave `docs/codex_gpt55_review.md` untracked. Don't commit state/.
+- The box is 14 cores (10 perf + 4 efficiency), dedicated to this research → run heavy work FOREGROUND
+  (normal QoS), `--jobs 14`. Avoid the launchd supervisor for compute-heavy crater runs (it throttles to 32%).
