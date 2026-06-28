@@ -82,10 +82,10 @@ struct Grid { int nx,ny,nz; double dx; vector<double> r,mu,mv,mw,E, Sxx,Syy,Szz,
 static inline double eint(const Grid&g,int c){ double ke=0.5*(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c]; return (g.E[c]-ke)/g.r[c]; }
 static inline double Pcell(const Grid&g,int c){ double p,cs; eos_pc(g.r[c],eint(g,c),p,cs); return p; }
 
-struct DU { vector<double> r,mu,mv,mw,E,Sxx,Syy,Szz,Sxy,Sxz,Syz,D,rc; DU(int n){r.assign(n,0);mu.assign(n,0);mv.assign(n,0);mw.assign(n,0);E.assign(n,0);Sxx.assign(n,0);Syy.assign(n,0);Szz.assign(n,0);Sxy.assign(n,0);Sxz.assign(n,0);Syz.assign(n,0);D.assign(n,0);rc.assign(n,0);} };
+struct DU { vector<double> r,mu,mv,mw,E,Sxx,Syy,Szz,Sxy,Sxz,Syz,D,rc,vib; DU(int n){r.assign(n,0);mu.assign(n,0);mv.assign(n,0);mw.assign(n,0);E.assign(n,0);Sxx.assign(n,0);Syy.assign(n,0);Szz.assign(n,0);Sxy.assign(n,0);Sxz.assign(n,0);Syz.assign(n,0);D.assign(n,0);rc.assign(n,0);vib.assign(n,0);} };
 static void Lop(const Grid&g, DU&d){
     int n=g.nx*g.ny*g.nz; double invdx=1.0/g.dx; double G=MAT.G;
-    for(int q=0;q<n;q++){d.r[q]=d.mu[q]=d.mv[q]=d.mw[q]=d.E[q]=0;d.Sxx[q]=d.Syy[q]=d.Szz[q]=d.Sxy[q]=d.Sxz[q]=d.Syz[q]=0;d.D[q]=0;d.rc[q]=0;}
+    for(int q=0;q<n;q++){d.r[q]=d.mu[q]=d.mv[q]=d.mw[q]=d.E[q]=0;d.Sxx[q]=d.Syy[q]=d.Szz[q]=d.Sxy[q]=d.Sxz[q]=d.Syz[q]=0;d.D[q]=0;d.rc[q]=0;d.vib[q]=0;}
     auto prim=[&](int c,double*W){ W[0]=g.r[c]; W[1]=g.mu[c]/W[0]; W[2]=g.mv[c]/W[0]; W[3]=g.mw[c]/W[0]; W[4]=eint(g,c); };
     bool WB = !REF_P0.empty();   // route 1: well-balanced hydrostatic reconstruction (z-sweep only)
     // ---- hydro: unsplit MUSCL+HLLC (P only; z-dir reconstructs P-deviation when WB) ----
@@ -174,6 +174,7 @@ static void Lop(const Grid&g, DU&d){
         d.Sxz[c]+=2*G*exz+Jm[0][2]-adv(g.Sxz);
         d.Syz[c]+=2*G*eyz+Jm[1][2]-adv(g.Syz);
         d.D[c]+=-adv(g.D);   // damage advects with the flow (Grady-Kipp growth applied post-step)
+        d.vib[c]+=-adv(g.vib);   // AF vibrational velocity advects with the flow (intensive material state, like S; seed/decay are operator-split in update_af). Scalar -> no cylindrical geometric term.
         // deviatoric stress -> momentum (div S) + energy (div(S.v)), central diffs
         double dSxx_x=(g.Sxx[xp]-g.Sxx[xm])/hx, dSxy_y=(g.Sxy[yp]-g.Sxy[ym])/hy, dSxz_z=(g.Sxz[zp]-g.Sxz[zm])/hz;
         double dSxy_x=(g.Sxy[xp]-g.Sxy[xm])/hx, dSyy_y=(g.Syy[yp]-g.Syy[ym])/hy, dSyz_z=(g.Syz[zp]-g.Syz[zm])/hz;
@@ -182,10 +183,13 @@ static void Lop(const Grid&g, DU&d){
         if(AXISYM){   // geometric stress-divergence sources (curvilinear basis): (div S)_r += (S_rr-S_thth)/r, (div S)_z += S_rz/r
             d.mu[c]+=(g.Sxx[c]-g.Syy[c])/rcyl;   // radial: the -S_thth/r curvature term plus the +S_rr/r from (1/r)d(r S_rr)/dr
             d.mw[c]+=g.Sxz[c]/rcyl; }            // axial: the +S_rz/r from (1/r)d(r S_rz)/dr
-        if(g.af[c]>0&&ETA_AF>0){ double eta=g.af[c]*ETA_AF, id2=1.0/(g.dx*g.dx);   // AF Newtonian viscosity (damps fluidized flow)
+        if(g.af[c]>0&&ETA_AF>0){ double eta=g.af[c]*ETA_AF, id2=1.0/(g.dx*g.dx);   // AF Newtonian viscosity (damps fluidized flow); Cartesian vector Laplacian
             d.mu[c]+=eta*(vx(xp)+vx(xm)+vx(yp)+vx(ym)+vx(zp)+vx(zm)-6*vx(c))*id2;
             d.mv[c]+=eta*(vy(xp)+vy(xm)+vy(yp)+vy(ym)+vy(zp)+vy(zm)-6*vy(c))*id2;
-            d.mw[c]+=eta*(vz(xp)+vz(xm)+vz(yp)+vz(ym)+vz(zp)+vz(zm)-6*vz(c))*id2; }
+            d.mw[c]+=eta*(vz(xp)+vz(xm)+vz(yp)+vz(ym)+vz(zp)+vz(zm)-6*vz(c))*id2;
+            if(AXISYM){   // cylindrical vector-Laplacian corrections (add to the Cartesian d^2/dr^2+d^2/dz^2 above):
+                d.mu[c]+=eta*(Lxx/rcyl - vx(c)/(rcyl*rcyl));   // (lap v)_r = lap_scalar(u) - u/r^2, lap_scalar adds (1/r)du/dr
+                d.mw[c]+=eta*(Lzx/rcyl); } }                   // (lap v)_z = lap_scalar(w), adds (1/r)dw/dr (no -w/r^2: z is Cartesian-like)
         // energy: div(S.v). (S.v)_x = Sxx u+Sxy v+Sxz w, etc.
         auto Svx=[&](int cc){return g.Sxx[cc]*vx(cc)+g.Sxy[cc]*vy(cc)+g.Sxz[cc]*vz(cc);};
         auto Svy=[&](int cc){return g.Sxy[cc]*vx(cc)+g.Syy[cc]*vy(cc)+g.Syz[cc]*vz(cc);};
@@ -237,10 +241,10 @@ static void step_rk2(Grid&g,double dt){ int n=g.r.size(); DU d(n);
     Grid g1=g;
     Lop(g,d);
     for(int c=0;c<n;c++){g1.r[c]=g.r[c]+dt*d.r[c];g1.mu[c]=g.mu[c]+dt*d.mu[c];g1.mv[c]=g.mv[c]+dt*d.mv[c];g1.mw[c]=g.mw[c]+dt*d.mw[c];g1.E[c]=g.E[c]+dt*d.E[c];
-        g1.Sxx[c]=g.Sxx[c]+dt*d.Sxx[c];g1.Syy[c]=g.Syy[c]+dt*d.Syy[c];g1.Szz[c]=g.Szz[c]+dt*d.Szz[c];g1.Sxy[c]=g.Sxy[c]+dt*d.Sxy[c];g1.Sxz[c]=g.Sxz[c]+dt*d.Sxz[c];g1.Syz[c]=g.Syz[c]+dt*d.Syz[c];g1.D[c]=g.D[c]+dt*d.D[c];g1.rc[c]=g.rc[c]+dt*d.rc[c];}
+        g1.Sxx[c]=g.Sxx[c]+dt*d.Sxx[c];g1.Syy[c]=g.Syy[c]+dt*d.Syy[c];g1.Szz[c]=g.Szz[c]+dt*d.Szz[c];g1.Sxy[c]=g.Sxy[c]+dt*d.Sxy[c];g1.Sxz[c]=g.Sxz[c]+dt*d.Sxz[c];g1.Syz[c]=g.Syz[c]+dt*d.Syz[c];g1.D[c]=g.D[c]+dt*d.D[c];g1.rc[c]=g.rc[c]+dt*d.rc[c];g1.vib[c]=g.vib[c]+dt*d.vib[c];}
     void_cells(g1); vonmises(g1); Lop(g1,d);   // clean the predictor's void cells so strength sees no near-vacuum velocity
     for(int c=0;c<n;c++){g.r[c]=0.5*(g.r[c]+g1.r[c]+dt*d.r[c]);g.mu[c]=0.5*(g.mu[c]+g1.mu[c]+dt*d.mu[c]);g.mv[c]=0.5*(g.mv[c]+g1.mv[c]+dt*d.mv[c]);g.mw[c]=0.5*(g.mw[c]+g1.mw[c]+dt*d.mw[c]);g.E[c]=0.5*(g.E[c]+g1.E[c]+dt*d.E[c]);
-        g.Sxx[c]=0.5*(g.Sxx[c]+g1.Sxx[c]+dt*d.Sxx[c]);g.Syy[c]=0.5*(g.Syy[c]+g1.Syy[c]+dt*d.Syy[c]);g.Szz[c]=0.5*(g.Szz[c]+g1.Szz[c]+dt*d.Szz[c]);g.Sxy[c]=0.5*(g.Sxy[c]+g1.Sxy[c]+dt*d.Sxy[c]);g.Sxz[c]=0.5*(g.Sxz[c]+g1.Sxz[c]+dt*d.Sxz[c]);g.Syz[c]=0.5*(g.Syz[c]+g1.Syz[c]+dt*d.Syz[c]);g.D[c]=0.5*(g.D[c]+g1.D[c]+dt*d.D[c]);g.rc[c]=0.5*(g.rc[c]+g1.rc[c]+dt*d.rc[c]);}
+        g.Sxx[c]=0.5*(g.Sxx[c]+g1.Sxx[c]+dt*d.Sxx[c]);g.Syy[c]=0.5*(g.Syy[c]+g1.Syy[c]+dt*d.Syy[c]);g.Szz[c]=0.5*(g.Szz[c]+g1.Szz[c]+dt*d.Szz[c]);g.Sxy[c]=0.5*(g.Sxy[c]+g1.Sxy[c]+dt*d.Sxy[c]);g.Sxz[c]=0.5*(g.Sxz[c]+g1.Sxz[c]+dt*d.Sxz[c]);g.Syz[c]=0.5*(g.Syz[c]+g1.Syz[c]+dt*d.Syz[c]);g.D[c]=0.5*(g.D[c]+g1.D[c]+dt*d.D[c]);g.rc[c]=0.5*(g.rc[c]+g1.rc[c]+dt*d.rc[c]);g.vib[c]=0.5*(g.vib[c]+g1.vib[c]+dt*d.vib[c]);}
     grow_damage(g,dt); vonmises(g);
     // (AF vibration update moved to update_af() at the start of the step; af is now derived from vib, not decayed here)
     if(DAMP<1.0){ int N=g.r.size(); for(int c=0;c<N;c++){ g.mu[c]*=DAMP; g.mv[c]*=DAMP; g.mw[c]*=DAMP; } }   // relaxation damping
@@ -339,6 +343,28 @@ int main(int argc,char**argv){
             B=(resmax<1e-2*termmax);
             printf("Lame (B equilib): max|d.mu|=%.3e  geom-term scale=%.3e (ratio %.2e)  vs no-geom residual=%.3e\n",resmax,termmax,resmax/termmax,baremax); }
         printf("GATE (cylindrical strength: hoop strain rate exact & Lame equilibrium balances): %s\n",(A&&B)?"PASS":"CHECK");
+    } else if(mode=="af_visc"){ // Phase-2b item 5: cylindrical AF Newtonian viscosity. Difference af=1 vs af=0 to ISOLATE the af-dependent viscous term (hydro/pressure are af-independent -> cancel).
+        MAT=Material::basalt(); AXISYM=true; double dx=500.0; ETA_AF=1e9;
+        int Nr=120; double A=1e-9;   // u(r)=A*r^2 -> discrete cylindrical (lap v)_r = 3A exactly (Cartesian-only would give 2A)
+        auto setup=[&](Grid&g){ for(int i=0;i<Nr;i++){int c=g.idx(i,0,0); g.r[c]=MAT.rho0; g.E[c]=0; double r=(i+0.5)*dx; g.mu[c]=MAT.rho0*A*r*r;} };
+        Grid g1(Nr,1,1,dx); setup(g1); for(int i=0;i<Nr;i++) g1.af[g1.idx(i,0,0)]=1.0;   // fluidized
+        Grid g0(Nr,1,1,dx); setup(g0);                                                    // af=0 (default)
+        DU d1(Nr),d0(Nr); Lop(g1,d1); Lop(g0,d0);
+        int c=Nr/2; double visc=d1.mu[c]-d0.mu[c], an_cyl=ETA_AF*3.0*A, an_cart=ETA_AF*2.0*A;
+        bool P=(fabs(visc-an_cyl)<1e-3*fabs(an_cyl));
+        printf("AF visc (cylindrical): isolated viscous d.mu=%.6e  analytic cyl 3A=%.6e (Cartesian-only 2A=%.6e)  rel err %.2e\n",visc,an_cyl,an_cart,fabs(visc-an_cyl)/fabs(an_cyl));
+        printf("GATE (cylindrical AF viscosity (lap v)_r = 3A not 2A): %s\n",P?"PASS":"CHECK");
+    } else if(mode=="vib_advect"){ // Phase-2b item 6: vib (AF vibrational velocity) advects with the flow. Uniform v0 -> a vib bump translates at v0; sum(vib) conserved (conservative for uniform v).
+        MAT=Material::basalt(); double dx=500.0,CFL=0.4; int N=200; double rho0=MAT.rho0,v0=2000.0;
+        Grid g(N,1,1,dx); double x0=0.3*N*dx,wid=8e3;
+        for(int i=0;i<N;i++){int c=g.idx(i,0,0); g.r[c]=rho0; g.mu[c]=rho0*v0; g.E[c]=0.5*rho0*v0*v0; double x=(i+0.5)*dx; g.vib[c]=exp(-((x-x0)/wid)*((x-x0)/wid));}
+        // C_ACT=0,TDEC=0 -> update_af no-op -> vib is purely advected by the strength solver (no seed/decay)
+        double s0=0,cen0=0; for(int i=0;i<N;i++){int c=g.idx(i,0,0); s0+=g.vib[c]; cen0+=g.vib[c]*(i+0.5)*dx;} cen0/=s0;
+        double tend=20e3/v0,t=0; while(t<tend){double dt=CFL*dx/maxspeed(g); if(t+dt>tend)dt=tend-t; step_rk2(g,dt); t+=dt;}
+        double s1=0,cen1=0,vmax=0; for(int i=0;i<N;i++){int c=g.idx(i,0,0); s1+=g.vib[c]; cen1+=g.vib[c]*(i+0.5)*dx; vmax=max(vmax,g.vib[c]);}
+        cen1/=s1; double vcen=(cen1-cen0)/t, merr=fabs(s1-s0)/s0, verr=fabs(vcen-v0)/v0;
+        printf("vib advect: sum(vib) %.4f->%.4f (err %.2e); centroid v=%.1f vs v0=%.0f (err %.2e); peak vib=%.3f\n",s0,s1,merr,vcen,v0,verr,vmax);
+        printf("GATE (vib advects: sum conserved <1%% & centroid v within 2%% & peak positive): %s\n",(merr<0.01&&verr<0.02&&vmax>0)?"PASS":"CHECK");
     } else if(mode=="shear"){
         // small-amplitude elastic shear pulse v_y(x); must propagate at c_s=sqrt(G/rho0)
         MAT=Material::basalt(); int N=800;double L=400e3,dx=L/N,CFL=0.3; double rho0=2700,G=MAT.G,cs=sqrt(G/rho0);
@@ -471,7 +497,7 @@ int main(int argc,char**argv){
         double vmax=0;for(int k=0;k<N;k++){int c=g.idx(0,0,k);vmax=max(vmax,fabs(g.mw[c]/g.r[c]));}
         printf("Free surface max|v|=%.3f m/s  GATE: %s\n",vmax,vmax<5.0?"PASS":"CHECK");
     } else {
-        fprintf(stderr,"unknown mode '%s' (modes: sod sedov shear yield vacuum bshock freefall atmos tensile alimpact substrate collapse surface tracer af_activate sedov_axi lame)\n",mode.c_str());
+        fprintf(stderr,"unknown mode '%s' (modes: sod sedov shear yield vacuum bshock freefall atmos tensile alimpact substrate collapse surface tracer af_activate sedov_axi lame af_visc vib_advect)\n",mode.c_str());
         return 2;   // fatal: never silently validate the wrong physics
     }
     return 0;
