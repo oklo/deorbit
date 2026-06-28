@@ -43,13 +43,25 @@ gravity + AF will be WRONG until Phase 2b makes the strength cylindrical.
     geometric term it cancels, vs a 250x larger residual if the term is omitted. GPU==CPU bit-identical (B).
   - All prior CPU+GPU gates green (`./gates.sh quick`); `lame` added to both gates.sh lists.
 
-**REMAINING in Phase 2b = items 5 (AF Newtonian viscosity in cylindrical + finish GPU AF viscosity) and 6
-(vib advection).** These are AF-transport refinements, not exercised by the elastic `lame` gate, but needed
-before the Phase 3 vertical-crater calibration (a collapsing crater flows km, so the AF pattern must advect
-and the fluidized viscosity must be cylindrically correct). Start here next; details in items 5-6 below.
+- **Phase 2b items 5-6 — AF transport (CPU+GPU, GPU==CPU). DONE.** Commits 004d5bf (CPU) + 6e9b9a2 (GPU).
+  - Item 5: cylindrical correction to the AF Newtonian viscosity eta*lap(v) -- the radial component gains
+    (1/r)du/dr - u/r^2, the axial gains (1/r)dw/dr (AXISYM-guarded). GPU AF viscosity (deferred since
+    Phase 1) now ported to the strength kernel.
+  - Item 6: vib advects with the flow -- non-conservatively, like the deviatoric stress S (intensive
+    material-state field; reuses the upwind adv()), RK2-integrated; seed/decay stay operator-split in update_af.
+  - GATES `af_visc` (CPU+GPU): u(r)=A*r^2 differenced af=1 vs af=0 isolates the viscous term -> discrete
+    cylindrical (lap v)_r = 3A exactly (rel err 4e-13 CPU / 4.3e-4 GPU FP32), vs 2A Cartesian-only.
+    `vib_advect` (CPU+GPU): a vib bump in uniform v0 flow translates at v0 (err 3e-6) with sum(vib) conserved.
+  - GPU note: the strength kernel hit Metal's 31-buffer bind-point cap, so its scalar constants are packed
+    into one `SParams` struct buffer (nx,ny,nz,invdx,n,rcfl,axisym,eta_af). All prior gates green both codes.
 
-## PHASE 2b — what to build (cylindrical elastic-plastic strength + AF transport)
-### Items 1-4 (cylindrical elastic-plastic strength) are DONE (see above). Items 5-6 (AF transport) REMAIN.
+**PHASE 2b IS COMPLETE (items 1-6, CPU+GPU, all gated, GPU==CPU). NEXT = Phase 3 (calibration) -- see the
+"After Phase 2b" section at the bottom. The cylindrical elastic-plastic strength + AF (block model, shock
+activation, fluidized viscosity, vib transport) is now all in place for real axisymmetric gravity+AF
+vertical-crater runs.**
+
+## PHASE 2b — what was built (cylindrical elastic-plastic strength + AF transport) -- ALL DONE
+### Items 1-4 (cylindrical elastic-plastic strength) DONE. Items 5-6 (AF transport) DONE. (Spec kept below for reference.)
 
 Axisymmetric (r,z), no swirl (v_θ=0, ∂/∂θ=0). Map **x→r, y→θ, z→z**. The deviatoric stress has 4
 independent components: S_rr↔Sxx, S_θθ↔Syy, S_zz↔Szz, S_rz↔Sxz; and S_rθ↔Sxy=0, S_zθ↔Syz=0 (no swirl).
