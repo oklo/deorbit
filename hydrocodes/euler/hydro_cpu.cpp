@@ -365,6 +365,48 @@ int main(int argc,char**argv){
         cen1/=s1; double vcen=(cen1-cen0)/t, merr=fabs(s1-s0)/s0, verr=fabs(vcen-v0)/v0;
         printf("vib advect: sum(vib) %.4f->%.4f (err %.2e); centroid v=%.1f vs v0=%.0f (err %.2e); peak vib=%.3f\n",s0,s1,merr,vcen,v0,verr,vmax);
         printf("GATE (vib advects: sum conserved <1%% & centroid v within 2%% & peak positive): %s\n",(merr<0.01&&verr<0.02&&vmax>0)?"PASS":"CHECK");
+    } else if(mode=="crater"){ // Phase 3: axisymmetric vertical impact crater (basalt impactor -> basalt half-space under gravity, strength, AF, free surface). Composes M1-Phase2b.
+        // args: crater [a_m=500] [U_ms=12000] [TDEC=0] [ETA_AF=0] [g=3.71] [cppr=5] [tend_s=auto] [Rfac=18] [Zfac=22]
+        MAT=Material::basalt(); double rho0=MAT.rho0, Abulk=MAT.A;
+        double a   = argc>2?atof(argv[2]):500.0;     // impactor radius (m)
+        double U   = argc>3?atof(argv[3]):12000.0;   // vertical impact speed (m/s)
+        TDEC       = argc>4?atof(argv[4]):0.0;        // AF decay time (s); 0 = AF off
+        ETA_AF     = argc>5?atof(argv[5]):0.0;        // AF viscosity (Pa.s)
+        GZ         = argc>6?atof(argv[6]):3.71;       // gravity (Mars)
+        double cppr= argc>7?atof(argv[7]):5.0;        // cells per impactor radius
+        double Rfac= argc>9?atof(argv[9]):18.0, Zfac=argc>10?atof(argv[10]):22.0;   // domain size in impactor radii
+        double dx=a/cppr; AXISYM=true; RHO_CFL=100.0; RHO_VAC=100.0; double CFL=0.4;
+        C_ACT=(TDEC>0?0.5:0.0); P_COH=1.0e6;
+        int Nr=(int)(Rfac*a/dx+0.5), Nz=(int)(Zfac*a/dx+0.5);
+        double Zdom=Nz*dx, above=5.0*a, zsurf=Zdom-above;   // free surface; 'above' = room for impactor + ejecta
+        Grid g(Nr,1,Nz,dx);
+        for(int i=0;i<Nr;i++)for(int k=0;k<Nz;k++){double z=(k+0.5)*dx;int c=g.idx(i,0,k);
+            if(z<zsurf){g.r[c]=rho0*(1.0+rho0*GZ*(zsurf-z)/Abulk);} else g.r[c]=0.27; g.E[c]=0;}   // lithostatic basalt below, ambient above
+        set_ref(g);   // route 1: freeze the pre-impact lithostatic+ambient column as the WB reference
+        double zc=zsurf+a;   // impactor sphere on the axis, tangent to the surface, moving down
+        for(int i=0;i<Nr;i++)for(int k=0;k<Nz;k++){double r=(i+0.5)*dx,z=(k+0.5)*dx;int c=g.idx(i,0,k);
+            if(sqrt(r*r+(z-zc)*(z-zc))<a){g.r[c]=rho0;g.mw[c]=-rho0*U;g.E[c]=0.5*rho0*U*U;}}
+        double tend=argc>8?atof(argv[8]):2.0*sqrt((Rfac*a)/GZ);   // ~ gravity formation/collapse timescale, generous
+        auto surf=[&](int i){ for(int k=Nz-1;k>=0;k--){ if(g.r[g.idx(i,0,k)]>1350.0) return (k+0.5)*dx; } return 0.0; };
+        double dmaxT=0; double t=0;int s=0;
+        while(t<tend){double dt=CFL*dx/maxspeed(g);if(t+dt>tend)dt=tend-t;step_rk2(g,dt);
+            for(int i=0;i<Nr;i++)for(int k=0;k<2;k++){int c=g.idx(i,0,k);g.r[c]=REF_R0[c];g.mu[c]=g.mv[c]=g.mw[c]=0;g.E[c]=0;}  // pin deep far-field floor
+            if(s%20==0){double dnow=0;for(int i=0;i<Nr;i++)dnow=max(dnow,zsurf-surf(i));dmaxT=max(dmaxT,dnow);}   // track transient excavation
+            t+=dt;s++;}
+        double vmx=0,pmx=0; for(uint32_t c=0;c<g.r.size();c++){if(g.r[c]>1350){double v=sqrt(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c];vmx=max(vmx,v);pmx=max(pmx,Pcell(g,c));}}
+        double z0=surf(Nr-1);   // undisturbed far-field surface level (topmost basalt cell, ~zsurf-dx/2)
+        double zfloor=z0; int ifloor=0; for(int i=0;i<Nr;i++){double zs=surf(i); if(zs<zfloor){zfloor=zs;ifloor=i;}}   // deepest point
+        int iD=Nr-1; for(int i=ifloor;i<Nr;i++){ if(surf(i)>=z0-0.25*dx){ iD=i; break; } }   // apparent crater radius: surface back to the datum, scanning out from the floor
+        double rD=(iD+0.5)*dx, Dapp=2.0*rD, dapp=z0-zfloor, dD=(Dapp>0?dapp/Dapp:0.0);
+        double zrim=z0,rrim=0; for(int i=0;i<Nr;i++){double zs=surf(i); if(zs>zrim){zrim=zs;rrim=(i+0.5)*dx;}}   // rim crest (ejecta uplift above datum)
+        bool finite=isfinite(vmx)&&isfinite(pmx)&&isfinite(dapp);
+        printf("CRATER a=%.0fm U=%.0f g=%.2f TDEC=%.3g ETA=%.3g | grid %dx%d dx=%.0f zsurf=%.1fkm tend=%.1fs steps=%d\n",a,U,GZ,TDEC,ETA_AF,Nr,Nz,dx,zsurf/1e3,tend,s);
+        printf("  D_app=%.2f km  depth(below datum)=%.2f km  transient depth=%.2f km  rim uplift=%.2f km @ r=%.2f km  d/D=%.3f\n",Dapp/1e3,dapp/1e3,dmaxT/1e3,(zrim-z0)/1e3,rrim/1e3,dD);
+        printf("  stability: max|v|=%.1f m/s  maxP=%.2e Pa  %s\n",vmx,pmx,finite?"FINITE":"NONFINITE-BLOWUP");
+        printf("RESULT %.1f %.4f %.4f %.4f %.4f\n",a,Dapp,dapp,dmaxT,dD);   // machine-readable (preliminary, in-loop): a D_app depth transient d/D (metres)
+        const char*prof=argc>11?argv[11]:"crater_profile.txt";   // dump the final surface profile z_s(r)-z0 for ROBUST offline depth-diameter measurement
+        FILE*pf=fopen(prof,"w"); if(pf){ fprintf(pf,"# r_m  zsurf-z0_m   (a=%.0f U=%.0f g=%.2f TDEC=%.3g ETA=%.3g dx=%.0f z0=%.1f)\n",a,U,GZ,TDEC,ETA_AF,dx,z0);
+            for(int i=0;i<Nr;i++) fprintf(pf,"%.1f %.3f\n",(i+0.5)*dx, surf(i)-z0); fclose(pf); }
     } else if(mode=="shear"){
         // small-amplitude elastic shear pulse v_y(x); must propagate at c_s=sqrt(G/rho0)
         MAT=Material::basalt(); int N=800;double L=400e3,dx=L/N,CFL=0.3; double rho0=2700,G=MAT.G,cs=sqrt(G/rho0);
@@ -497,7 +539,7 @@ int main(int argc,char**argv){
         double vmax=0;for(int k=0;k<N;k++){int c=g.idx(0,0,k);vmax=max(vmax,fabs(g.mw[c]/g.r[c]));}
         printf("Free surface max|v|=%.3f m/s  GATE: %s\n",vmax,vmax<5.0?"PASS":"CHECK");
     } else {
-        fprintf(stderr,"unknown mode '%s' (modes: sod sedov shear yield vacuum bshock freefall atmos tensile alimpact substrate collapse surface tracer af_activate sedov_axi lame af_visc vib_advect)\n",mode.c_str());
+        fprintf(stderr,"unknown mode '%s' (modes: sod sedov shear yield vacuum bshock freefall atmos tensile alimpact substrate collapse surface tracer af_activate sedov_axi lame af_visc vib_advect crater)\n",mode.c_str());
         return 2;   // fatal: never silently validate the wrong physics
     }
     return 0;
