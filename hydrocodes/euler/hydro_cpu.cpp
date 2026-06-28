@@ -386,7 +386,7 @@ int main(int argc,char**argv){
         double zc=zsurf+a;   // impactor sphere on the axis, tangent to the surface, moving down
         for(int i=0;i<Nr;i++)for(int k=0;k<Nz;k++){double r=(i+0.5)*dx,z=(k+0.5)*dx;int c=g.idx(i,0,k);
             if(sqrt(r*r+(z-zc)*(z-zc))<a){g.r[c]=rho0;g.mw[c]=-rho0*U;g.E[c]=0.5*rho0*U*U;}}
-        double tend=argc>8?atof(argv[8]):2.0*sqrt((Rfac*a)/GZ);   // ~ gravity formation/collapse timescale, generous
+        double targ=argc>8?atof(argv[8]):-1.0, tend=(targ>0?targ:2.0*sqrt((Rfac*a)/GZ));   // tend<=0 -> default ~ gravity formation/collapse timescale
         auto surf=[&](int i){ for(int k=Nz-1;k>=0;k--){ if(g.r[g.idx(i,0,k)]>1350.0) return (k+0.5)*dx; } return 0.0; };
         double dmaxT=0; double t=0;int s=0;
         while(t<tend){double dt=CFL*dx/maxspeed(g);if(t+dt>tend)dt=tend-t;step_rk2(g,dt);
