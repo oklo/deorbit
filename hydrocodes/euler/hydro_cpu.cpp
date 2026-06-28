@@ -22,6 +22,13 @@ static double RHO_CFL = 0.0; // exclude near-void cells (rho<RHO_CFL) from the C
 static double DAMP = 1.0;    // relaxation velocity damping per step (route 2: settle a gravity-loaded substrate); 1 = off
 static double RHO_VAC = 0.0; // vacuum-aware Riemann flux: a face side with rho<RHO_VAC is treated as vacuum (free surface); 0 = off
 static bool AXISYM = false; // cylindrical (r,z) axisymmetric geometry: x->r (radial, axis at r=0), z->axial, y unused (ny=1)
+// ROCK pressure-dependent yield (Lundborg intact + cohesionless damaged friction; iSALE, Collins/Melosh/Ivanov 2004).
+// false => cohesion-only von Mises Y=(1-D)(1-af)*MAT.Y (back-compat; all M3-M5 strength gates keep ROCK off).
+static bool ROCK = false;
+static double Y_I0 = 1.0e7;  // intact cohesion (Pa)
+static double MU_I = 1.2;    // intact coefficient of internal friction
+static double MU_D = 0.6;    // damaged (comminuted) friction coefficient (cohesionless)
+static double Y_M  = 2.5e9;  // limiting (von Mises) strength at high pressure (Pa)
 static vector<double> REF_R0, REF_P0; // route 1 (Audusse): frozen hydrostatic reference (density,pressure) per cell; empty => WB off
 static inline void eos_pc(double rho,double e,double&p,double&cs){ p=MAT.pressure(rho,e); if(p<0)p=0; cs=MAT.sound_speed(rho,e); }
 struct F5 { double r, mn, mt1, mt2, E; };
@@ -198,8 +205,13 @@ static void Lop(const Grid&g, DU&d){
         if(AXISYM) d.E[c]+=Svx(c)/rcyl;   // cylindrical geometric term of div(S.v): + (S.v)_r/r
     }
 }
-static void vonmises(Grid&g){ double Y0=MAT.Y; if(Y0<=0)return; int n=g.nx*g.ny*g.nz;
-    for(int c=0;c<n;c++){ double Y=(1.0-g.D[c])*(1.0-g.af[c])*Y0;   // damage + acoustic fluidization degrade shear strength
+static void vonmises(Grid&g){ double Y0=MAT.Y; if(Y0<=0&&!ROCK)return; int n=g.nx*g.ny*g.nz;
+    for(int c=0;c<n;c++){ double Y;
+        if(ROCK){ double P=max(Pcell(g,c),0.0);   // pressure-dependent yield (friction only under compression)
+            double Yi=Y_I0 + MU_I*P/(1.0 + MU_I*P/max(Y_M-Y_I0,1.0));   // intact (Lundborg): cohesion + saturating friction
+            double Yd=min(MU_D*P, Y_M);                                  // damaged: cohesionless friction, capped at the limit
+            Y=((1.0-g.D[c])*Yi + g.D[c]*Yd)*(1.0-g.af[c]); }             // damage blends intact->friction; AF fluidizes
+        else Y=(1.0-g.D[c])*(1.0-g.af[c])*Y0;                            // cohesion-only von Mises (back-compat)
         double sxx=g.Sxx[c],syy=g.Syy[c],szz=g.Szz[c],sxy=g.Sxy[c],sxz=g.Sxz[c],syz=g.Syz[c];
         double J2=0.5*(sxx*sxx+syy*syy+szz*szz)+sxy*sxy+sxz*sxz+syz*syz; double vm=sqrt(3.0*J2);
         if(vm>Y){double f=(vm>0?Y/vm:0.0); g.Sxx[c]*=f;g.Syy[c]*=f;g.Szz[c]*=f;g.Sxy[c]*=f;g.Sxz[c]*=f;g.Syz[c]*=f;} } }
@@ -365,6 +377,22 @@ int main(int argc,char**argv){
         cen1/=s1; double vcen=(cen1-cen0)/t, merr=fabs(s1-s0)/s0, verr=fabs(vcen-v0)/v0;
         printf("vib advect: sum(vib) %.4f->%.4f (err %.2e); centroid v=%.1f vs v0=%.0f (err %.2e); peak vib=%.3f\n",s0,s1,merr,vcen,v0,verr,vmax);
         printf("GATE (vib advects: sum conserved <1%% & centroid v within 2%% & peak positive): %s\n",(merr<0.01&&verr<0.02&&vmax>0)?"PASS":"CHECK");
+    } else if(mode=="friction"){ // Phase 3: pressure-dependent ROCK yield (Lundborg intact + cohesionless damaged friction). Validate the capped stress vs the analytic yield surface.
+        MAT=Material::basalt(); ROCK=true; bool pass=true;
+        printf("ROCK yield: Y_I0=%.2e MU_I=%.2f MU_D=%.2f Y_M=%.2e\n",Y_I0,MU_I,MU_D,Y_M);
+        for(double mu : {0.001,0.005,0.02,0.05}){            // compression -> confining pressure P (condensed Tillotson, e=0)
+            for(int dam=0;dam<2;dam++){
+                Grid g(1,1,1,500.0); int c=0; g.r[c]=MAT.rho0*(1.0+mu); g.E[c]=0; g.D[c]=(dam?1.0:0.0); g.af[c]=0;
+                double P=Pcell(g,c); g.Sxy[c]=5.0e9;          // pure shear well above yield -> vonmises returns it to the surface
+                vonmises(g);
+                double J2=0.5*(g.Sxx[c]*g.Sxx[c]+g.Syy[c]*g.Syy[c]+g.Szz[c]*g.Szz[c])+g.Sxy[c]*g.Sxy[c]+g.Sxz[c]*g.Sxz[c]+g.Syz[c]*g.Syz[c];
+                double vm=sqrt(3.0*J2);
+                double Yi=Y_I0+MU_I*P/(1.0+MU_I*P/(Y_M-Y_I0)), Yd=min(MU_D*P,Y_M), Yan=(dam?Yd:Yi);
+                double err=fabs(vm-Yan)/Yan; if(err>1e-6) pass=false;
+                printf("  P=%.3e D=%d: capped vm=%.4e  analytic Y=%.4e (%s, err %.1e)\n",P,dam,vm,Yan,dam?"damaged friction":"intact Lundborg",err);
+            }
+        }
+        printf("GATE (ROCK yield: capped stress follows Y_i(P) intact / Y_d(P) damaged friction): %s\n",pass?"PASS":"CHECK");
     } else if(mode=="crater"){ // Phase 3: axisymmetric vertical impact crater (basalt impactor -> basalt half-space under gravity, strength, AF, free surface). Composes M1-Phase2b.
         // args: crater [a_m=500] [U_ms=12000] [TDEC=0] [ETA_AF=0] [g=3.71] [cppr=5] [tend_s=auto] [Rfac=18] [Zfac=22]
         MAT=Material::basalt(); double rho0=MAT.rho0, Abulk=MAT.A;
@@ -377,6 +405,7 @@ int main(int argc,char**argv){
         double Rfac= argc>9?atof(argv[9]):18.0, Zfac=argc>10?atof(argv[10]):22.0;   // domain size in impactor radii
         double dx=a/cppr; AXISYM=true; RHO_CFL=100.0; RHO_VAC=100.0; double CFL=0.4;
         C_ACT=(TDEC>0?0.5:0.0); P_COH=1.0e6;
+        ROCK=(argc>12?atoi(argv[12]):1);   // pressure-dependent friction yield (default on); arg 0 = old cohesion-only von Mises for A/B
         int Nr=(int)(Rfac*a/dx+0.5), Nz=(int)(Zfac*a/dx+0.5);
         double Zdom=Nz*dx, above=5.0*a, zsurf=Zdom-above;   // free surface; 'above' = room for impactor + ejecta
         Grid g(Nr,1,Nz,dx);
@@ -539,7 +568,7 @@ int main(int argc,char**argv){
         double vmax=0;for(int k=0;k<N;k++){int c=g.idx(0,0,k);vmax=max(vmax,fabs(g.mw[c]/g.r[c]));}
         printf("Free surface max|v|=%.3f m/s  GATE: %s\n",vmax,vmax<5.0?"PASS":"CHECK");
     } else {
-        fprintf(stderr,"unknown mode '%s' (modes: sod sedov shear yield vacuum bshock freefall atmos tensile alimpact substrate collapse surface tracer af_activate sedov_axi lame af_visc vib_advect crater)\n",mode.c_str());
+        fprintf(stderr,"unknown mode '%s' (modes: sod sedov shear yield vacuum bshock freefall atmos tensile alimpact substrate collapse surface tracer af_activate sedov_axi lame af_visc vib_advect friction crater)\n",mode.c_str());
         return 2;   // fatal: never silently validate the wrong physics
     }
     return 0;

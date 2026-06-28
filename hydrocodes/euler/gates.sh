@@ -16,8 +16,8 @@ clang++ -std=c++17 -O2 -I../common/metal-cpp hydro_gpu.cpp \
 echo "   ok"
 
 # CPU oracle gates (FP64). sedov is 64^3 and slow -> skipped in 'quick'.
-CPU="sod shear yield vacuum tracer tensile freefall atmos alimpact af_activate sedov_axi lame af_visc vib_advect substrate"
-[ "$QUICK" = "quick" ] || CPU="sod sedov shear yield vacuum tracer tensile freefall atmos alimpact af_activate sedov_axi lame af_visc vib_advect substrate"
+CPU="sod shear yield vacuum tracer tensile freefall atmos alimpact af_activate sedov_axi lame af_visc vib_advect friction substrate"
+[ "$QUICK" = "quick" ] || CPU="sod sedov shear yield vacuum tracer tensile freefall atmos alimpact af_activate sedov_axi lame af_visc vib_advect friction substrate"
 echo "== CPU gates =="
 for m in $CPU; do ./hydro_cpu "$m" 2>/dev/null | grep -i 'gate' | sed "s/^/  [$m] /"; done
 
