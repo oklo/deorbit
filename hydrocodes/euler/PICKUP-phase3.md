@@ -22,7 +22,32 @@ Chicxulub run (Collins et al. 2020).
   AF scaling (impactor-scaled, W&I-style, size-INDEPENDENT so one pair calibrates the whole curve):
   `TDEC = Tfrac·a/c_s`, `ETA_AF = Efrac·ρ·c_s·a` (c_s≈3000, ρ=2700). Grid: SIZES 300..3000 m × {off + 8 AF pairs}.
 
-## UPDATE — friction/ROCK yield is now IN (commit f0ac4aa); fixes collapse-to-flat, but tuning remains
+## UPDATE 2 — the REAL blocker is SETTLING (craters not relaxed at auto-tend); GPU ROCK yield is in
+- **Crater profiles at the auto-tend `2*sqrt(Rfac*a/g)` are NOT settled** — they show concentric collapse
+  ripples (e.g. af_yd1M a=300: surface oscillates -1800/+350/-1750/+350… with radius) and central-axis
+  artifacts. So the in-loop d/D (and the datum-crossing D_app) are garbage (values >1 seen). The DEPTH
+  column IS meaningful and shows the knob working: **Y_d0=5 MPa craters are ~1.5-2x deeper than 1 MPa**
+  (monotonic) — friction/cohesion does what it should. Settling needs ~several oscillation periods
+  (period ~2π√(D/g) ~ hundreds of s) i.e. ~10x longer runs than the auto-tend -> motivates the GPU.
+- **NEXT (the unblock): run-to-settling.** Run until max|v| over dense cells drops below a small threshold
+  (capped at a max tend), so the surface is final/smooth, THEN measure (offline from the dumped profiles).
+- **The unsettled CPU first-pass results are archived at state/results_unsettled.csv** (depth signal only).
+- **GPU ROCK friction yield DONE (commit a4ffdf2):** pressure-dependent yield ported to the Metal vonmises
+  kernel (RockP struct + conserved-var buffers + EOS); GPU `friction` gate passes GPU==CPU (FP32). This
+  de-risks the trickiest part of the GPU crater port.
+- **CPU speed solved without GPU:** the slow daemon was launchd background-QoS THROTTLED (32% CPU/core).
+  Running the sweep FOREGROUND (`sweep_crater.py --jobs 14`, normal QoS) gives full speed; the supervised
+  daemon entry was removed (re-add only with a QoS fix, else it throttles). So the 2D sweep is fast on CPU;
+  the GPU is for the long SETTLED runs + the 3D Chicxulub run.
+
+## REMAINING GPU port (after ROCK, which is done)
+Port the `crater` mode to hydro_gpu.cpp: impactor + WB-substrate + ambient IC; the step loop already exists
+(lop/strength/vonmises/update_af/grow_damage/voidzero + wb + axisym + rvac all present); add the deep-floor
+pin each step + the surface-profile diagnostic + CLI (a,U,TDEC,ETA,g,cppr,tend,Rfac,Zfac,profile,rock,Yd0) +
+run-to-settling. Validate GPU crater ~ CPU crater. Then repoint sweep_crater.py BIN to hydro_gpu, re-run a
+SETTLED pass, and do the offline d/D-vs-D analysis vs Wuennemann & Ivanov 2003.
+
+## UPDATE 1 — friction/ROCK yield is now IN (commit f0ac4aa); fixes collapse-to-flat, but tuning remains
 The pressure-dependent ROCK yield (intact Lundborg + cohesionless damaged friction, AF-coupled) is implemented
 + gated (`friction` gate, machine-precision; ROCK flag, off by default so all prior gates unchanged). It FIXES
 the collapse-to-flat blocker below: a=300 m AF-off went from 0 (flat, cohesion-only) to a HELD crater with ROCK.
