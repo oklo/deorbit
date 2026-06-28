@@ -14,8 +14,10 @@ using namespace std;
 static Material MAT = Material::ideal(1.4);
 static double GAM = 1.4;
 static double GZ = 0.0;   // gravity (accel toward -z), m/s^2
-static double TDEC = 0.0;  // acoustic-fluidization decay time (s); 0 = AF off
+static double TDEC = 0.0;  // acoustic-fluidization vibration decay time (s); 0 = AF off
 static double ETA_AF = 0.0; // acoustic-fluidization viscosity (Pa.s); damps fluidized flow (Wunnemann-Ivanov)
+static double C_ACT = 0.0;  // AF shock-activation coupling: vib seeded at shock = C_ACT*|post-shock v|; 0 = shock activation off (af stays at IC)
+static double P_COH = 1.0e6; // cohesion floor (Pa) for the overburden in the fluidization ratio (avoids /0 at the free surface)
 static double RHO_CFL = 0.0; // exclude near-void cells (rho<RHO_CFL) from the CFL (their hi-v dynamics are negligible)
 static double DAMP = 1.0;    // relaxation velocity damping per step (route 2: settle a gravity-loaded substrate); 1 = off
 static double RHO_VAC = 0.0; // vacuum-aware Riemann flux: a face side with rho<RHO_VAC is treated as vacuum (free surface); 0 = off
@@ -72,10 +74,10 @@ static F5 hllc_p(double rL,double vnL,double t1L,double t2L,double eL,double pL,
     return star(rR,vnR,t1R,t2R,pR,ER,SR,Fp(rR,vnR,t1R,t2R,pR,ER));
 }
 static inline double mm(double a,double b){ return (a*b<=0)?0.0:(fabs(a)<fabs(b)?a:b); }
-struct Grid { int nx,ny,nz; double dx; vector<double> r,mu,mv,mw,E, Sxx,Syy,Szz,Sxy,Sxz,Syz, D, af, rc;  // rc = rho*c, passive material tracer (c: 1=projectile, 0=target)
+struct Grid { int nx,ny,nz; double dx; vector<double> r,mu,mv,mw,E, Sxx,Syy,Szz,Sxy,Sxz,Syz, D, af, rc, vib, Pmax;  // rc=rho*c tracer; vib=AF vibrational velocity; Pmax=peak pressure (shock-arrival detector)
     int idx(int i,int j,int k)const{ return (i*ny+j)*nz+k; }
     Grid(int X,int Y,int Z,double d):nx(X),ny(Y),nz(Z),dx(d){ int n=X*Y*Z; r.assign(n,0);mu.assign(n,0);mv.assign(n,0);mw.assign(n,0);E.assign(n,0);
-        Sxx.assign(n,0);Syy.assign(n,0);Szz.assign(n,0);Sxy.assign(n,0);Sxz.assign(n,0);Syz.assign(n,0);D.assign(n,0);af.assign(n,0);rc.assign(n,0);} };
+        Sxx.assign(n,0);Syy.assign(n,0);Szz.assign(n,0);Sxy.assign(n,0);Sxz.assign(n,0);Syz.assign(n,0);D.assign(n,0);af.assign(n,0);rc.assign(n,0);vib.assign(n,0);Pmax.assign(n,0);} };
 static inline double eint(const Grid&g,int c){ double ke=0.5*(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c]; return (g.E[c]-ke)/g.r[c]; }
 static inline double Pcell(const Grid&g,int c){ double p,cs; eos_pc(g.r[c],eint(g,c),p,cs); return p; }
 
@@ -198,7 +200,27 @@ static void void_cells(Grid&g){ if(RHO_CFL<=0)return; bool wb=!REF_R0.empty(); i
 static double maxspeed(const Grid&g){ double s=1e-30; int n=g.r.size(); double G=MAT.G;
     for(int c=0;c<n;c++){ if(g.r[c]<RHO_CFL) continue; double p,cs; eos_pc(g.r[c],eint(g,c),p,cs); double cel=sqrt(cs*cs+ (G>0?(4.0/3.0)*G/g.r[c]:0.0));
         double v=sqrt(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c]; s=max(s,v+cel);} return s; }
-static void step_rk2(Grid&g,double dt){ int n=g.r.size(); DU d(n); Grid g1=g;
+// Shock-activated acoustic fluidization (Wuennemann-Ivanov block model, iSALE-practice form).
+// The passing shock seeds a vibrational velocity vib ~ post-shock particle speed; vib decays with
+// TDEC; the rock is fluidized where the acoustic vibrational pressure p_vib=rho*c_s*vib exceeds the
+// overburden p_ov=max(P,P_COH). The resulting af in [0,1) degrades shear strength (vonmises) and
+// drives viscous flow (Lop). (Phase 1: per-cell activation/decay; advection of vib is Phase 2.)
+static void update_af(Grid&g,double dt){
+    if(C_ACT<=0||TDEC<=0) return;            // shock-activated AF off -> af stays at its IC value
+    int n=g.nx*g.ny*g.nz; double dec=exp(-dt/TDEC);
+    for(int c=0;c<n;c++){
+        double P=Pcell(g,c);
+        if(P>g.Pmax[c]){                     // shock arrival (new pressure peak): seed vibrations from the post-shock velocity
+            double sp=sqrt(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/max(g.r[c],1e-30);
+            g.vib[c]=max(g.vib[c],C_ACT*sp); g.Pmax[c]=P; }
+        g.vib[c]*=dec;                        // acoustic vibrations decay
+        double cs=MAT.sound_speed(g.r[c],eint(g,c)), pvib=g.r[c]*cs*g.vib[c], pov=max(P,P_COH);
+        g.af[c]=pvib/(pvib+pov);              // fluidization ratio in [0,1)
+    }
+}
+static void step_rk2(Grid&g,double dt){ int n=g.r.size(); DU d(n);
+    update_af(g,dt);   // shock-activated AF: refresh vib + derive af BEFORE strength/viscosity read it
+    Grid g1=g;
     Lop(g,d);
     for(int c=0;c<n;c++){g1.r[c]=g.r[c]+dt*d.r[c];g1.mu[c]=g.mu[c]+dt*d.mu[c];g1.mv[c]=g.mv[c]+dt*d.mv[c];g1.mw[c]=g.mw[c]+dt*d.mw[c];g1.E[c]=g.E[c]+dt*d.E[c];
         g1.Sxx[c]=g.Sxx[c]+dt*d.Sxx[c];g1.Syy[c]=g.Syy[c]+dt*d.Syy[c];g1.Szz[c]=g.Szz[c]+dt*d.Szz[c];g1.Sxy[c]=g.Sxy[c]+dt*d.Sxy[c];g1.Sxz[c]=g.Sxz[c]+dt*d.Sxz[c];g1.Syz[c]=g.Syz[c]+dt*d.Syz[c];g1.D[c]=g.D[c]+dt*d.D[c];g1.rc[c]=g.rc[c]+dt*d.rc[c];}
@@ -206,7 +228,7 @@ static void step_rk2(Grid&g,double dt){ int n=g.r.size(); DU d(n); Grid g1=g;
     for(int c=0;c<n;c++){g.r[c]=0.5*(g.r[c]+g1.r[c]+dt*d.r[c]);g.mu[c]=0.5*(g.mu[c]+g1.mu[c]+dt*d.mu[c]);g.mv[c]=0.5*(g.mv[c]+g1.mv[c]+dt*d.mv[c]);g.mw[c]=0.5*(g.mw[c]+g1.mw[c]+dt*d.mw[c]);g.E[c]=0.5*(g.E[c]+g1.E[c]+dt*d.E[c]);
         g.Sxx[c]=0.5*(g.Sxx[c]+g1.Sxx[c]+dt*d.Sxx[c]);g.Syy[c]=0.5*(g.Syy[c]+g1.Syy[c]+dt*d.Syy[c]);g.Szz[c]=0.5*(g.Szz[c]+g1.Szz[c]+dt*d.Szz[c]);g.Sxy[c]=0.5*(g.Sxy[c]+g1.Sxy[c]+dt*d.Sxy[c]);g.Sxz[c]=0.5*(g.Sxz[c]+g1.Sxz[c]+dt*d.Sxz[c]);g.Syz[c]=0.5*(g.Syz[c]+g1.Syz[c]+dt*d.Syz[c]);g.D[c]=0.5*(g.D[c]+g1.D[c]+dt*d.D[c]);g.rc[c]=0.5*(g.rc[c]+g1.rc[c]+dt*d.rc[c]);}
     grow_damage(g,dt); vonmises(g);
-    if(TDEC>0){ double f=exp(-dt/TDEC); int N=g.r.size(); for(int c=0;c<N;c++) g.af[c]*=f; }   // AF vibrations decay
+    // (AF vibration update moved to update_af() at the start of the step; af is now derived from vib, not decayed here)
     if(DAMP<1.0){ int N=g.r.size(); for(int c=0;c<N;c++){ g.mu[c]*=DAMP; g.mv[c]*=DAMP; g.mw[c]*=DAMP; } }   // relaxation damping
     void_cells(g);   // void cells = passive vacuum (reset to reference)
 }
@@ -346,6 +368,29 @@ int main(int argc,char**argv){
         double vmx=0;int nb=0;for(int i=0;i<NXc;i++)for(int k=0;k<NZc;k++){int c=g.idx(i,0,k);if(g.r[c]>1350){vmx=max(vmx,sqrt(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c]);nb++;}}
         printf("Substrate relax (DAMP=%.2f): max|v|=%.3f m/s, basalt cells %d->%d, steps %d\n",DAMP,vmx,nb0,nb,s);
         printf("GATE (settled max|v|<5 m/s & no rarefaction nb>0.97*nb0): %s\n",(vmx<5.0&&nb>0.97*nb0)?"PASS":"CHECK");
+    } else if(mode=="af_activate"){ // Phase-1 unit test for shock-activated AF (Wuennemann-Ivanov):
+        // (A) a shock seeds vibrations in the rock it passes through, and not ahead of the front;
+        // (B) seeded vibrations at relaxed (low) pressure fluidize the rock, which then re-solidifies as they decay.
+        MAT=Material::basalt(); double CFL=0.4;
+        // (A) activation + spatial selectivity: a planar basalt shock (left half -> right) seeds vib behind the front.
+        int N=200; double dx=500.0, V=2000.0, tA=3.0; TDEC=10.0; C_ACT=0.5; ETA_AF=0.0;
+        Grid g(N,1,1,dx);
+        for(int i=0;i<N;i++){int c=g.idx(i,0,0); g.r[c]=MAT.rho0; g.E[c]=0; if(i<N/2) g.mu[c]=MAT.rho0*V;}
+        double t=0; while(t<tA){double dt=CFL*dx/maxspeed(g); if(t+dt>tA)dt=tA-t; step_rk2(g,dt); t+=dt;}
+        double vib_b=0,vib_a=0; for(int i=101;i<=120;i++)vib_b=max(vib_b,g.vib[g.idx(i,0,0)]);
+        for(int i=180;i<N;i++)vib_a=max(vib_a,g.vib[g.idx(i,0,0)]);
+        bool A=(vib_b>1.0 && vib_a<1e-3);
+        printf("AF activate (A: shock seeding): vib behind front=%.1f m/s, ahead=%.1e m/s\n",vib_b,vib_a);
+        // (B) fluidization + re-solidification: seeded vibrations at P~0 give af~1, then decay back to ~0.
+        int M=50; double tB=5.0, vib0=80.0; TDEC=0.5; C_ACT=0.5;
+        Grid h(M,1,1,dx);
+        for(int i=0;i<M;i++){int c=h.idx(i,0,0); h.r[c]=MAT.rho0; h.E[c]=0; h.vib[c]=vib0;}
+        update_af(h,0.0); double af0=h.af[h.idx(M/2,0,0)];
+        double tt=0; while(tt<tB){double dt=CFL*dx/maxspeed(h); if(tt+dt>tB)dt=tB-tt; step_rk2(h,dt); tt+=dt;}
+        double af1=h.af[h.idx(M/2,0,0)];
+        bool B=(af0>0.9 && af1<0.05);
+        printf("AF activate (B: fluidize->decay): af %.2f -> %.3f over %.0fs (TDEC=0.5)\n",af0,af1,tB);
+        printf("GATE (shock seeds vib behind front not ahead; fluidized rock re-solidifies as vib decays): %s\n",(A&&B)?"PASS":"CHECK");
     } else if(mode=="collapse"){ // acoustic-fluidization demo: a basalt step slumps if fluidized, holds if not
         MAT=Material::basalt(); GZ=3.71; double rho0=2700,A=2.67e10; int NXc=80,NZc=40;double dx=500.0,CFL=0.4;
         double zlo=10e3,h0=4e3,zhi=zlo+h0,tend=8.0; double hfin[2]; const char*lbl[2]={"AF-on ","AF-off"};
@@ -371,7 +416,7 @@ int main(int argc,char**argv){
         double vmax=0;for(int k=0;k<N;k++){int c=g.idx(0,0,k);vmax=max(vmax,fabs(g.mw[c]/g.r[c]));}
         printf("Free surface max|v|=%.3f m/s  GATE: %s\n",vmax,vmax<5.0?"PASS":"CHECK");
     } else {
-        fprintf(stderr,"unknown mode '%s' (modes: sod sedov shear yield vacuum bshock freefall atmos tensile alimpact substrate collapse surface tracer)\n",mode.c_str());
+        fprintf(stderr,"unknown mode '%s' (modes: sod sedov shear yield vacuum bshock freefall atmos tensile alimpact substrate collapse surface tracer af_activate)\n",mode.c_str());
         return 2;   // fatal: never silently validate the wrong physics
     }
     return 0;
