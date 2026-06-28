@@ -32,7 +32,24 @@ Phase 2 added cylindrical geometry.
 **Key point:** Phase 2a did HYDRO only. Strength is still CARTESIAN. So a vertical crater with strength +
 gravity + AF will be WRONG until Phase 2b makes the strength cylindrical.
 
+- **Phase 2b CORE (items 1-4 below) — cylindrical elastic-plastic STRENGTH (CPU+GPU, GPU==CPU). DONE.**
+  Commits db56fdd (master): CPU `euler Phase 2b (CPU)` + GPU `euler Phase 2b (GPU)`.
+  - Hoop strain rate `e_thth=u/r`, geometric stress-divergence sources `(S_rr-S_thth)/r` (radial mom.) and
+    `S_rz/r` (axial mom.), energy `(S.v)_r/r`, all guarded by AXISYM (Cartesian runs bit-identical).
+  - Jaumann (item 4) verified to reduce correctly with no code change: no-swirl => Wxy=Wyz=0 => theta-theta
+    spin term vanishes. Sxy,Syz stay 0.
+  - GATE `lame` (CPU+GPU): (A) hoop-strain rate exact (rel err 1e-15 CPU / 2.6e-6 GPU FP32); (B) the analytic
+    Lame thick-cylinder deviatoric field is a discrete fixed point -- radial-momentum residual 0.4% of the
+    geometric term it cancels, vs a 250x larger residual if the term is omitted. GPU==CPU bit-identical (B).
+  - All prior CPU+GPU gates green (`./gates.sh quick`); `lame` added to both gates.sh lists.
+
+**REMAINING in Phase 2b = items 5 (AF Newtonian viscosity in cylindrical + finish GPU AF viscosity) and 6
+(vib advection).** These are AF-transport refinements, not exercised by the elastic `lame` gate, but needed
+before the Phase 3 vertical-crater calibration (a collapsing crater flows km, so the AF pattern must advect
+and the fluidized viscosity must be cylindrically correct). Start here next; details in items 5-6 below.
+
 ## PHASE 2b — what to build (cylindrical elastic-plastic strength + AF transport)
+### Items 1-4 (cylindrical elastic-plastic strength) are DONE (see above). Items 5-6 (AF transport) REMAIN.
 
 Axisymmetric (r,z), no swirl (v_θ=0, ∂/∂θ=0). Map **x→r, y→θ, z→z**. The deviatoric stress has 4
 independent components: S_rr↔Sxx, S_θθ↔Syy, S_zz↔Szz, S_rz↔Sxz; and S_rθ↔Sxy=0, S_zθ↔Syz=0 (no swirl).
