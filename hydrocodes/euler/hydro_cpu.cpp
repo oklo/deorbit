@@ -27,7 +27,8 @@ static bool AXISYM = false; // cylindrical (r,z) axisymmetric geometry: x->r (ra
 static bool ROCK = false;
 static double Y_I0 = 1.0e7;  // intact cohesion (Pa)
 static double MU_I = 1.2;    // intact coefficient of internal friction
-static double MU_D = 0.6;    // damaged (comminuted) friction coefficient (cohesionless)
+static double MU_D = 0.6;    // damaged (comminuted) friction coefficient
+static double Y_D0 = 0.0;    // damaged residual cohesion (Pa); 0 = cohesionless friction (iSALE breccia ~ a few MPa)
 static double Y_M  = 2.5e9;  // limiting (von Mises) strength at high pressure (Pa)
 static vector<double> REF_R0, REF_P0; // route 1 (Audusse): frozen hydrostatic reference (density,pressure) per cell; empty => WB off
 static inline void eos_pc(double rho,double e,double&p,double&cs){ p=MAT.pressure(rho,e); if(p<0)p=0; cs=MAT.sound_speed(rho,e); }
@@ -209,7 +210,7 @@ static void vonmises(Grid&g){ double Y0=MAT.Y; if(Y0<=0&&!ROCK)return; int n=g.n
     for(int c=0;c<n;c++){ double Y;
         if(ROCK){ double P=max(Pcell(g,c),0.0);   // pressure-dependent yield (friction only under compression)
             double Yi=Y_I0 + MU_I*P/(1.0 + MU_I*P/max(Y_M-Y_I0,1.0));   // intact (Lundborg): cohesion + saturating friction
-            double Yd=min(MU_D*P, Y_M);                                  // damaged: cohesionless friction, capped at the limit
+            double Yd=min(Y_D0 + MU_D*P, Y_M);                           // damaged: residual cohesion + friction, capped at the limit
             Y=((1.0-g.D[c])*Yi + g.D[c]*Yd)*(1.0-g.af[c]); }             // damage blends intact->friction; AF fluidizes
         else Y=(1.0-g.D[c])*(1.0-g.af[c])*Y0;                            // cohesion-only von Mises (back-compat)
         double sxx=g.Sxx[c],syy=g.Syy[c],szz=g.Szz[c],sxy=g.Sxy[c],sxz=g.Sxz[c],syz=g.Syz[c];
@@ -378,8 +379,8 @@ int main(int argc,char**argv){
         printf("vib advect: sum(vib) %.4f->%.4f (err %.2e); centroid v=%.1f vs v0=%.0f (err %.2e); peak vib=%.3f\n",s0,s1,merr,vcen,v0,verr,vmax);
         printf("GATE (vib advects: sum conserved <1%% & centroid v within 2%% & peak positive): %s\n",(merr<0.01&&verr<0.02&&vmax>0)?"PASS":"CHECK");
     } else if(mode=="friction"){ // Phase 3: pressure-dependent ROCK yield (Lundborg intact + cohesionless damaged friction). Validate the capped stress vs the analytic yield surface.
-        MAT=Material::basalt(); ROCK=true; bool pass=true;
-        printf("ROCK yield: Y_I0=%.2e MU_I=%.2f MU_D=%.2f Y_M=%.2e\n",Y_I0,MU_I,MU_D,Y_M);
+        MAT=Material::basalt(); ROCK=true; Y_D0=5.0e6; bool pass=true;   // nonzero damaged cohesion to exercise the Y_d0 term
+        printf("ROCK yield: Y_I0=%.2e MU_I=%.2f MU_D=%.2f Y_D0=%.2e Y_M=%.2e\n",Y_I0,MU_I,MU_D,Y_D0,Y_M);
         for(double mu : {0.001,0.005,0.02,0.05}){            // compression -> confining pressure P (condensed Tillotson, e=0)
             for(int dam=0;dam<2;dam++){
                 Grid g(1,1,1,500.0); int c=0; g.r[c]=MAT.rho0*(1.0+mu); g.E[c]=0; g.D[c]=(dam?1.0:0.0); g.af[c]=0;
@@ -387,7 +388,7 @@ int main(int argc,char**argv){
                 vonmises(g);
                 double J2=0.5*(g.Sxx[c]*g.Sxx[c]+g.Syy[c]*g.Syy[c]+g.Szz[c]*g.Szz[c])+g.Sxy[c]*g.Sxy[c]+g.Sxz[c]*g.Sxz[c]+g.Syz[c]*g.Syz[c];
                 double vm=sqrt(3.0*J2);
-                double Yi=Y_I0+MU_I*P/(1.0+MU_I*P/(Y_M-Y_I0)), Yd=min(MU_D*P,Y_M), Yan=(dam?Yd:Yi);
+                double Yi=Y_I0+MU_I*P/(1.0+MU_I*P/(Y_M-Y_I0)), Yd=min(Y_D0+MU_D*P,Y_M), Yan=(dam?Yd:Yi);
                 double err=fabs(vm-Yan)/Yan; if(err>1e-6) pass=false;
                 printf("  P=%.3e D=%d: capped vm=%.4e  analytic Y=%.4e (%s, err %.1e)\n",P,dam,vm,Yan,dam?"damaged friction":"intact Lundborg",err);
             }
@@ -406,6 +407,7 @@ int main(int argc,char**argv){
         double dx=a/cppr; AXISYM=true; RHO_CFL=100.0; RHO_VAC=100.0; double CFL=0.4;
         C_ACT=(TDEC>0?0.5:0.0); P_COH=1.0e6;
         ROCK=(argc>12?atoi(argv[12]):1);   // pressure-dependent friction yield (default on); arg 0 = old cohesion-only von Mises for A/B
+        if(argc>13) Y_D0=atof(argv[13]);   // damaged residual cohesion (Pa); the key knob to arrest small-crater creep
         int Nr=(int)(Rfac*a/dx+0.5), Nz=(int)(Zfac*a/dx+0.5);
         double Zdom=Nz*dx, above=5.0*a, zsurf=Zdom-above;   // free surface; 'above' = room for impactor + ejecta
         Grid g(Nr,1,Nz,dx);

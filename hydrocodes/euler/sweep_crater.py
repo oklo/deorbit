@@ -34,20 +34,22 @@ U, G, CPPR = 12000.0, 3.71, 6.0   # impact speed (m/s), Mars gravity, cells per 
 
 # --- sweep grid ---
 SIZES = [300, 500, 750, 1000, 1500, 2000, 3000]   # impactor radii (m) -> craters spanning the simple/complex transition
-# AF settings: (label, Tfrac, Efrac). "off" = no AF (the rebound/strength baseline).
-AF = [("off", 0.0, 0.0)]
-for Tfrac in (30.0, 100.0):
-    for Efrac in (0.003, 0.01, 0.03, 0.1):
-        AF.append((f"T{int(Tfrac)}_E{Efrac:g}", Tfrac, Efrac))
+# (label, Tfrac, Efrac, Yd0_Pa). First pass: vary the damaged-cohesion Y_d0 (the creep knob) with AF off (the
+# strength baseline) and with a fixed reasonable AF-on setting (Tfrac=30, Efrac=0.01). ROCK friction always on.
+SETTINGS = []
+for yd in (1.0e6, 5.0e6, 1.0e7):
+    tag = f"{int(yd/1e6)}M"
+    SETTINGS.append((f"off_yd{tag}", 0.0,  0.0,  yd))    # AF off, friction only
+    SETTINGS.append((f"af_yd{tag}",  30.0, 0.01, yd))    # AF on (1x viscosity), + friction
 
-FIELDS = ["af_label", "a_m", "Tfrac", "Efrac", "TDEC_s", "ETA_Pas",
+FIELDS = ["af_label", "a_m", "Tfrac", "Efrac", "Yd0_Pa", "TDEC_s", "ETA_Pas",
           "D_app_m", "depth_m", "transient_m", "dD", "profile"]
 
 def jobs():
-    for (label, Tfrac, Efrac), a in itertools.product(AF, SIZES):
+    for (label, Tfrac, Efrac, Yd0), a in itertools.product(SETTINGS, SIZES):
         TDEC = Tfrac * a / CS if Tfrac > 0 else 0.0
         ETA  = Efrac * RHO * CS * a if Efrac > 0 else 0.0
-        yield label, a, Tfrac, Efrac, TDEC, ETA
+        yield label, a, Tfrac, Efrac, Yd0, TDEC, ETA
 
 def done_keys():
     if not os.path.exists(RESCSV):
@@ -63,19 +65,19 @@ def append_row(row):
             w.writeheader()
         w.writerow(row)
 
-def run_one(label, a, Tfrac, Efrac, TDEC, ETA):
+def run_one(label, a, Tfrac, Efrac, Yd0, TDEC, ETA):
     os.makedirs(PROF, exist_ok=True)
     prof = os.path.join(PROF, f"{label}_a{int(a)}.txt")
-    # crater a U TDEC ETA g cppr tend Rfac Zfac profile  (tend auto via -1 -> driver default)
+    # crater a U TDEC ETA g cppr tend Rfac Zfac profile rock Yd0  (tend auto via -1; rock=1)
     args = [BIN, "crater", str(a), str(U), f"{TDEC:.6g}", f"{ETA:.6g}",
-            str(G), str(CPPR), "-1", "18", "22", prof]
+            str(G), str(CPPR), "-1", "18", "22", prof, "1", f"{Yd0:.6g}"]
     t0 = time.time()
     out = subprocess.run(args, capture_output=True, text=True).stdout
     res = next((l for l in out.splitlines() if l.startswith("RESULT")), None)
     if not res:
         print(f"  !! no RESULT for {label} a={a} (run failed?)"); return False
     _, _a, D, depth, trans, dD = res.split()
-    append_row(dict(af_label=label, a_m=int(a), Tfrac=Tfrac, Efrac=Efrac,
+    append_row(dict(af_label=label, a_m=int(a), Tfrac=Tfrac, Efrac=Efrac, Yd0_Pa=f"{Yd0:.4g}",
                     TDEC_s=f"{TDEC:.4g}", ETA_Pas=f"{ETA:.4g}", D_app_m=D,
                     depth_m=depth, transient_m=trans, dD=dD, profile=os.path.relpath(prof, HERE)))
     print(f"  done {label} a={int(a)}m: depth={float(depth)/1e3:.2f}km transient={float(trans)/1e3:.2f}km ({time.time()-t0:.0f}s)")
@@ -88,7 +90,7 @@ def pending():
 def main():
     os.makedirs(STATE, exist_ok=True)
     if "--list" in sys.argv:
-        p = pending(); tot = len(AF) * len(SIZES)
+        p = pending(); tot = len(SETTINGS) * len(SIZES)
         print(f"jobs: {tot} total, {tot-len(p)} done, {len(p)} pending"); return
     inc = None
     if "--increment" in sys.argv:
