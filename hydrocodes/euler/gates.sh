@@ -23,7 +23,7 @@ for m in $CPU; do ./hydro_cpu "$m" 2>/dev/null | grep -i 'gate' | sed "s/^/  [$m
 
 # GPU gates (FP32). Should match the CPU oracle.
 echo "== GPU gates =="
-for m in sod sedov surface shear yield tensile freefall atmos pierazzo vacuum tracer substrate; do
+for m in sod sedov surface shear yield tensile freefall atmos pierazzo vacuum tracer af_activate substrate; do
   ./hydro_gpu "$m" 2>/dev/null | grep -i 'gate' | sed "s/^/  [$m] /"
 done
 

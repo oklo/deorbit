@@ -276,10 +276,28 @@ kernel void strength(device const float*r[[buffer(0)]],device const float*mu[[bu
 }
 kernel void vonmises(device float*Sxx[[buffer(0)]],device float*Syy[[buffer(1)]],device float*Szz[[buffer(2)]],
     device float*Sxy[[buffer(3)]],device float*Sxz[[buffer(4)]],device float*Syz[[buffer(5)]],
-    device const float*Dd[[buffer(6)]],constant GMat&mat[[buffer(7)]],constant uint&n[[buffer(8)]],uint g[[thread_position_in_grid]]){
-    if(g>=n)return; float Y=(1.0f-Dd[g])*mat.Y; if(mat.Y<=0.0f)return;   // damage degrades shear strength
+    device const float*Dd[[buffer(6)]],device const float*af[[buffer(7)]],constant GMat&mat[[buffer(8)]],constant uint&n[[buffer(9)]],uint g[[thread_position_in_grid]]){
+    if(g>=n)return; float Y=(1.0f-Dd[g])*(1.0f-af[g])*mat.Y; if(mat.Y<=0.0f)return;   // damage + acoustic fluidization degrade shear strength
     float J2=0.5f*(Sxx[g]*Sxx[g]+Syy[g]*Syy[g]+Szz[g]*Szz[g])+Sxy[g]*Sxy[g]+Sxz[g]*Sxz[g]+Syz[g]*Syz[g];
     float vm=sqrt(3.0f*J2); if(vm>Y){float f=(vm>0.0f?Y/vm:0.0f); Sxx[g]*=f;Syy[g]*=f;Szz[g]*=f;Sxy[g]*=f;Sxz[g]*=f;Syz[g]*=f;}
+}
+// Shock-activated acoustic fluidization (Wuennemann-Ivanov block model) -- mirrors the CPU update_af().
+// A new pressure peak (shock arrival) seeds vib ~ post-shock particle speed; vib decays with tdec;
+// the fluidization af=p_vib/(p_vib+p_ov) [p_vib=rho*c_s*vib, p_ov=max(P,pcoh)] degrades shear strength
+// (vonmises reads af). (Phase 1 GPU: activation/decay + strength coupling; vib advection + AF viscosity
+// are deferred to the Phase 2/3 collapse work, as on the CPU side they are not exercised by this gate.)
+kernel void update_af(device const float*r[[buffer(0)]],device const float*mu[[buffer(1)]],device const float*mv[[buffer(2)]],
+    device const float*mw[[buffer(3)]],device const float*E[[buffer(4)]],device float*vib[[buffer(5)]],
+    device float*Pmax[[buffer(6)]],device float*af[[buffer(7)]],
+    constant float&dt[[buffer(8)]],constant float&cact[[buffer(9)]],constant float&tdec[[buffer(10)]],
+    constant float&pcoh[[buffer(11)]],constant int&mode[[buffer(12)]],constant float&gam[[buffer(13)]],
+    constant GMat&mat[[buffer(14)]],constant uint&n[[buffer(15)]],uint g[[thread_position_in_grid]]){
+    if(g>=n)return;
+    float ke=0.5f*(mu[g]*mu[g]+mv[g]*mv[g]+mw[g]*mw[g])/r[g], e=(E[g]-ke)/r[g];
+    float2 pc=eospc(r[g],e,mode,gam,mat); float P=pc.x, cs=pc.y;
+    if(P>Pmax[g]){ float sp=sqrt(mu[g]*mu[g]+mv[g]*mv[g]+mw[g]*mw[g])/max(r[g],1e-30f); vib[g]=max(vib[g],cact*sp); Pmax[g]=P; }
+    vib[g]*=exp(-dt/tdec);
+    float pvib=r[g]*cs*vib[g], pov=max(P,pcoh); af[g]=pvib/(pvib+pov);
 }
 // Grady-Kipp: grow D where tensile strain exceeds the (host-precomputed) activation strain
 kernel void grow_damage(device const float*r[[buffer(0)]],device const float*mu[[buffer(1)]],device const float*mv[[buffer(2)]],
