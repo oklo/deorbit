@@ -21,6 +21,7 @@ static double P_COH = 1.0e6; // cohesion floor (Pa) for the overburden in the fl
 static double RHO_CFL = 0.0; // exclude near-void cells (rho<RHO_CFL) from the CFL (their hi-v dynamics are negligible)
 static double DAMP = 1.0;    // relaxation velocity damping per step (route 2: settle a gravity-loaded substrate); 1 = off
 static double RHO_VAC = 0.0; // vacuum-aware Riemann flux: a face side with rho<RHO_VAC is treated as vacuum (free surface); 0 = off
+static bool AXISYM = false; // cylindrical (r,z) axisymmetric geometry: x->r (radial, axis at r=0), z->axial, y unused (ny=1)
 static vector<double> REF_R0, REF_P0; // route 1 (Audusse): frozen hydrostatic reference (density,pressure) per cell; empty => WB off
 static inline void eos_pc(double rho,double e,double&p,double&cs){ p=MAT.pressure(rho,e); if(p<0)p=0; cs=MAT.sound_speed(rho,e); }
 struct F5 { double r, mn, mt1, mt2, E; };
@@ -109,8 +110,13 @@ static void Lop(const Grid&g, DU&d){
                 Fr[f]=fl.r;Fmn[f]=fl.mn;Ft1[f]=fl.mt1;Ft2[f]=fl.mt2;FE[f]=fl.E;
                 int cl=CELL(iL,a,b),cr=CELL(iR,a,b);   // passive material tracer: species flux = mass flux * upwind c
                 Frc[f]=fl.r*(fl.r>=0.0 ? g.rc[cl]/g.r[cl] : g.rc[cr]/g.r[cr]); }
-            for(int p=0;p<nL;p++){ int c=CELL(p,a,b); d.r[c]+=-(Fr[p+1]-Fr[p])*invdx; d.E[c]+=-(FE[p+1]-FE[p])*invdx; d.rc[c]+=-(Frc[p+1]-Frc[p])*invdx;
-                double dmn=-(Fmn[p+1]-Fmn[p])*invdx,dt1=-(Ft1[p+1]-Ft1[p])*invdx,dt2=-(Ft2[p+1]-Ft2[p])*invdx;
+            bool axi=(AXISYM && dir==0);   // cylindrical r-sweep: area-weight fluxes by face radius (axis face r=0 -> zero area = automatic axis BC)
+            for(int p=0;p<nL;p++){ int c=CELL(p,a,b);
+                double w0,w1,inv;
+                if(axi){ w0=p*g.dx; w1=(p+1)*g.dx; inv=1.0/(((p+0.5)*g.dx)*g.dx); } else { w0=w1=1.0; inv=invdx; }
+                d.r[c]+=-(w1*Fr[p+1]-w0*Fr[p])*inv; d.E[c]+=-(w1*FE[p+1]-w0*FE[p])*inv; d.rc[c]+=-(w1*Frc[p+1]-w0*Frc[p])*inv;
+                double dmn=-(w1*Fmn[p+1]-w0*Fmn[p])*inv,dt1=-(w1*Ft1[p+1]-w0*Ft1[p])*inv,dt2=-(w1*Ft2[p+1]-w0*Ft2[p])*inv;
+                if(axi) dmn+=Pcell(g,c)/((p+0.5)*g.dx);   // cylindrical pressure geometric source for the radial momentum (corrects the area-weighted p flux)
                 if(dir==0){d.mu[c]+=dmn;d.mv[c]+=dt1;d.mw[c]+=dt2;}else if(dir==1){d.mv[c]+=dmn;d.mu[c]+=dt1;d.mw[c]+=dt2;}else{d.mw[c]+=dmn;d.mu[c]+=dt1;d.mv[c]+=dt2;}
             }
         }
@@ -284,6 +290,18 @@ int main(int argc,char**argv){
         double Ran=pow(E0/(alpha*rho0),0.2)*pow(tend,0.4);
         printf("Sedov 3D: shock R_num=%.3f analytic=%.3f (err %.1f%%), compression=%.2f (strong-shock %.1f, resolution-limited)\n",rpk,Ran,100*fabs(rpk-Ran)/Ran,rhomax/rho0,(GAM+1)/(GAM-1));
         printf("GATE (shock radius within 10%% of analytic Sedov, 64^3 resolution-limited): %s\n",(fabs(rpk-Ran)/Ran<0.10)?"PASS":"CHECK");
+    } else if(mode=="sedov_axi"){ // axisymmetric (r,z) point blast ON THE AXIS = a 3D spherical blast; validates the cylindrical geometry vs the same analytic Sedov solution as the 3D gate
+        MAT=Material::ideal(1.4); GAM=1.4; AXISYM=true; double PI=3.141592653589793;
+        int Nr=64,Nz=128; double dx=2.0/64,CFL=0.3,tend=0.5, E0=1.0,rho0=1.0; Grid g(Nr,1,Nz,dx);
+        for(int c=0;c<Nr*Nz;c++){g.r[c]=rho0;g.E[c]=1e-4/(GAM-1);}
+        int kc=Nz/2; g.E[g.idx(0,0,kc)]+=E0/(PI*dx*dx*dx);   // point energy in the on-axis cell (its 3D volume = 2*pi*(dx/2)*dx*dx = pi*dx^3)
+        double t=0;int s=0;while(t<tend){double dt=CFL*dx/maxspeed(g);if(t+dt>tend)dt=tend-t;step_rk2(g,dt);t+=dt;s++;}
+        double rpk=0,rhomax=0,zc=(kc+0.5)*dx;
+        for(int i=0;i<Nr;i++)for(int k=0;k<Nz;k++){int c=g.idx(i,0,k);double rr=g.r[c];
+            if(rr>rhomax){rhomax=rr;double rad=(i+0.5)*dx,zz=(k+0.5)*dx-zc;rpk=sqrt(rad*rad+zz*zz);}}
+        double alpha=0.851, Ran=pow(E0/(alpha*rho0),0.2)*pow(tend,0.4);
+        printf("Sedov axisym (on-axis point blast = 3D spherical): shock R_num=%.3f analytic=%.3f (err %.1f%%), compression=%.2f\n",rpk,Ran,100*fabs(rpk-Ran)/Ran,rhomax/rho0);
+        printf("GATE (cylindrical geometry: shock radius within 10%% of spherical Sedov): %s\n",(fabs(rpk-Ran)/Ran<0.10)?"PASS":"CHECK");
     } else if(mode=="shear"){
         // small-amplitude elastic shear pulse v_y(x); must propagate at c_s=sqrt(G/rho0)
         MAT=Material::basalt(); int N=800;double L=400e3,dx=L/N,CFL=0.3; double rho0=2700,G=MAT.G,cs=sqrt(G/rho0);
@@ -416,7 +434,7 @@ int main(int argc,char**argv){
         double vmax=0;for(int k=0;k<N;k++){int c=g.idx(0,0,k);vmax=max(vmax,fabs(g.mw[c]/g.r[c]));}
         printf("Free surface max|v|=%.3f m/s  GATE: %s\n",vmax,vmax<5.0?"PASS":"CHECK");
     } else {
-        fprintf(stderr,"unknown mode '%s' (modes: sod sedov shear yield vacuum bshock freefall atmos tensile alimpact substrate collapse surface tracer af_activate)\n",mode.c_str());
+        fprintf(stderr,"unknown mode '%s' (modes: sod sedov shear yield vacuum bshock freefall atmos tensile alimpact substrate collapse surface tracer af_activate sedov_axi)\n",mode.c_str());
         return 2;   // fatal: never silently validate the wrong physics
     }
     return 0;
