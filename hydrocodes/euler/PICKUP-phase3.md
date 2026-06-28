@@ -22,7 +22,18 @@ Chicxulub run (Collins et al. 2020).
   AF scaling (impactor-scaled, W&I-style, size-INDEPENDENT so one pair calibrates the whole curve):
   `TDEC = Tfrac·a/c_s`, `ETA_AF = Efrac·ρ·c_s·a` (c_s≈3000, ρ=2700). Grid: SIZES 300..3000 m × {off + 8 AF pairs}.
 
-## KEY FINDING — calibration is BLOCKED on a missing friction (Drucker-Prager) strength model
+## UPDATE — friction/ROCK yield is now IN (commit f0ac4aa); fixes collapse-to-flat, but tuning remains
+The pressure-dependent ROCK yield (intact Lundborg + cohesionless damaged friction, AF-coupled) is implemented
++ gated (`friction` gate, machine-precision; ROCK flag, off by default so all prior gates unchanged). It FIXES
+the collapse-to-flat blocker below: a=300 m AF-off went from 0 (flat, cohesion-only) to a HELD crater with ROCK.
+BUT it is not yet a settled simple crater: ROCK a=300 m AF-off creeps 0.45 km @76 s → 0.25 km @150 s
+(max|v| 24.6→14.3 m/s, still slowing) and is OVER-RELAXED (d/D≈0.04 vs the ~0.2 of a real simple crater).
+Root: pure cohesionless damaged friction Y_d=μ_d·P is marginal at the low confining pressure of a small/shallow
+crater. LIKELY FIX (next): add a small DAMAGED COHESION Y_d0 (iSALE keeps residual breccia cohesion: Y_d=Y_d0+μ_d·P),
+plus the AF combination + resolution convergence, then measure the SETTLED state. These are calibration knobs →
+hand to the sweep daemon (free compute), not interactive 15–30 min runs.
+
+## (historical) the blocker this replaced — missing friction (Drucker-Prager) strength model
 The driver excavates a PHYSICAL transient crater (a=300 m, cppr=6: d/D=0.22 at t=15 s — a textbook simple
 bowl). But the crater then **slowly flows back to flat** under gravity (a=300 m AF-off: depth 1.40 km @15 s
 → 1.10 @30 s → 0.15 @50 s → 0.00 @76 s). It is NOT ringing — it monotonically relaxes.
@@ -47,7 +58,9 @@ Replace the cohesion-only cap in `vonmises` with a pressure- and damage-dependen
   a small crater must HOLD a settled bowl (d/D~0.2) at long tend; only then does the AF sweep mean anything.
 
 ## OPEN PROBLEMS / the Phase 3 grind (after the friction unblock)
-1. **Friction/ROCK yield (above) — the prerequisite.**
+1. **Friction/ROCK yield — DONE (commit f0ac4aa), gated.** Remaining tuning: add a small damaged cohesion
+   Y_d0 (the pure-friction crater still creeps/over-relaxes, d/D≈0.04 — see UPDATE at top); pick Y0/μ_i/μ_d/Y_m/Y_d0
+   from the literature; combine with AF; converge.
 2. **Measure the SETTLED crater** (run to settling / max|v|→0), not a fixed tend — the current in-loop d/D and
    the datum-crossing D_app are unreliable for the still-relaxing surface. Do it OFFLINE from the dumped
    state/profiles/* (rim crest + floor + apparent diameter, robust edge logic).
