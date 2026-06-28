@@ -70,7 +70,8 @@ int main(int argc,char**argv){
     else if(mode=="yield"){nx=400;ny=nz=1;Ldom=400e3;tend=15e3/csb;CFL=0.3;emode=1;}
     else if(mode=="af_activate"){nx=200;ny=nz=1;Ldom=100e3;tend=3.0;CFL=0.4;emode=1;cact=0.5f;tdecf=10.0f;}  // shock-activated AF unit test (matches CPU Run A)
     else if(mode=="sedov_axi"){nx=64;ny=1;nz=128;Ldom=2.0;tend=0.5;CFL=0.3;emode=0;axisym=1;}  // axisymmetric (r,z) on-axis point blast = 3D spherical Sedov
-    else { fprintf(stderr,"unknown mode '%s' (modes: sod sedov surface bshock shear yield freefall atmos tensile pierazzo vacuum substrate tracer af_activate sedov_axi)\n",mode.c_str()); return 2; }   // fatal: never silently validate the wrong physics
+    else if(mode=="lame"){nx=200;ny=nz=1;Ldom=200*500.0;tend=0.0;CFL=0.4;emode=1;axisym=1;}  // Phase-2b: cylindrical strength gate (single-eval hoop strain + Lame equilibrium); tend=0 -> handled before the main loop
+    else { fprintf(stderr,"unknown mode '%s' (modes: sod sedov surface bshock shear yield freefall atmos tensile pierazzo vacuum substrate tracer af_activate sedov_axi lame)\n",mode.c_str()); return 2; }   // fatal: never silently validate the wrong physics
     double dx=Ldom/((nx==1&&ny==1)?nz:nx); uint32_t n=nx*ny*nz; float invdx=1.0f/dx; float gam=GAM;
     GMat MG=(mode=="pierazzo")?AL:BASALT; bool strn=(emode==1 && MG.G>0);   // Al = pure hydro (no strength/damage)
     float epsact=(float)pow(1.0/(1e61*dx*dx*dx),1.0/16.0);   // Weibull weakest-flaw activation strain (host: wk=1e61 overflows FP32)
@@ -119,8 +120,42 @@ int main(int argc,char**argv){
     float*RR0=(float*)bRR0->contents(),*RP0=(float*)bRP0->contents();
     if(wb){ for(uint32_t c=0;c<n;c++){ RR0[c]=r[c]; float p=tillP(r[c],0.0f,MG); RP0[c]=p<0?0:p; } }   // route 1: freeze IC as the hydrostatic reference
     auto lopA=vector<pair<const void*,size_t>>{{&NX,4},{&NY,4},{&NZ,4},{&invdx,4},{&emode,4},{&gam,4},{&MG,sizeof(GMat)},{&n,4},{&gz,4},{&wb,4},{&rvac,4},{&axisym,4}};
-    auto strA=vector<pair<const void*,size_t>>{{&NX,4},{&NY,4},{&NZ,4},{&invdx,4},{&MG,sizeof(GMat)},{&n,4},{&rcfl,4}};
+    auto strA=vector<pair<const void*,size_t>>{{&NX,4},{&NY,4},{&NZ,4},{&invdx,4},{&MG,sizeof(GMat)},{&n,4},{&rcfl,4},{&axisym,4}};
     auto vmA=vector<pair<const void*,size_t>>{{&MG,sizeof(GMat)},{&n,4}};
+    if(mode=="lame"){   // Phase-2b GPU: cylindrical strength gate -- two single-evaluation sub-checks, mirrors the CPU oracle (GPU==CPU)
+        float Gm=MG.G; float dxf=(float)dx; bool A=false,B=false;
+        auto evalLopStr=[&](){   // one lop + one strength evaluation (no time integration); reads dS / dmu back
+            run(Plop,n,{br,bmu,bmv,bmw,bE,bdr,bdmu,bdmv,bdmw,bdE,bRR0,bRP0,brc,bdrc},lopA);
+            run(Pstr,n,{br,bmu,bmv,bmw,bE,bxx,byy,bzz,bxy,bxz,byz,bdmu,bdmv,bdmw,bdE,dxx,dyy,dzz,dxy,dxz,dyz,bD,bdD},strA); };
+        // (A) HOOP STRAIN RATE: u(r)=edot*r, zero stress -> dS driven by e_thth=u/r (geometric)
+        float edot=1e-6f;
+        for(uint32_t c=0;c<n;c++){ r[c]=MG.rho0; E[c]=0; mu[c]=MG.rho0*edot*(((float)c+0.5f)*dxf); mv[c]=mw[c]=0; }
+        for(auto b:{bxx,byy,bzz,bxy,bxz,byz,bdmu,bdmv,bdmw,bdE}) memset(b->contents(),0,n*4);
+        evalLopStr();
+        float*DSxx=(float*)dxx->contents(),*DSyy=(float*)dyy->contents(),*DSzz=(float*)dzz->contents();
+        int c=100; float trc=2.0f*edot/3.0f, an_rr=2*Gm*(edot-trc), an_th=2*Gm*(edot-trc), an_zz=2*Gm*(0.0f-trc);
+        float erra=fabs(DSxx[c]-an_rr)+fabs(DSyy[c]-an_th)+fabs(DSzz[c]-an_zz), sca=fabs(an_rr)+fabs(an_zz)+1e-30f;
+        A=(erra/sca<1e-3);
+        printf("GPU Lame (A hoop): dS_rr=%.4e/%.4e  dS_thth=%.4e/%.4e  dS_zz=%.4e/%.4e (num/analytic, rel err %.2e)\n",
+            DSxx[c],an_rr,DSyy[c],an_th,DSzz[c],an_zz,erra/sca);
+        // (B) LAME STATIC EQUILIBRIUM: S_rr=-Bc/r^2, S_thth=+Bc/r^2, S_zz=0 at rest, P=0 -> radial-momentum residual ~ truncation
+        int ia=20,ib=180; float ia_r=(ia+0.5f)*dxf, Bc=2.0e6f*ia_r*ia_r;
+        float*Sx=(float*)bxx->contents(),*Sy=(float*)byy->contents(),*Sz=(float*)bzz->contents();
+        for(uint32_t c2=0;c2<n;c2++){ r[c2]=MG.rho0; E[c2]=0; mu[c2]=mv[c2]=mw[c2]=0; float rr=((float)c2+0.5f)*dxf;
+            if((int)c2>=ia&&(int)c2<=ib){ Sx[c2]=-Bc/(rr*rr); Sy[c2]=Bc/(rr*rr); Sz[c2]=0; } else { Sx[c2]=Sy[c2]=Sz[c2]=0; } }
+        for(auto b:{bxy,bxz,byz,bdmu,bdmv,bdmw,bdE}) memset(b->contents(),0,n*4);
+        evalLopStr();
+        float*DMU=(float*)bdmu->contents();
+        double resmax=0,termmax=0,baremax=0;
+        for(int i=ia+2;i<=ib-2;i++){ double rr=(i+0.5)*dxf;
+            resmax=max(resmax,(double)fabs(DMU[i]));
+            termmax=max(termmax,(double)fabs((Sx[i]-Sy[i])/rr));
+            baremax=max(baremax,(double)fabs(DMU[i]-(Sx[i]-Sy[i])/rr)); }
+        B=(resmax<1e-2*termmax);
+        printf("GPU Lame (B equilib): max|d.mu|=%.3e  geom-term scale=%.3e (ratio %.2e)  vs no-geom residual=%.3e\n",resmax,termmax,resmax/termmax,baremax);
+        printf("GATE(==CPU, cylindrical strength: hoop strain rate exact & Lame equilibrium balances): %s\n",(A&&B)?"PASS":"CHECK");
+        return 0;
+    }
     double rc0=0, cen0=0;
     if(mode=="tracer"){float*RC=(float*)brc->contents();for(int i=0;i<nx;i++){rc0+=RC[i];cen0+=RC[i]*(i+0.5)*dx;} cen0/=rc0;}
     double t=0;int step=0;

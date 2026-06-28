@@ -241,14 +241,14 @@ kernel void strength(device const float*r[[buffer(0)]],device const float*mu[[bu
     device const float*Dd[[buffer(21)]],device float*dD[[buffer(22)]],
     constant int&nx[[buffer(23)]],constant int&ny[[buffer(24)]],constant int&nz[[buffer(25)]],
     constant float&invdx[[buffer(26)]],constant GMat&mat[[buffer(27)]],constant uint&n[[buffer(28)]],
-    constant float&rcfl[[buffer(29)]],uint gid[[thread_position_in_grid]]){
+    constant float&rcfl[[buffer(29)]],constant int&axisym[[buffer(30)]],uint gid[[thread_position_in_grid]]){
     if(gid>=n)return; float G=mat.G; if(G<=0.0f)return;
     if(r[gid]<rcfl){dSxx[gid]=dSyy[gid]=dSzz[gid]=dSxy[gid]=dSxz[gid]=dSyz[gid]=0.0f;dD[gid]=0.0f;return;}   // no strength in vacuum
     int k=gid%nz,j=(gid/nz)%ny,i=gid/(ny*nz);
     int xm=((i>0?i-1:0)*ny+j)*nz+k, xp=((i<nx-1?i+1:nx-1)*ny+j)*nz+k;
     int ym=(i*ny+(j>0?j-1:0))*nz+k, yp=(i*ny+(j<ny-1?j+1:ny-1))*nz+k;
     int zm=(i*ny+j)*nz+(k>0?k-1:0), zp=(i*ny+j)*nz+(k<nz-1?k+1:nz-1);
-    float dx=1.0f/invdx;
+    float dx=1.0f/invdx, rcyl=((float)i+0.5f)*dx;   // rcyl: cylindrical radius of cell centre (AXISYM geometric terms)
     float hx=((i>0&&i<nx-1)?2.0f:1.0f)*dx, hy=((j>0&&j<ny-1)?2.0f:1.0f)*dx, hz=((k>0&&k<nz-1)?2.0f:1.0f)*dx;
     // void neighbours -> use the centre velocity (zero gradient toward vacuum = traction-free free surface, no spurious shear)
     #define VX(c) ((r[c]<rcfl)?(mu[gid]/r[gid]):(mu[c]/r[c]))
@@ -257,7 +257,8 @@ kernel void strength(device const float*r[[buffer(0)]],device const float*mu[[bu
     float Lxx=(VX(xp)-VX(xm))/hx, Lxy=(VX(yp)-VX(ym))/hy, Lxz=(VX(zp)-VX(zm))/hz;
     float Lyx=(VY(xp)-VY(xm))/hx, Lyy=(VY(yp)-VY(ym))/hy, Lyz=(VY(zp)-VY(zm))/hz;
     float Lzx=(VZ(xp)-VZ(xm))/hx, Lzy=(VZ(yp)-VZ(ym))/hy, Lzz=(VZ(zp)-VZ(zm))/hz;
-    float exx=Lxx,eyy=Lyy,ezz=Lzz,exy=0.5f*(Lxy+Lyx),exz=0.5f*(Lxz+Lzx),eyz=0.5f*(Lyz+Lzy),tr=(exx+eyy+ezz)/3.0f;
+    float eyy=(axisym!=0)?(VX(gid)/rcyl):Lyy;   // hoop strain rate e_thth=u/r (geometric), not dv_y/dy(=0 for ny=1)
+    float exx=Lxx,ezz=Lzz,exy=0.5f*(Lxy+Lyx),exz=0.5f*(Lxz+Lzx),eyz=0.5f*(Lyz+Lzy),tr=(exx+eyy+ezz)/3.0f;
     float Wxy=0.5f*(Lxy-Lyx),Wxz=0.5f*(Lxz-Lzx),Wyz=0.5f*(Lyz-Lzy);
     float sxx=Sxx[gid],syy=Syy[gid],szz=Szz[gid],sxy=Sxy[gid],sxz=Sxz[gid],syz=Syz[gid];
     float Sm[3][3]={{sxx,sxy,sxz},{sxy,syy,syz},{sxz,syz,szz}},Wm[3][3]={{0,Wxy,Wxz},{-Wxy,0,Wyz},{-Wxz,-Wyz,0}},Jm[3][3];
@@ -272,10 +273,12 @@ kernel void strength(device const float*r[[buffer(0)]],device const float*mu[[bu
     dmu[gid]+=(Sxx[xp]-Sxx[xm])/hx+(Sxy[yp]-Sxy[ym])/hy+(Sxz[zp]-Sxz[zm])/hz;
     dmv[gid]+=(Sxy[xp]-Sxy[xm])/hx+(Syy[yp]-Syy[ym])/hy+(Syz[zp]-Syz[zm])/hz;
     dmw[gid]+=(Sxz[xp]-Sxz[xm])/hx+(Syz[yp]-Syz[ym])/hy+(Szz[zp]-Szz[zm])/hz;
+    if(axisym!=0){ dmu[gid]+=(Sxx[gid]-Syy[gid])/rcyl; dmw[gid]+=Sxz[gid]/rcyl; }   // geometric stress-divergence sources: (div S)_r+=(S_rr-S_thth)/r, (div S)_z+=S_rz/r
     #define SVX(c) (Sxx[c]*VX(c)+Sxy[c]*VY(c)+Sxz[c]*VZ(c))
     #define SVY(c) (Sxy[c]*VX(c)+Syy[c]*VY(c)+Syz[c]*VZ(c))
     #define SVZ(c) (Sxz[c]*VX(c)+Syz[c]*VY(c)+Szz[c]*VZ(c))
     dE[gid]+=(SVX(xp)-SVX(xm))/hx+(SVY(yp)-SVY(ym))/hy+(SVZ(zp)-SVZ(zm))/hz;
+    if(axisym!=0) dE[gid]+=SVX(gid)/rcyl;   // cylindrical geometric term of div(S.v): + (S.v)_r/r
 }
 kernel void vonmises(device float*Sxx[[buffer(0)]],device float*Syy[[buffer(1)]],device float*Szz[[buffer(2)]],
     device float*Sxy[[buffer(3)]],device float*Sxz[[buffer(4)]],device float*Syz[[buffer(5)]],
