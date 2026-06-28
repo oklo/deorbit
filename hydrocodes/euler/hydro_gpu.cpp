@@ -13,6 +13,7 @@
 #include <algorithm>
 using namespace std;
 struct GMat { float rho0,A,B,a,b,alpha,beta,u0,uiv,ucv,G,Y,Emod; };
+struct SParams { int nx,ny,nz; float invdx; uint32_t n; float rcfl; int axisym; float eta_af; };   // mirrors hydro.metal SParams (strength kernel scalars)
 static GMat BASALT={2700,2.67e10f,2.67e10f,0.5f,1.5f,5,5,4.87e8f,4.72e6f,1.82e7f,2.27e10f,3.5e8f,5.306e10f};
 static GMat AL={2700,7.52e10f,6.5e10f,0.5f,1.63f,5,5,5.0e6f,3.0e6f,1.39e7f,0,0,0};   // aluminum, hydro (Pierazzo)
 static float GAM=1.4f;
@@ -54,6 +55,7 @@ int main(int argc,char**argv){
     string mode=argc>1?argv[1]:"sod"; double rho0=2700,G=BASALT.G,Y=BASALT.Y,csb=sqrt(G/rho0);
     int nx,ny,nz,emode; double Ldom,tend,CFL; float gz=0.0f, rcfl=0.0f, rvac=0.0f; int wb=0;
     float cact=0.0f, tdecf=0.0f, pcoh=1.0e6f;   // shock-activated AF: activation coupling, vibration decay time, cohesion floor (0 = AF off)
+    float etaaf=0.0f;   // AF Newtonian viscosity coefficient (Pa.s); 0 = AF viscosity off
     int axisym=0;   // cylindrical (r,z) axisymmetric geometry (x->r, axis at r=0); 0 = Cartesian
     if(mode=="sod"){nx=200;ny=nz=1;Ldom=1.0;tend=0.2;CFL=0.4;emode=0;}
     else if(mode=="substrate"){nx=60;ny=1;nz=60;Ldom=30000.0;tend=200.0;CFL=0.4;emode=1;gz=3.71f;wb=1;rcfl=100.0f;}  // route 1: well-balanced gravity-loaded substrate
@@ -71,7 +73,9 @@ int main(int argc,char**argv){
     else if(mode=="af_activate"){nx=200;ny=nz=1;Ldom=100e3;tend=3.0;CFL=0.4;emode=1;cact=0.5f;tdecf=10.0f;}  // shock-activated AF unit test (matches CPU Run A)
     else if(mode=="sedov_axi"){nx=64;ny=1;nz=128;Ldom=2.0;tend=0.5;CFL=0.3;emode=0;axisym=1;}  // axisymmetric (r,z) on-axis point blast = 3D spherical Sedov
     else if(mode=="lame"){nx=200;ny=nz=1;Ldom=200*500.0;tend=0.0;CFL=0.4;emode=1;axisym=1;}  // Phase-2b: cylindrical strength gate (single-eval hoop strain + Lame equilibrium); tend=0 -> handled before the main loop
-    else { fprintf(stderr,"unknown mode '%s' (modes: sod sedov surface bshock shear yield freefall atmos tensile pierazzo vacuum substrate tracer af_activate sedov_axi lame)\n",mode.c_str()); return 2; }   // fatal: never silently validate the wrong physics
+    else if(mode=="af_visc"){nx=120;ny=nz=1;Ldom=120*500.0;tend=0.0;CFL=0.4;emode=1;axisym=1;etaaf=1e9f;}  // Phase-2b item 5: cylindrical AF viscosity (single-eval af=1 vs af=0); pre-loop block
+    else if(mode=="vib_advect"){nx=200;ny=nz=1;Ldom=200*500.0;tend=10.0;CFL=0.4;emode=1;}  // Phase-2b item 6: vib advects with the flow (uniform v0 -> bump translates); cact=etaaf=0 -> pure advection
+    else { fprintf(stderr,"unknown mode '%s' (modes: sod sedov surface bshock shear yield freefall atmos tensile pierazzo vacuum substrate tracer af_activate sedov_axi lame af_visc vib_advect)\n",mode.c_str()); return 2; }   // fatal: never silently validate the wrong physics
     double dx=Ldom/((nx==1&&ny==1)?nz:nx); uint32_t n=nx*ny*nz; float invdx=1.0f/dx; float gam=GAM;
     GMat MG=(mode=="pierazzo")?AL:BASALT; bool strn=(emode==1 && MG.G>0);   // Al = pure hydro (no strength/damage)
     float epsact=(float)pow(1.0/(1e61*dx*dx*dx),1.0/16.0);   // Weibull weakest-flaw activation strain (host: wk=1e61 overflows FP32)
@@ -92,6 +96,7 @@ int main(int argc,char**argv){
     auto bRR0=buf(n*4),bRP0=buf(n*4);   // route 1: frozen hydrostatic reference (density, pressure)
     auto brc=buf(n*4),brc1=buf(n*4),bdrc=buf(n*4);   // M-tag: passive material tracer rc=rho*c (+ RK temp, derivative)
     auto bvib=buf(n*4),baf=buf(n*4);   // AF: vibrational velocity + fluidization fraction (bPmax reused as the shock-arrival detector)
+    auto bvib1=buf(n*4),bdvib=buf(n*4);   // AF: vib RK predictor temp + advection rate (item 6)
     float*r=(float*)br->contents(),*mu=(float*)bmu->contents(),*mv=(float*)bmv->contents(),*mw=(float*)bmw->contents(),*E=(float*)bE->contents();
     float*pxy=(float*)bxy->contents(); // for shear/yield diagnostics
     if(mode=="sod"){for(int i=0;i<nx;i++){double x=(i+0.5)*dx;float rr=x<0.5?1.0f:0.125f,pp=x<0.5?1.0f:0.1f;r[i]=rr;E[i]=pp/(GAM-1);}}
@@ -112,6 +117,7 @@ int main(int argc,char**argv){
             else {r[c]=0.27f;E[c]=0;}                                      // low-density ambient
         }}
     else if(mode=="af_activate"){double V=2000.0;for(int i=0;i<nx;i++){r[i]=rho0;E[i]=0;if(i<nx/2)mu[i]=rho0*V;}}  // left half -> right: a planar basalt shock
+    else if(mode=="vib_advect"){double v0=2000.0,x0=0.3*Ldom,wid=8e3;float*Vb=(float*)bvib->contents();for(int i=0;i<nx;i++){double x=(i+0.5)*dx;r[i]=rho0;mu[i]=rho0*v0;E[i]=0.5*rho0*v0*v0;Vb[i]=exp(-((x-x0)/wid)*((x-x0)/wid));}}  // uniform v0 flow + a vib bump
     else if(mode=="sedov_axi"){for(uint32_t c=0;c<n;c++){r[c]=1.0f;E[c]=1e-4/(GAM-1);} int kc=nz/2; E[kc]+=1.0/(3.141592653589793*dx*dx*dx);}  // on-axis point blast (cell i=0,k=kc -> linear index kc); 3D volume = pi*dx^3
     else {double x0=0.3*Ldom,wid=8e3,A=(mode=="shear"?1.0:2000.0);for(int i=0;i<nx;i++){double x=(i+0.5)*dx;r[i]=rho0;double vy=A*exp(-((x-x0)/wid)*((x-x0)/wid));mv[i]=rho0*vy;E[i]=0.5*rho0*vy*vy;}}
     auto Plop=pso("lop"),Pws=pso("wavespeed"),Prk1=pso("rk1"),Prk2=pso("rk2"),Pstr=pso("strength"),Pvm=pso("vonmises"),Prk1s=pso("rk1s"),Prk2s=pso("rk2s"),Pgd=pso("grow_damage"),Ppm=pso("pmax_update"),Pvoid=pso("voidzero"),Pdamp=pso("damp"),Prk1c=pso("rk1c"),Prk2c=pso("rk2c"),Pupaf=pso("update_af");
@@ -120,13 +126,14 @@ int main(int argc,char**argv){
     float*RR0=(float*)bRR0->contents(),*RP0=(float*)bRP0->contents();
     if(wb){ for(uint32_t c=0;c<n;c++){ RR0[c]=r[c]; float p=tillP(r[c],0.0f,MG); RP0[c]=p<0?0:p; } }   // route 1: freeze IC as the hydrostatic reference
     auto lopA=vector<pair<const void*,size_t>>{{&NX,4},{&NY,4},{&NZ,4},{&invdx,4},{&emode,4},{&gam,4},{&MG,sizeof(GMat)},{&n,4},{&gz,4},{&wb,4},{&rvac,4},{&axisym,4}};
-    auto strA=vector<pair<const void*,size_t>>{{&NX,4},{&NY,4},{&NZ,4},{&invdx,4},{&MG,sizeof(GMat)},{&n,4},{&rcfl,4},{&axisym,4}};
+    SParams sp{NX,NY,NZ,invdx,n,rcfl,axisym,etaaf};   // strength scalars packed into one buffer (Metal bind-point cap)
+    auto strA=vector<pair<const void*,size_t>>{{&MG,sizeof(GMat)},{&sp,sizeof(SParams)}};
     auto vmA=vector<pair<const void*,size_t>>{{&MG,sizeof(GMat)},{&n,4}};
     if(mode=="lame"){   // Phase-2b GPU: cylindrical strength gate -- two single-evaluation sub-checks, mirrors the CPU oracle (GPU==CPU)
         float Gm=MG.G; float dxf=(float)dx; bool A=false,B=false;
         auto evalLopStr=[&](){   // one lop + one strength evaluation (no time integration); reads dS / dmu back
             run(Plop,n,{br,bmu,bmv,bmw,bE,bdr,bdmu,bdmv,bdmw,bdE,bRR0,bRP0,brc,bdrc},lopA);
-            run(Pstr,n,{br,bmu,bmv,bmw,bE,bxx,byy,bzz,bxy,bxz,byz,bdmu,bdmv,bdmw,bdE,dxx,dyy,dzz,dxy,dxz,dyz,bD,bdD},strA); };
+            run(Pstr,n,{br,bmu,bmv,bmw,bE,bxx,byy,bzz,bxy,bxz,byz,bdmu,bdmv,bdmw,bdE,dxx,dyy,dzz,dxy,dxz,dyz,bD,bdD,baf,bvib,bdvib},strA); };
         // (A) HOOP STRAIN RATE: u(r)=edot*r, zero stress -> dS driven by e_thth=u/r (geometric)
         float edot=1e-6f;
         for(uint32_t c=0;c<n;c++){ r[c]=MG.rho0; E[c]=0; mu[c]=MG.rho0*edot*(((float)c+0.5f)*dxf); mv[c]=mw[c]=0; }
@@ -156,8 +163,28 @@ int main(int argc,char**argv){
         printf("GATE(==CPU, cylindrical strength: hoop strain rate exact & Lame equilibrium balances): %s\n",(A&&B)?"PASS":"CHECK");
         return 0;
     }
+    if(mode=="af_visc"){   // Phase-2b item 5 GPU: cylindrical AF viscosity. Difference af=1 vs af=0 isolates the af-dependent viscous term (hydro/pressure cancel). GPU==CPU.
+        float dxf=(float)dx, A=1e-9f; int ic=nx/2;
+        for(uint32_t c=0;c<n;c++){ r[c]=MG.rho0; E[c]=0; mv[c]=mw[c]=0; float rr=((float)c+0.5f)*dxf; mu[c]=MG.rho0*A*rr*rr; }  // u(r)=A*r^2
+        for(auto b:{bxx,byy,bzz,bxy,bxz,byz,bvib}) memset(b->contents(),0,n*4);
+        float*AF=(float*)baf->contents();
+        auto eval=[&](float afv)->double{   // one lop+strength eval with af=afv everywhere; return d.mu at the interior cell
+            for(uint32_t c=0;c<n;c++) AF[c]=afv;
+            for(auto b:{bdmu,bdmv,bdmw,bdE}) memset(b->contents(),0,n*4);
+            run(Plop,n,{br,bmu,bmv,bmw,bE,bdr,bdmu,bdmv,bdmw,bdE,bRR0,bRP0,brc,bdrc},lopA);
+            run(Pstr,n,{br,bmu,bmv,bmw,bE,bxx,byy,bzz,bxy,bxz,byz,bdmu,bdmv,bdmw,bdE,dxx,dyy,dzz,dxy,dxz,dyz,bD,bdD,baf,bvib,bdvib},strA);
+            return (double)((float*)bdmu->contents())[ic]; };
+        double dmu1=eval(1.0f), dmu0=eval(0.0f), visc=dmu1-dmu0;
+        double an_cyl=(double)etaaf*3.0*A, an_cart=(double)etaaf*2.0*A;
+        bool P=(fabs(visc-an_cyl)<1e-3*fabs(an_cyl));
+        printf("GPU AF visc (cylindrical): isolated viscous d.mu=%.6e  analytic cyl 3A=%.6e (Cartesian-only 2A=%.6e)  rel err %.2e\n",visc,an_cyl,an_cart,fabs(visc-an_cyl)/fabs(an_cyl));
+        printf("GATE(==CPU, cylindrical AF viscosity (lap v)_r = 3A not 2A): %s\n",P?"PASS":"CHECK");
+        return 0;
+    }
     double rc0=0, cen0=0;
     if(mode=="tracer"){float*RC=(float*)brc->contents();for(int i=0;i<nx;i++){rc0+=RC[i];cen0+=RC[i]*(i+0.5)*dx;} cen0/=rc0;}
+    double vs0=0,vcen0=0;
+    if(mode=="vib_advect"){float*Vb=(float*)bvib->contents();for(int i=0;i<nx;i++){vs0+=Vb[i];vcen0+=Vb[i]*(i+0.5)*dx;} vcen0/=vs0;}
     double t=0;int step=0;
     while(t<tend){
         run(Pws,n,{br,bmu,bmv,bmw,bE,bsp},{{&emode,4},{&gam,4},{&MG,sizeof(GMat)},{&n,4},{&rcfl,4}});
@@ -167,17 +194,19 @@ int main(int argc,char**argv){
         if(cact>0.0f) run(Pupaf,n,{br,bmu,bmv,bmw,bE,bvib,bPmax,baf},   // shock-activated AF: refresh vib + derive af BEFORE strength reads it (once per step, on the start-of-step state)
             {{&dt,4},{&cact,4},{&tdecf,4},{&pcoh,4},{&emode,4},{&gam,4},{&MG,sizeof(GMat)},{&n,4}});
         run(Plop,n,{br,bmu,bmv,bmw,bE,bdr,bdmu,bdmv,bdmw,bdE,bRR0,bRP0,brc,bdrc},lopA);
-        if(strn) run(Pstr,n,{br,bmu,bmv,bmw,bE,bxx,byy,bzz,bxy,bxz,byz,bdmu,bdmv,bdmw,bdE,dxx,dyy,dzz,dxy,dxz,dyz,bD,bdD},strA);
+        if(strn) run(Pstr,n,{br,bmu,bmv,bmw,bE,bxx,byy,bzz,bxy,bxz,byz,bdmu,bdmv,bdmw,bdE,dxx,dyy,dzz,dxy,dxz,dyz,bD,bdD,baf,bvib,bdvib},strA);
         run(Prk1,n,{br,bmu,bmv,bmw,bE,bdr,bdmu,bdmv,bdmw,bdE,br1,bmu1,bmv1,bmw1,bE1},dtA);
         run(Prk1c,n,{brc,bdrc,brc1},dtA);   // tracer predictor: rc1 = rc + dt*drc
-        if(strn){ run(Prk1s,n,{bxx,byy,bzz,bxy,bxz,byz,dxx,dyy,dzz,dxy,dxz,dyz,sxx1,syy1,szz1,sxy1,sxz1,syz1,bD,bdD,bD1},dtA);
+        if(strn){ run(Prk1c,n,{bvib,bdvib,bvib1},dtA);   // vib predictor: vib1 = vib + dt*dvib (reuses the generic scalar-RK kernel)
+                  run(Prk1s,n,{bxx,byy,bzz,bxy,bxz,byz,dxx,dyy,dzz,dxy,dxz,dyz,sxx1,syy1,szz1,sxy1,sxz1,syz1,bD,bdD,bD1},dtA);
                   run(Pvm,n,{sxx1,syy1,szz1,sxy1,sxz1,syz1,bD1,baf},vmA); }
         if(rcfl>0) run(Pvoid,n,{bmu1,bmv1,bmw1,br1,bE1,sxx1,syy1,szz1,sxy1,sxz1,syz1,bRR0},{{&rcfl,4},{&n,4}});   // clean predictor void cells before strength reads near-vacuum velocity/stress
         run(Plop,n,{br1,bmu1,bmv1,bmw1,bE1,bdr,bdmu,bdmv,bdmw,bdE,bRR0,bRP0,brc1,bdrc},lopA);   // predictor reads rc1
-        if(strn) run(Pstr,n,{br1,bmu1,bmv1,bmw1,bE1,sxx1,syy1,szz1,sxy1,sxz1,syz1,bdmu,bdmv,bdmw,bdE,dxx,dyy,dzz,dxy,dxz,dyz,bD1,bdD},strA);
+        if(strn) run(Pstr,n,{br1,bmu1,bmv1,bmw1,bE1,sxx1,syy1,szz1,sxy1,sxz1,syz1,bdmu,bdmv,bdmw,bdE,dxx,dyy,dzz,dxy,dxz,dyz,bD1,bdD,baf,bvib1,bdvib},strA);   // corrector reads predictor state (vib1; af held through the step)
         run(Prk2,n,{br,bmu,bmv,bmw,bE,br1,bmu1,bmv1,bmw1,bE1,bdr,bdmu,bdmv,bdmw,bdE},dtA);
         run(Prk2c,n,{brc,brc1,bdrc},dtA);   // tracer corrector: rc = 0.5*(rc + rc1 + dt*drc)
-        if(strn){ run(Prk2s,n,{bxx,byy,bzz,bxy,bxz,byz,sxx1,syy1,szz1,sxy1,sxz1,syz1,dxx,dyy,dzz,dxy,dxz,dyz,bD,bD1,bdD},dtA);
+        if(strn){ run(Prk2c,n,{bvib,bvib1,bdvib},dtA);   // vib corrector: vib = 0.5*(vib + vib1 + dt*dvib)
+                  run(Prk2s,n,{bxx,byy,bzz,bxy,bxz,byz,sxx1,syy1,szz1,sxy1,sxz1,syz1,dxx,dyy,dzz,dxy,dxz,dyz,bD,bD1,bdD},dtA);
                   run(Pgd,n,{br,bmu,bmv,bmw,bE,bxx,byy,bzz,bD},gdA);
                   run(Pvm,n,{bxx,byy,bzz,bxy,bxz,byz,bD,baf},vmA); }
         if(mode=="pierazzo") run(Ppm,n,{br,bmu,bmv,bmw,bE,bPmax},{{&MG,sizeof(GMat)},{&n,4}});
@@ -203,6 +232,12 @@ int main(int argc,char**argv){
         for(int i=180;i<nx;i++)   vib_a=max(vib_a,(double)Vb[i]);
         printf("GPU AF activate (shock seeding): vib behind front=%.1f m/s, ahead=%.1e m/s  GATE(==CPU, vib_b>1 & vib_a<1e-3): %s\n",
                vib_b,vib_a,(vib_b>1.0&&vib_a<1e-3)?"PASS":"CHECK");
+    } else if(mode=="vib_advect"){   // Phase-2b item 6: vib advects with the flow -> bump translates at v0, sum conserved
+        float*Vb=(float*)bvib->contents(); double s1=0,cen1=0,vmax=0,v0=2000.0;
+        for(int i=0;i<nx;i++){s1+=Vb[i];cen1+=Vb[i]*(i+0.5)*dx;vmax=max(vmax,(double)Vb[i]);}
+        cen1/=s1; double vcen=(cen1-vcen0)/t,merr=fabs(s1-vs0)/vs0,verr=fabs(vcen-v0)/v0;
+        printf("GPU vib advect: sum(vib) %.4f->%.4f (err %.2e); centroid v=%.1f vs v0=%.0f (err %.2e); peak=%.3f  GATE(==CPU, sum<1%% & v<2%% & peak>0): %s\n",
+               vs0,s1,merr,vcen,v0,verr,vmax,(merr<0.01&&verr<0.02&&vmax>0)?"PASS":"CHECK");
     } else if(mode=="tracer"){
         float*RC=(float*)brc->contents(); double rc1=0,cen1=0,cmin=1e30,cmax=-1e30,v0=2.0;
         for(int i=0;i<nx;i++){double cc=RC[i]/r[i];rc1+=RC[i];cen1+=RC[i]*(i+0.5)*dx;cmin=min(cmin,cc);cmax=max(cmax,cc);}

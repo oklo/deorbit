@@ -3,6 +3,7 @@ using namespace metal;
 // euler M2b: GPU hydro with pluggable EOS (ideal | Tillotson) + free surface. FP32.
 // Mirrors hydro_cpu.cpp (the oracle). Reconstructs internal energy e; P>=0 fluid floor.
 struct GMat { float rho0,A,B,a,b,alpha,beta,u0,uiv,ucv, G,Y,Emod; };
+struct SParams { int nx,ny,nz; float invdx; uint n; float rcfl; int axisym; float eta_af; };   // strength kernel scalars packed into one buffer (Metal caps bind points at 31)
 struct C5 { float r,mu,mv,mw,E; };
 // ---- Tillotson (copied verbatim from gpu/sph_force.metal, the SPH-validated EOS) ----
 inline float till(float rho,float u,constant GMat&m){
@@ -239,11 +240,11 @@ kernel void strength(device const float*r[[buffer(0)]],device const float*mu[[bu
     device float*dSxx[[buffer(15)]],device float*dSyy[[buffer(16)]],device float*dSzz[[buffer(17)]],
     device float*dSxy[[buffer(18)]],device float*dSxz[[buffer(19)]],device float*dSyz[[buffer(20)]],
     device const float*Dd[[buffer(21)]],device float*dD[[buffer(22)]],
-    constant int&nx[[buffer(23)]],constant int&ny[[buffer(24)]],constant int&nz[[buffer(25)]],
-    constant float&invdx[[buffer(26)]],constant GMat&mat[[buffer(27)]],constant uint&n[[buffer(28)]],
-    constant float&rcfl[[buffer(29)]],constant int&axisym[[buffer(30)]],uint gid[[thread_position_in_grid]]){
+    device const float*af[[buffer(23)]],device const float*vib[[buffer(24)]],device float*dvib[[buffer(25)]],
+    constant GMat&mat[[buffer(26)]],constant SParams&P[[buffer(27)]],uint gid[[thread_position_in_grid]]){
+    int nx=P.nx,ny=P.ny,nz=P.nz,axisym=P.axisym; uint n=P.n; float invdx=P.invdx,rcfl=P.rcfl,eta_af=P.eta_af;   // unpack (keeps the body identical to the CPU oracle)
     if(gid>=n)return; float G=mat.G; if(G<=0.0f)return;
-    if(r[gid]<rcfl){dSxx[gid]=dSyy[gid]=dSzz[gid]=dSxy[gid]=dSxz[gid]=dSyz[gid]=0.0f;dD[gid]=0.0f;return;}   // no strength in vacuum
+    if(r[gid]<rcfl){dSxx[gid]=dSyy[gid]=dSzz[gid]=dSxy[gid]=dSxz[gid]=dSyz[gid]=0.0f;dD[gid]=0.0f;dvib[gid]=0.0f;return;}   // no strength in vacuum
     int k=gid%nz,j=(gid/nz)%ny,i=gid/(ny*nz);
     int xm=((i>0?i-1:0)*ny+j)*nz+k, xp=((i<nx-1?i+1:nx-1)*ny+j)*nz+k;
     int ym=(i*ny+(j>0?j-1:0))*nz+k, yp=(i*ny+(j<ny-1?j+1:ny-1))*nz+k;
@@ -270,10 +271,16 @@ kernel void strength(device const float*r[[buffer(0)]],device const float*mu[[bu
     dSxx[gid]=2*G*(exx-tr)+Jm[0][0]-ADV(Sxx); dSyy[gid]=2*G*(eyy-tr)+Jm[1][1]-ADV(Syy); dSzz[gid]=2*G*(ezz-tr)+Jm[2][2]-ADV(Szz);
     dSxy[gid]=2*G*exy+Jm[0][1]-ADV(Sxy); dSxz[gid]=2*G*exz+Jm[0][2]-ADV(Sxz); dSyz[gid]=2*G*eyz+Jm[1][2]-ADV(Syz);
     dD[gid]=-ADV(Dd);   // damage advects with the flow
+    dvib[gid]=-ADV(vib);   // AF vibrational velocity advects with the flow (scalar -> no cylindrical geometric term; seed/decay are operator-split in update_af)
     dmu[gid]+=(Sxx[xp]-Sxx[xm])/hx+(Sxy[yp]-Sxy[ym])/hy+(Sxz[zp]-Sxz[zm])/hz;
     dmv[gid]+=(Sxy[xp]-Sxy[xm])/hx+(Syy[yp]-Syy[ym])/hy+(Syz[zp]-Syz[zm])/hz;
     dmw[gid]+=(Sxz[xp]-Sxz[xm])/hx+(Syz[yp]-Syz[ym])/hy+(Szz[zp]-Szz[zm])/hz;
     if(axisym!=0){ dmu[gid]+=(Sxx[gid]-Syy[gid])/rcyl; dmw[gid]+=Sxz[gid]/rcyl; }   // geometric stress-divergence sources: (div S)_r+=(S_rr-S_thth)/r, (div S)_z+=S_rz/r
+    if(af[gid]>0.0f && eta_af>0.0f){ float eta=af[gid]*eta_af, id2=invdx*invdx;   // AF Newtonian viscosity (damps fluidized flow); Cartesian vector Laplacian + cylindrical correction
+        dmu[gid]+=eta*(VX(xp)+VX(xm)+VX(yp)+VX(ym)+VX(zp)+VX(zm)-6.0f*VX(gid))*id2;
+        dmv[gid]+=eta*(VY(xp)+VY(xm)+VY(yp)+VY(ym)+VY(zp)+VY(zm)-6.0f*VY(gid))*id2;
+        dmw[gid]+=eta*(VZ(xp)+VZ(xm)+VZ(yp)+VZ(ym)+VZ(zp)+VZ(zm)-6.0f*VZ(gid))*id2;
+        if(axisym!=0){ dmu[gid]+=eta*(Lxx/rcyl - VX(gid)/(rcyl*rcyl)); dmw[gid]+=eta*(Lzx/rcyl); } }   // (lap v)_r=lap_scalar(u)-u/r^2; (lap v)_z=lap_scalar(w)
     #define SVX(c) (Sxx[c]*VX(c)+Sxy[c]*VY(c)+Sxz[c]*VZ(c))
     #define SVY(c) (Sxy[c]*VX(c)+Syy[c]*VY(c)+Syz[c]*VZ(c))
     #define SVZ(c) (Sxz[c]*VX(c)+Syz[c]*VY(c)+Szz[c]*VZ(c))
