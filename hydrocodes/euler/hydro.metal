@@ -144,7 +144,7 @@ kernel void lop(device const float*r[[buffer(0)]],device const float*mu[[buffer(
                 constant int&nx[[buffer(14)]],constant int&ny[[buffer(15)]],constant int&nz[[buffer(16)]],
                 constant float&invdx[[buffer(17)]],constant int&mode[[buffer(18)]],constant float&gam[[buffer(19)]],
                 constant GMat&mat[[buffer(20)]],constant uint&n[[buffer(21)]],constant float&gz[[buffer(22)]],
-                constant int&wb[[buffer(23)]],constant float&rvac[[buffer(24)]],
+                constant int&wb[[buffer(23)]],constant float&rvac[[buffer(24)]],constant int&axisym[[buffer(25)]],
                 uint gid[[thread_position_in_grid]]){
     if(gid>=n) return;
     int k=gid%nz, j=(gid/nz)%ny, i=gid/(ny*nz);
@@ -163,18 +163,21 @@ kernel void lop(device const float*r[[buffer(0)]],device const float*mu[[buffer(
             FRa=faceflux_wb(cm1,c0,cp1,cp2, RP0[m1],RP0[p0],RP0[p1],RP0[p2], RR0[p0],RR0[p1], mode,gam,mat);
             FLa=faceflux_wb(cm2,cm1,c0,cp1, RP0[m2],RP0[m1],RP0[p0],RP0[p1], RR0[m1],RR0[p0], mode,gam,mat);
         } else { FRa=faceflux(cm1,c0,cp1,cp2,dir,mode,gam,mat,rvac); FLa=faceflux(cm2,cm1,c0,cp1,dir,mode,gam,mat,rvac); }
-        acc.r-=(FRa.r-FLa.r);acc.mu-=(FRa.mu-FLa.mu);acc.mv-=(FRa.mv-FLa.mv);acc.mw-=(FRa.mw-FLa.mw);acc.E-=(FRa.E-FLa.E);
+        float wR=1.0f,wL=1.0f,sc=invdx;   // per-direction flux-divergence scaling (Cartesian)
+        if(axisym!=0 && dir==0){ float dxl=1.0f/invdx, rcc=((float)i+0.5f)*dxl; wR=((float)i+1.0f)*dxl; wL=((float)i)*dxl; sc=1.0f/(rcc*dxl); }  // cylindrical r-sweep: area-weight by face radius (axis r=0 -> zero area)
+        acc.r-=(wR*FRa.r-wL*FLa.r)*sc;acc.mu-=(wR*FRa.mu-wL*FLa.mu)*sc;acc.mv-=(wR*FRa.mv-wL*FLa.mv)*sc;acc.mw-=(wR*FRa.mw-wL*FLa.mw)*sc;acc.E-=(wR*FRa.E-wL*FLa.E)*sc;
         float crR=(FRa.r>=0.0f? rc[p0]/c0.r : rc[p1]/cp1.r);   // species flux = mass flux * upwind c
         float crL=(FLa.r>=0.0f? rc[m1]/cm1.r : rc[p0]/c0.r);
-        accrc-=(FRa.r*crR-FLa.r*crL);
+        accrc-=(wR*FRa.r*crR-wL*FLa.r*crL)*sc;
+        if(axisym!=0 && dir==0){ float dxl=1.0f/invdx, rcc=((float)i+0.5f)*dxl; acc.mu+=eospc(c0.r,eint(c0),mode,gam,mat).x/rcc; }   // cylindrical pressure geometric source on r-momentum
     }
-    drc[gid]=accrc*invdx;
-    dr[gid]=acc.r*invdx;dmu[gid]=acc.mu*invdx;dmv[gid]=acc.mv*invdx;
+    drc[gid]=accrc;   // acc already carries the (Cartesian or cylindrical) divergence scaling
+    dr[gid]=acc.r;dmu[gid]=acc.mu;dmv[gid]=acc.mv;
     if(wb!=0){   // route 1 well-balanced gravity source (EOS reference face P; cancels the reference flux divergence)
         int ktop=(k<nz-1?gid+1:gid), kbot=(k>0?gid-1:gid);
         float p0t=eospc(0.5f*(RR0[gid]+RR0[ktop]),0.0f,mode,gam,mat).x, p0b=eospc(0.5f*(RR0[kbot]+RR0[gid]),0.0f,mode,gam,mat).x;
-        dmw[gid]=acc.mw*invdx - gz*(r[gid]-RR0[gid]) + (p0t-p0b)*invdx; dE[gid]=acc.E*invdx - gz*mw[gid];
-    } else { dmw[gid]=acc.mw*invdx - gz*r[gid]; dE[gid]=acc.E*invdx - gz*mw[gid]; }   // plain gravity body force
+        dmw[gid]=acc.mw - gz*(r[gid]-RR0[gid]) + (p0t-p0b)*invdx; dE[gid]=acc.E - gz*mw[gid];   // WB pressure-gradient term keeps invdx (Cartesian z)
+    } else { dmw[gid]=acc.mw - gz*r[gid]; dE[gid]=acc.E - gz*mw[gid]; }   // plain gravity body force
 }
 // route 1: small relaxation damping to quench FP32-noise velocities in the near-equilibrium substrate (no-op for f=1)
 kernel void damp(device float*mu[[buffer(0)]],device float*mv[[buffer(1)]],device float*mw[[buffer(2)]],

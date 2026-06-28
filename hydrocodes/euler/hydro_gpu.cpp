@@ -54,6 +54,7 @@ int main(int argc,char**argv){
     string mode=argc>1?argv[1]:"sod"; double rho0=2700,G=BASALT.G,Y=BASALT.Y,csb=sqrt(G/rho0);
     int nx,ny,nz,emode; double Ldom,tend,CFL; float gz=0.0f, rcfl=0.0f, rvac=0.0f; int wb=0;
     float cact=0.0f, tdecf=0.0f, pcoh=1.0e6f;   // shock-activated AF: activation coupling, vibration decay time, cohesion floor (0 = AF off)
+    int axisym=0;   // cylindrical (r,z) axisymmetric geometry (x->r, axis at r=0); 0 = Cartesian
     if(mode=="sod"){nx=200;ny=nz=1;Ldom=1.0;tend=0.2;CFL=0.4;emode=0;}
     else if(mode=="substrate"){nx=60;ny=1;nz=60;Ldom=30000.0;tend=200.0;CFL=0.4;emode=1;gz=3.71f;wb=1;rcfl=100.0f;}  // route 1: well-balanced gravity-loaded substrate
     else if(mode=="tracer"){nx=200;ny=nz=1;Ldom=1.0;tend=0.15;CFL=0.4;emode=0;}  // M-tag: passive material tracer advection
@@ -68,7 +69,8 @@ int main(int argc,char**argv){
     else if(mode=="pierazzo"){nx=ny=80;nz=100;Ldom=8.0;tend=1.2e-3;CFL=0.3;emode=1;}   // 3D Al sphere impact (dx=0.1m, a=1m=10cppr)
     else if(mode=="yield"){nx=400;ny=nz=1;Ldom=400e3;tend=15e3/csb;CFL=0.3;emode=1;}
     else if(mode=="af_activate"){nx=200;ny=nz=1;Ldom=100e3;tend=3.0;CFL=0.4;emode=1;cact=0.5f;tdecf=10.0f;}  // shock-activated AF unit test (matches CPU Run A)
-    else { fprintf(stderr,"unknown mode '%s' (modes: sod sedov surface bshock shear yield freefall atmos tensile pierazzo vacuum substrate tracer af_activate)\n",mode.c_str()); return 2; }   // fatal: never silently validate the wrong physics
+    else if(mode=="sedov_axi"){nx=64;ny=1;nz=128;Ldom=2.0;tend=0.5;CFL=0.3;emode=0;axisym=1;}  // axisymmetric (r,z) on-axis point blast = 3D spherical Sedov
+    else { fprintf(stderr,"unknown mode '%s' (modes: sod sedov surface bshock shear yield freefall atmos tensile pierazzo vacuum substrate tracer af_activate sedov_axi)\n",mode.c_str()); return 2; }   // fatal: never silently validate the wrong physics
     double dx=Ldom/((nx==1&&ny==1)?nz:nx); uint32_t n=nx*ny*nz; float invdx=1.0f/dx; float gam=GAM;
     GMat MG=(mode=="pierazzo")?AL:BASALT; bool strn=(emode==1 && MG.G>0);   // Al = pure hydro (no strength/damage)
     float epsact=(float)pow(1.0/(1e61*dx*dx*dx),1.0/16.0);   // Weibull weakest-flaw activation strain (host: wk=1e61 overflows FP32)
@@ -109,13 +111,14 @@ int main(int argc,char**argv){
             else {r[c]=0.27f;E[c]=0;}                                      // low-density ambient
         }}
     else if(mode=="af_activate"){double V=2000.0;for(int i=0;i<nx;i++){r[i]=rho0;E[i]=0;if(i<nx/2)mu[i]=rho0*V;}}  // left half -> right: a planar basalt shock
+    else if(mode=="sedov_axi"){for(uint32_t c=0;c<n;c++){r[c]=1.0f;E[c]=1e-4/(GAM-1);} int kc=nz/2; E[kc]+=1.0/(3.141592653589793*dx*dx*dx);}  // on-axis point blast (cell i=0,k=kc -> linear index kc); 3D volume = pi*dx^3
     else {double x0=0.3*Ldom,wid=8e3,A=(mode=="shear"?1.0:2000.0);for(int i=0;i<nx;i++){double x=(i+0.5)*dx;r[i]=rho0;double vy=A*exp(-((x-x0)/wid)*((x-x0)/wid));mv[i]=rho0*vy;E[i]=0.5*rho0*vy*vy;}}
     auto Plop=pso("lop"),Pws=pso("wavespeed"),Prk1=pso("rk1"),Prk2=pso("rk2"),Pstr=pso("strength"),Pvm=pso("vonmises"),Prk1s=pso("rk1s"),Prk2s=pso("rk2s"),Pgd=pso("grow_damage"),Ppm=pso("pmax_update"),Pvoid=pso("voidzero"),Pdamp=pso("damp"),Prk1c=pso("rk1c"),Prk2c=pso("rk2c"),Pupaf=pso("update_af");
     float dampf=1.0f;   // route 1: relaxation damping (1 = off; the void/strength fix makes the substrate stable without it)
     int NX=nx,NY=ny,NZ=nz;
     float*RR0=(float*)bRR0->contents(),*RP0=(float*)bRP0->contents();
     if(wb){ for(uint32_t c=0;c<n;c++){ RR0[c]=r[c]; float p=tillP(r[c],0.0f,MG); RP0[c]=p<0?0:p; } }   // route 1: freeze IC as the hydrostatic reference
-    auto lopA=vector<pair<const void*,size_t>>{{&NX,4},{&NY,4},{&NZ,4},{&invdx,4},{&emode,4},{&gam,4},{&MG,sizeof(GMat)},{&n,4},{&gz,4},{&wb,4},{&rvac,4}};
+    auto lopA=vector<pair<const void*,size_t>>{{&NX,4},{&NY,4},{&NZ,4},{&invdx,4},{&emode,4},{&gam,4},{&MG,sizeof(GMat)},{&n,4},{&gz,4},{&wb,4},{&rvac,4},{&axisym,4}};
     auto strA=vector<pair<const void*,size_t>>{{&NX,4},{&NY,4},{&NZ,4},{&invdx,4},{&MG,sizeof(GMat)},{&n,4},{&rcfl,4}};
     auto vmA=vector<pair<const void*,size_t>>{{&MG,sizeof(GMat)},{&n,4}};
     double rc0=0, cen0=0;
@@ -152,6 +155,13 @@ int main(int argc,char**argv){
         auto pres=[&](int c){float ke=0.5f*(mu[c]*mu[c]+mv[c]*mv[c]+mw[c]*mw[c])/r[c];return (GAM-1)*(E[c]-ke);};
         double l1r=0,l1p=0,l1u=0;for(int i=0;i<nx;i++){double x=(i+0.5)*dx,re,ue,pe;exact_sod((x-0.5)/tend,re,ue,pe);l1r+=fabs(r[i]-re);l1p+=fabs(pres(i)-pe);l1u+=fabs(mu[i]/r[i]-ue);}
         printf("GPU Sod L1 vs EXACT: rho=%.4f p=%.4f u=%.4f  GATE(==CPU): %s\n",l1r/nx,l1p/nx,l1u/nx,(l1r/nx<0.007)?"PASS":"CHECK");
+    } else if(mode=="sedov_axi"){   // axisymmetric geometry check: on-axis point blast = 3D spherical Sedov (same analytic as the 3D gate)
+        double rpk=0,rhomax=0,zc=(nz/2+0.5)*dx;
+        for(int i=0;i<nx;i++)for(int k=0;k<nz;k++){int c=i*nz+k;double rr=r[c];
+            if(rr>rhomax){rhomax=rr;double rad=(i+0.5)*dx,zz=(k+0.5)*dx-zc;rpk=sqrt(rad*rad+zz*zz);}}
+        double Ran=pow(1.0/0.851,0.2)*pow(tend,0.4);
+        printf("GPU Sedov axisym (on-axis = 3D spherical): R_num=%.3f analytic=%.3f (err %.1f%%), compression=%.2f  GATE(==CPU,<10%%): %s\n",
+               rpk,Ran,100*fabs(rpk-Ran)/Ran,rhomax,(fabs(rpk-Ran)/Ran<0.10)?"PASS":"CHECK");
     } else if(mode=="af_activate"){   // shock-activated AF (matches CPU Run A): shock seeds vib behind the front, none ahead
         float*Vb=(float*)bvib->contents(); double vib_b=0,vib_a=0;
         for(int i=101;i<=120;i++) vib_b=max(vib_b,(double)Vb[i]);
