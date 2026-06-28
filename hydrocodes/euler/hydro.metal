@@ -4,6 +4,7 @@ using namespace metal;
 // Mirrors hydro_cpu.cpp (the oracle). Reconstructs internal energy e; P>=0 fluid floor.
 struct GMat { float rho0,A,B,a,b,alpha,beta,u0,uiv,ucv, G,Y,Emod; };
 struct SParams { int nx,ny,nz; float invdx; uint n; float rcfl; int axisym; float eta_af; };   // strength kernel scalars packed into one buffer (Metal caps bind points at 31)
+struct RockP { int rock; float Yi0, mui, mud, yd0, Ym; };   // ROCK pressure-dependent yield params (rock=0 -> cohesion-only von Mises)
 struct C5 { float r,mu,mv,mw,E; };
 // ---- Tillotson (copied verbatim from gpu/sph_force.metal, the SPH-validated EOS) ----
 inline float till(float rho,float u,constant GMat&m){
@@ -289,8 +290,18 @@ kernel void strength(device const float*r[[buffer(0)]],device const float*mu[[bu
 }
 kernel void vonmises(device float*Sxx[[buffer(0)]],device float*Syy[[buffer(1)]],device float*Szz[[buffer(2)]],
     device float*Sxy[[buffer(3)]],device float*Sxz[[buffer(4)]],device float*Syz[[buffer(5)]],
-    device const float*Dd[[buffer(6)]],device const float*af[[buffer(7)]],constant GMat&mat[[buffer(8)]],constant uint&n[[buffer(9)]],uint g[[thread_position_in_grid]]){
-    if(g>=n)return; float Y=(1.0f-Dd[g])*(1.0f-af[g])*mat.Y; if(mat.Y<=0.0f)return;   // damage + acoustic fluidization degrade shear strength
+    device const float*Dd[[buffer(6)]],device const float*af[[buffer(7)]],
+    device const float*r[[buffer(8)]],device const float*mu[[buffer(9)]],device const float*mv[[buffer(10)]],
+    device const float*mw[[buffer(11)]],device const float*E[[buffer(12)]],
+    constant GMat&mat[[buffer(13)]],constant uint&n[[buffer(14)]],constant RockP&rk[[buffer(15)]],uint g[[thread_position_in_grid]]){
+    if(g>=n)return; float Y;
+    if(rk.rock!=0){   // ROCK: pressure-dependent yield (Lundborg intact + damaged friction), AF-coupled
+        float ke=0.5f*(mu[g]*mu[g]+mv[g]*mv[g]+mw[g]*mw[g])/r[g], e=(E[g]-ke)/r[g];
+        float P=max(till(r[g],e,mat),0.0f);
+        float Yi=rk.Yi0 + rk.mui*P/(1.0f + rk.mui*P/max(rk.Ym-rk.Yi0,1.0f));
+        float Yd=min(rk.yd0 + rk.mud*P, rk.Ym);
+        Y=((1.0f-Dd[g])*Yi + Dd[g]*Yd)*(1.0f-af[g]);
+    } else { Y=(1.0f-Dd[g])*(1.0f-af[g])*mat.Y; if(mat.Y<=0.0f)return; }   // cohesion-only von Mises (back-compat)
     float J2=0.5f*(Sxx[g]*Sxx[g]+Syy[g]*Syy[g]+Szz[g]*Szz[g])+Sxy[g]*Sxy[g]+Sxz[g]*Sxz[g]+Syz[g]*Syz[g];
     float vm=sqrt(3.0f*J2); if(vm>Y){float f=(vm>0.0f?Y/vm:0.0f); Sxx[g]*=f;Syy[g]*=f;Szz[g]*=f;Sxy[g]*=f;Sxz[g]*=f;Syz[g]*=f;}
 }

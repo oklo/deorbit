@@ -14,6 +14,7 @@
 using namespace std;
 struct GMat { float rho0,A,B,a,b,alpha,beta,u0,uiv,ucv,G,Y,Emod; };
 struct SParams { int nx,ny,nz; float invdx; uint32_t n; float rcfl; int axisym; float eta_af; };   // mirrors hydro.metal SParams (strength kernel scalars)
+struct RockP { int rock; float Yi0, mui, mud, yd0, Ym; };   // mirrors hydro.metal RockP (pressure-dependent yield; rock=0 -> cohesion-only)
 static GMat BASALT={2700,2.67e10f,2.67e10f,0.5f,1.5f,5,5,4.87e8f,4.72e6f,1.82e7f,2.27e10f,3.5e8f,5.306e10f};
 static GMat AL={2700,7.52e10f,6.5e10f,0.5f,1.63f,5,5,5.0e6f,3.0e6f,1.39e7f,0,0,0};   // aluminum, hydro (Pierazzo)
 static float GAM=1.4f;
@@ -75,7 +76,8 @@ int main(int argc,char**argv){
     else if(mode=="lame"){nx=200;ny=nz=1;Ldom=200*500.0;tend=0.0;CFL=0.4;emode=1;axisym=1;}  // Phase-2b: cylindrical strength gate (single-eval hoop strain + Lame equilibrium); tend=0 -> handled before the main loop
     else if(mode=="af_visc"){nx=120;ny=nz=1;Ldom=120*500.0;tend=0.0;CFL=0.4;emode=1;axisym=1;etaaf=1e9f;}  // Phase-2b item 5: cylindrical AF viscosity (single-eval af=1 vs af=0); pre-loop block
     else if(mode=="vib_advect"){nx=200;ny=nz=1;Ldom=200*500.0;tend=10.0;CFL=0.4;emode=1;}  // Phase-2b item 6: vib advects with the flow (uniform v0 -> bump translates); cact=etaaf=0 -> pure advection
-    else { fprintf(stderr,"unknown mode '%s' (modes: sod sedov surface bshock shear yield freefall atmos tensile pierazzo vacuum substrate tracer af_activate sedov_axi lame af_visc vib_advect)\n",mode.c_str()); return 2; }   // fatal: never silently validate the wrong physics
+    else if(mode=="friction"){nx=8;ny=nz=1;Ldom=8.0;tend=0.0;CFL=0.4;emode=1;}  // Phase-3: ROCK pressure-dependent yield gate (single vonmises eval; pre-loop block)
+    else { fprintf(stderr,"unknown mode '%s' (modes: sod sedov surface bshock shear yield freefall atmos tensile pierazzo vacuum substrate tracer af_activate sedov_axi lame af_visc vib_advect friction)\n",mode.c_str()); return 2; }   // fatal: never silently validate the wrong physics
     double dx=Ldom/((nx==1&&ny==1)?nz:nx); uint32_t n=nx*ny*nz; float invdx=1.0f/dx; float gam=GAM;
     GMat MG=(mode=="pierazzo")?AL:BASALT; bool strn=(emode==1 && MG.G>0);   // Al = pure hydro (no strength/damage)
     float epsact=(float)pow(1.0/(1e61*dx*dx*dx),1.0/16.0);   // Weibull weakest-flaw activation strain (host: wk=1e61 overflows FP32)
@@ -128,7 +130,8 @@ int main(int argc,char**argv){
     auto lopA=vector<pair<const void*,size_t>>{{&NX,4},{&NY,4},{&NZ,4},{&invdx,4},{&emode,4},{&gam,4},{&MG,sizeof(GMat)},{&n,4},{&gz,4},{&wb,4},{&rvac,4},{&axisym,4}};
     SParams sp{NX,NY,NZ,invdx,n,rcfl,axisym,etaaf};   // strength scalars packed into one buffer (Metal bind-point cap)
     auto strA=vector<pair<const void*,size_t>>{{&MG,sizeof(GMat)},{&sp,sizeof(SParams)}};
-    auto vmA=vector<pair<const void*,size_t>>{{&MG,sizeof(GMat)},{&n,4}};
+    RockP rp{0,1.0e7f,1.2f,0.6f,0.0f,2.5e9f};   // default rock=0 (cohesion-only); crater/friction modes enable + set
+    auto vmA=vector<pair<const void*,size_t>>{{&MG,sizeof(GMat)},{&n,4},{&rp,sizeof(RockP)}};
     if(mode=="lame"){   // Phase-2b GPU: cylindrical strength gate -- two single-evaluation sub-checks, mirrors the CPU oracle (GPU==CPU)
         float Gm=MG.G; float dxf=(float)dx; bool A=false,B=false;
         auto evalLopStr=[&](){   // one lop + one strength evaluation (no time integration); reads dS / dmu back
@@ -181,6 +184,26 @@ int main(int argc,char**argv){
         printf("GATE(==CPU, cylindrical AF viscosity (lap v)_r = 3A not 2A): %s\n",P?"PASS":"CHECK");
         return 0;
     }
+    if(mode=="friction"){   // Phase-3 GPU: ROCK pressure-dependent yield. 4 pressures x {intact,damaged}; capped stress must follow Y_i(P)/Y_d(P). GPU==CPU.
+        rp = RockP{1, 1.0e7f, 1.2f, 0.6f, 5.0e6f, 2.5e9f};   // rock on; Y_d0=5e6 to exercise the damaged-cohesion term
+        float muset[4]={0.001f,0.005f,0.02f,0.05f};
+        float*Sxy=(float*)bxy->contents(); float*Dd=(float*)bD->contents();
+        for(int j=0;j<4;j++)for(int dam=0;dam<2;dam++){ int c=j*2+dam;
+            r[c]=BASALT.rho0*(1.0f+muset[j]); E[c]=0; mu[c]=mv[c]=mw[c]=0; Dd[c]=(float)dam; Sxy[c]=5.0e9f; }
+        for(auto b:{bxx,bzz,bxz,byz,byy,baf}) memset(b->contents(),0,n*4);   // only Sxy nonzero; af=0
+        run(Pvm,n,{bxx,byy,bzz,bxy,bxz,byz,bD,baf,br,bmu,bmv,bmw,bE},vmA);
+        auto tillP=[&](float rho){ float eta=rho/BASALT.rho0,m=eta-1.0f; return BASALT.A*m+BASALT.B*m*m; };  // e=0 condensed
+        bool pass=true;
+        printf("GPU ROCK yield: Y_I0=%.2e MU_I=%.2f MU_D=%.2f Y_D0=%.2e Y_M=%.2e\n",rp.Yi0,rp.mui,rp.mud,rp.yd0,rp.Ym);
+        for(int j=0;j<4;j++)for(int dam=0;dam<2;dam++){ int c=j*2+dam;
+            double P=tillP(BASALT.rho0*(1.0f+muset[j]));
+            double vm=sqrt(3.0)*fabs(Sxy[c]);
+            double Yi=rp.Yi0+rp.mui*P/(1.0+rp.mui*P/(rp.Ym-rp.Yi0)), Yd=fmin(rp.yd0+rp.mud*P,rp.Ym), Yan=(dam?Yd:Yi);
+            double err=fabs(vm-Yan)/Yan; if(err>1e-3) pass=false;
+            printf("  P=%.3e D=%d: capped vm=%.4e  analytic Y=%.4e (%s, err %.1e)\n",P,dam,vm,Yan,dam?"damaged friction":"intact Lundborg",err); }
+        printf("GATE(==CPU, ROCK yield: capped stress follows Y_i(P)/Y_d(P)): %s\n",pass?"PASS":"CHECK");
+        return 0;
+    }
     double rc0=0, cen0=0;
     if(mode=="tracer"){float*RC=(float*)brc->contents();for(int i=0;i<nx;i++){rc0+=RC[i];cen0+=RC[i]*(i+0.5)*dx;} cen0/=rc0;}
     double vs0=0,vcen0=0;
@@ -199,7 +222,7 @@ int main(int argc,char**argv){
         run(Prk1c,n,{brc,bdrc,brc1},dtA);   // tracer predictor: rc1 = rc + dt*drc
         if(strn){ run(Prk1c,n,{bvib,bdvib,bvib1},dtA);   // vib predictor: vib1 = vib + dt*dvib (reuses the generic scalar-RK kernel)
                   run(Prk1s,n,{bxx,byy,bzz,bxy,bxz,byz,dxx,dyy,dzz,dxy,dxz,dyz,sxx1,syy1,szz1,sxy1,sxz1,syz1,bD,bdD,bD1},dtA);
-                  run(Pvm,n,{sxx1,syy1,szz1,sxy1,sxz1,syz1,bD1,baf},vmA); }
+                  run(Pvm,n,{sxx1,syy1,szz1,sxy1,sxz1,syz1,bD1,baf,br1,bmu1,bmv1,bmw1,bE1},vmA); }   // predictor state for ROCK pressure
         if(rcfl>0) run(Pvoid,n,{bmu1,bmv1,bmw1,br1,bE1,sxx1,syy1,szz1,sxy1,sxz1,syz1,bRR0},{{&rcfl,4},{&n,4}});   // clean predictor void cells before strength reads near-vacuum velocity/stress
         run(Plop,n,{br1,bmu1,bmv1,bmw1,bE1,bdr,bdmu,bdmv,bdmw,bdE,bRR0,bRP0,brc1,bdrc},lopA);   // predictor reads rc1
         if(strn) run(Pstr,n,{br1,bmu1,bmv1,bmw1,bE1,sxx1,syy1,szz1,sxy1,sxz1,syz1,bdmu,bdmv,bdmw,bdE,dxx,dyy,dzz,dxy,dxz,dyz,bD1,bdD,baf,bvib1,bdvib},strA);   // corrector reads predictor state (vib1; af held through the step)
@@ -208,7 +231,7 @@ int main(int argc,char**argv){
         if(strn){ run(Prk2c,n,{bvib,bvib1,bdvib},dtA);   // vib corrector: vib = 0.5*(vib + vib1 + dt*dvib)
                   run(Prk2s,n,{bxx,byy,bzz,bxy,bxz,byz,sxx1,syy1,szz1,sxy1,sxz1,syz1,dxx,dyy,dzz,dxy,dxz,dyz,bD,bD1,bdD},dtA);
                   run(Pgd,n,{br,bmu,bmv,bmw,bE,bxx,byy,bzz,bD},gdA);
-                  run(Pvm,n,{bxx,byy,bzz,bxy,bxz,byz,bD,baf},vmA); }
+                  run(Pvm,n,{bxx,byy,bzz,bxy,bxz,byz,bD,baf,br,bmu,bmv,bmw,bE},vmA); }   // corrector state for ROCK pressure
         if(mode=="pierazzo") run(Ppm,n,{br,bmu,bmv,bmw,bE,bPmax},{{&MG,sizeof(GMat)},{&n,4}});
         if(dampf<1.0f) run(Pdamp,n,{bmu,bmv,bmw},{{&dampf,4},{&n,4}});   // route 1: quench FP32-noise velocities
         if(rcfl>0) run(Pvoid,n,{bmu,bmv,bmw,br,bE,bxx,byy,bzz,bxy,bxz,byz,bRR0},{{&rcfl,4},{&n,4}});   // route 1: void cells = passive vacuum (reset to reference)
