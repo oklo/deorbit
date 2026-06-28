@@ -77,4 +77,9 @@ Replace the cohesion-only cap in `vonmises` with a pressure- and damage-dependen
 - Build: `clang++ -std=c++17 -O2 hydro_cpu.cpp -o hydro_cpu`
 - One crater: `./hydro_cpu crater 500 12000 30 1e8 3.71 6 -1 18 22 /tmp/p.txt`
 - Sweep: `python3 sweep_crater.py --list | --increment N | --daemon`. Results: state/results.csv; profiles: state/profiles/.
-- The local supervisor (~/investigations/daemons.json) keeps the `--daemon` grind alive 24/7 (entry `deorbit-crater`).
+- The local supervisor (~/investigations/daemons.json) keeps the `--daemon` grind alive 24/7 (entry `deorbit-crater`,
+  cwd hydrocodes/euler, log state/sweep.out). **LIVE as of 2026-06-28** — grinding the first 42-run pass
+  (Y_d0 in {1,5,10} MPa x AF off/on x 7 sizes, ROCK friction on). Monitor: `cat state/results.csv`,
+  `tail state/sweep.out`, `python3 sweep_crater.py --list`. Each run ~15-30 min (cppr=6), so a full pass ~12-20 h.
+  After the pass: analyse profiles OFFLINE for settled d/D-vs-D, pick the (Y_d0, AF) that holds simple craters at
+  d/D~0.2 and gives the complex transition, vs Wuennemann & Ivanov 2003.
