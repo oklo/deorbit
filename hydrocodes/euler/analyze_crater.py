@@ -58,6 +58,14 @@ def analyze(path, datum_tol=None):
     tol = datum_tol if datum_tol is not None else 0.25 * dx   # "back to datum" band, ~quarter cell
     s = box3(median3(dz))                                     # despike then lightly smooth
 
+    # robust far-field datum = median surface over the MID-FIELD ring [0.45,0.80]*r_max:
+    # excludes the inner crater (small r) AND the outer-boundary sag zone (large r). d/D is by
+    # convention measured below the surrounding terrain, so re-reference everything to this level.
+    rmax = r[-1]
+    mid = sorted(s[i] for i in range(len(r)) if 0.45 * rmax <= r[i] <= 0.80 * rmax)
+    z_ff = mid[len(mid) // 2] if mid else 0.0
+    s = [v - z_ff for v in s]                                 # surface relative to the surrounding plain
+
     # floor: deepest (most negative) smoothed cell
     ifloor = min(range(len(s)), key=lambda i: s[i])
     depth = -s[ifloor]
@@ -86,7 +94,7 @@ def analyze(path, datum_tol=None):
             rim_h = s[i]; rim_r = r[i]
 
     return dict(name=os.path.basename(path), dx=dx, depth=depth, rfloor=rfloor,
-                D_app=D_app, dD=dD, rim_h=rim_h, rim_r=rim_r, npts=len(r))
+                D_app=D_app, dD=dD, rim_h=rim_h, rim_r=rim_r, z_ff=z_ff, npts=len(r))
 
 
 def main():
@@ -99,19 +107,19 @@ def main():
         print("no profiles found"); return
 
     rows = []
-    print(f"{'profile':<28} {'dx':>5} {'depth_km':>9} {'D_app_km':>9} {'d/D':>7} {'rim_km':>7} {'rim_r_km':>9}")
+    print(f"{'profile':<28} {'dx':>5} {'depth_km':>9} {'D_app_km':>9} {'d/D':>7} {'rim_km':>7} {'rim_r_km':>9} {'sag_km':>7}")
     for p in files:
         a = analyze(p)
         if not a:
             print(f"{os.path.basename(p):<28} (too short)"); continue
         rows.append(a)
         print(f"{a['name']:<28} {a['dx']:>5.0f} {a['depth']/1e3:>9.3f} {a['D_app']/1e3:>9.3f} "
-              f"{a['dD']:>7.3f} {a['rim_h']/1e3:>7.3f} {a['rim_r']/1e3:>9.3f}")
+              f"{a['dD']:>7.3f} {a['rim_h']/1e3:>7.3f} {a['rim_r']/1e3:>9.3f} {a['z_ff']/1e3:>7.3f}")
 
     if csv_out and rows:
         import csv as _csv
         with open(csv_out, "w", newline="") as f:
-            w = _csv.DictWriter(f, fieldnames=["name", "dx", "depth", "rfloor", "D_app", "dD", "rim_h", "rim_r", "npts"])
+            w = _csv.DictWriter(f, fieldnames=["name", "dx", "depth", "rfloor", "D_app", "dD", "rim_h", "rim_r", "z_ff", "npts"])
             w.writeheader()
             for a in rows:
                 w.writerow(a)
