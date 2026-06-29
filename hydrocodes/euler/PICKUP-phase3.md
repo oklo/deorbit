@@ -100,10 +100,18 @@ Steps 1-3 of the prior NEXT-STEPS are DONE (not yet committed at time of writing
    For calibration treat the FP64 CPU as the ORACLE; converge resolution (cppr 8,12); consider SOFTENING the
    threshold (smooth ramp seed ~ smoothstep(dP/P_ACT) instead of a hard gate) and/or more collapse damping to
    tame the sensitivity. (The gates remain GPU==CPU -- this is the chaotic integration, not a kernel mismatch.)
-2. **Fix the datum/domain:** the shock-gated crater HOLDS but the depression still slowly WIDENS to the
-   boundary (Vexc grows while depth holds) -> surf(nx-1) datum contaminated, d/D garbage. Enlarge Rfac (18 ->
-   ~30) and/or measure depth/D_app against the FIXED original surface zsurf (in the progress log). Then the
-   windowed-mean settling should fire cleanly and d/D becomes meaningful.
+2. **Datum/domain — DONE via measurement workaround (commit 58acb88); d/D now WORKS.** Findings: Rfac 18->30,
+   fixed-zsurf datum, and DEPTH-based settling (Vexc never settles -- conflates the stable bowl with slow
+   lateral spreading; the bowl depth is the physical signal, settles ~t=886 for a=300). The remaining
+   contamination is an OUTER-BOUNDARY SAG (far-field surface droops, present early ~-60m, grows to ~-900m at
+   the r=9km edge by t=985 -- worst AT the boundary => outer radial BC + long-time WB drift). WORKED AROUND in
+   analyze_crater.py: datum = median surface over the mid-field ring [0.45,0.80]*r_max (excludes inner crater +
+   outer-boundary zone), measure d/D below that plain. RESULT: D_app consistent ~6.7km; settled a=300
+   (shock-gated AF, Y_d0=10MPa) = depth 1.26km, D_app 6.72km, d/D=0.188 (sensible at the ~7km transition).
+   OPTIONAL cleaner fix: make the outer radial face reflective/WB so the far field stays flat (touches the
+   flux sweep + re-gate + GPU).
+3. **Re-run a SETTLED sweep** (GPU `--gpu --jobs 1`, or CPU oracle) over Y_d0 x AF x size; analyze with the
+   local-datum analyzer -> d/D-vs-D table. Use the FP64 CPU as the oracle (GPU collapse is FP-sensitive, item 1).
 2. **Fix the datum/domain:** measure depth against the FIXED original surface zsurf (already in the progress
    log), not surf(nx-1); and/or enlarge Rfac (18 -> ~30) so the relaxing rim doesn't reach the boundary.
    Make the RESULT depth + the offline analyzer use the robust datum so d/D becomes meaningful.
