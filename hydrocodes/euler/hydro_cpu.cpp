@@ -405,7 +405,7 @@ int main(int argc,char**argv){
         ETA_AF     = argc>5?atof(argv[5]):0.0;        // AF viscosity (Pa.s)
         GZ         = argc>6?atof(argv[6]):3.71;       // gravity (Mars)
         double cppr= argc>7?atof(argv[7]):5.0;        // cells per impactor radius
-        double Rfac= argc>9?atof(argv[9]):18.0, Zfac=argc>10?atof(argv[10]):22.0;   // domain size in impactor radii
+        double Rfac= argc>9?atof(argv[9]):30.0, Zfac=argc>10?atof(argv[10]):22.0;   // domain size in impactor radii (Rfac 30: keep undisturbed far-field so the datum isn't contaminated by the spreading rim)
         double dx=a/cppr; AXISYM=true; RHO_CFL=100.0; RHO_VAC=100.0; double CFL=0.4;
         C_ACT=(TDEC>0?0.5:0.0); P_COH=1.0e6; P_ACT=(TDEC>0?1.0e8:0.0);   // shock-gate AF activation (>100 MPa jump): the impact shock fluidizes, slow collapse flow does NOT re-fluidize Eulerian wall cells
         ROCK=(argc>12?atoi(argv[12]):1);   // pressure-dependent friction yield (default on); arg 0 = old cohesion-only von Mises for A/B
@@ -426,7 +426,8 @@ int main(int argc,char**argv){
         double Wwin=2.0*t_auto;                    // averaging window >= one oscillation period (2pi*sqrt(D/g)) so fast jitter/sloshing averages out
         auto surf=[&](int i){ for(int k=Nz-1;k>=0;k--){ if(g.r[g.idx(i,0,k)]>1350.0) return (k+0.5)*dx; } return 0.0; };
         auto vmax_dense=[&](){ double v=0; for(uint32_t c=0;c<g.r.size();c++) if(g.r[c]>1350.0){ double vv=sqrt(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c]; v=max(v,vv);} return v; };
-        auto vexc=[&](){ double V=0; for(int i=0;i<Nr;i++){ double d=zsurf-surf(i); if(d>0) V+=d*(i+0.5); } return V; };   // r-weighted excavated cross-section ~ crater volume
+        auto vexc=[&](){ double V=0; for(int i=0;i<Nr;i++){ double d=zsurf-surf(i); if(d>0) V+=d*(i+0.5); } return V; };   // r-weighted excavated cross-section ~ crater volume (logged for info)
+        auto dfloor=[&](){ double V=0; for(int i=0;i<Nr;i++){ double d=zsurf-surf(i); if(d>V)V=d; } return V; };   // max excavation depth (bowl floor near the axis): the SETTLING signal -- insensitive to peripheral lateral spreading + far-field/boundary substrate sag (which corrupt Vexc & the datum over long runs)
         auto afstat=[&](double&amax){ double s=0;long c2=0;amax=0; for(uint32_t c=0;c<g.r.size();c++) if(g.r[c]>1350.0){ s+=g.af[c]; amax=max(amax,(double)g.af[c]); c2++; } return c2?s/c2:0.0; };   // AF diagnostic: is the rock still fluidized late in the run?
         auto Dstat=[&](double&dfrac){ double s=0;long c2=0,nhi=0; for(uint32_t c=0;c<g.r.size();c++) if(g.r[c]>1350.0){ s+=g.D[c]; if(g.D[c]>0.95)nhi++; c2++; } dfrac=c2?(double)nhi/c2:0.0; return c2?s/c2:0.0; };   // damage diagnostic: mean D + fraction fully-damaged (D>0.95) -> does fluidized collapse drive D->1?
         double dmaxT=0; double t=0;int s=0; double t_settled=-1.0,next_log=t_auto;
@@ -437,14 +438,14 @@ int main(int argc,char**argv){
             t+=dt;s++;
             if(t>=next_log){double vn=vmax_dense(),dn=0,amax,dfrac;for(int i=0;i<Nr;i++)dn=max(dn,zsurf-surf(i));double amean=afstat(amax),Dmean=Dstat(dfrac);   // progress to stderr (sweep DEVNULLs stderr); watch settling + AF + damage state
                 fprintf(stderr,"  [crater a=%.0f] t=%.1f/%.0fs steps=%d max|v|=%.2f Vexc=%.4e depth=%.2fkm af=%.3f/%.3f D(mean,frac>.95)=%.3f,%.2f\n",a,t,tend,s,vn,vexc(),dn/1e3,amean,amax,Dmean,dfrac); next_log+=20.0; }
-            if(!fixed && t>t_auto && s%5==0){double V=vexc();   // run-to-settling: compare successive window-means of the excavated volume
+            if(!fixed && t>t_auto && s%5==0){double V=dfloor();   // run-to-settling: compare successive window-means of the BOWL FLOOR DEPTH (settles fast ~t_auto; stops before substrate sag accrues)
                 if(winStart<0)winStart=t; sumV+=V; cntV++;
                 if(t-winStart>=Wwin){ double meanNow=sumV/cntV;
                     if(meanPrev>0 && fabs(meanNow-meanPrev)<tolM*meanNow){ t_settled=t; break; }   // two consecutive window-means agree -> settled
                     meanPrev=meanNow; sumV=0; cntV=0; winStart=t; } }
         }
         double vmx=0,pmx=0; for(uint32_t c=0;c<g.r.size();c++){if(g.r[c]>1350){double v=sqrt(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c];vmx=max(vmx,v);pmx=max(pmx,Pcell(g,c));}}
-        double z0=surf(Nr-1);   // undisturbed far-field surface level (topmost basalt cell, ~zsurf-dx/2)
+        double z0=zsurf-0.5*dx;   // datum = the FIXED original pre-impact surface (topmost undisturbed basalt-cell center); robust vs surf(Nr-1) which the spreading rim can contaminate
         double zfloor=z0; int ifloor=0; for(int i=0;i<Nr;i++){double zs=surf(i); if(zs<zfloor){zfloor=zs;ifloor=i;}}   // deepest point
         int iD=Nr-1; for(int i=ifloor;i<Nr;i++){ if(surf(i)>=z0-0.25*dx){ iD=i; break; } }   // apparent crater radius: surface back to the datum, scanning out from the floor
         double rD=(iD+0.5)*dx, Dapp=2.0*rD, dapp=z0-zfloor, dD=(Dapp>0?dapp/Dapp:0.0);

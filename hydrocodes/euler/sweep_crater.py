@@ -78,7 +78,7 @@ def launch(job):
     prof = os.path.join(PROF, f"{label}_a{int(a)}.txt")
     # crater a U TDEC ETA g cppr tend Rfac Zfac profile rock Yd0  (tend auto via -1; rock=1)
     args = [BIN, "crater", str(a), str(U), f"{TDEC:.6g}", f"{ETA:.6g}",
-            str(G), str(CPPR), "-1", "18", "22", prof, "1", f"{Yd0:.6g}"]
+            str(G), str(CPPR), "-1", "30", "22", prof, "1", f"{Yd0:.6g}"]
     p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     return dict(p=p, job=job, prof=prof, t0=time.time())
 

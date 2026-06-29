@@ -60,7 +60,7 @@ int main(int argc,char**argv){
     float etaaf=0.0f;   // AF Newtonian viscosity coefficient (Pa.s); 0 = AF viscosity off
     int axisym=0;   // cylindrical (r,z) axisymmetric geometry (x->r, axis at r=0); 0 = Cartesian
     // Phase-3 crater CLI (mirrors hydro_cpu crater): a U TDEC ETA g cppr tend Rfac Zfac profile rock Yd0
-    double cr_a=500,cr_U=12000,cr_TDEC=0,cr_ETA=0,cr_g=3.71,cr_cppr=5,cr_targ=-1,cr_Rfac=18,cr_Zfac=22,cr_Yd0=0; int cr_rock=1; double cr_zsurf=0; string cr_prof="crater_profile.txt";
+    double cr_a=500,cr_U=12000,cr_TDEC=0,cr_ETA=0,cr_g=3.71,cr_cppr=5,cr_targ=-1,cr_Rfac=30,cr_Zfac=22,cr_Yd0=0; int cr_rock=1; double cr_zsurf=0; string cr_prof="crater_profile.txt";
     if(mode=="crater"){
         if(argc>2)cr_a=atof(argv[2]); if(argc>3)cr_U=atof(argv[3]); if(argc>4)cr_TDEC=atof(argv[4]); if(argc>5)cr_ETA=atof(argv[5]);
         if(argc>6)cr_g=atof(argv[6]); if(argc>7)cr_cppr=atof(argv[7]); if(argc>8)cr_targ=atof(argv[8]); if(argc>9)cr_Rfac=atof(argv[9]);
@@ -230,7 +230,8 @@ int main(int argc,char**argv){
     if(mode=="vib_advect"){float*Vb=(float*)bvib->contents();for(int i=0;i<nx;i++){vs0+=Vb[i];vcen0+=Vb[i]*(i+0.5)*dx;} vcen0/=vs0;}
     // crater run-to-settling state + host-side surface diagnostics (read live from the shared buffers)
     auto crsurf=[&](int i)->double{ for(int k=nz-1;k>=0;k--){ if(r[i*nz+k]>1350.0f) return (k+0.5)*dx; } return 0.0; };
-    auto crvexc=[&](){ double V=0; for(int i=0;i<nx;i++){ double d=cr_zsurf-crsurf(i); if(d>0) V+=d*(i+0.5); } return V; };   // r-weighted excavated cross-section ~ crater volume (continuous settling signal)
+    auto crvexc=[&](){ double V=0; for(int i=0;i<nx;i++){ double d=cr_zsurf-crsurf(i); if(d>0) V+=d*(i+0.5); } return V; };   // r-weighted excavated cross-section ~ crater volume (logged for info)
+    auto crdfloor=[&](){ double V=0; for(int i=0;i<nx;i++){ double d=cr_zsurf-crsurf(i); if(d>V)V=d; } return V; };   // max excavation depth (bowl floor): the SETTLING signal (insensitive to peripheral spreading + boundary sag)
     auto crvmax=[&](){ double v=0; for(uint32_t c=0;c<n;c++) if(r[c]>1350.0f){ double vv=sqrt((double)mu[c]*mu[c]+(double)mv[c]*mv[c]+(double)mw[c]*mw[c])/r[c]; v=max(v,vv);} return v; };
     double cr_tolM=0.02, cr_Wwin=2.0*cr_tauto, cr_tsettled=-1.0, cr_nextlog=cr_tauto, cr_dmaxT=0.0;   // window-mean drift settling (mirrors CPU)
     double cr_sumV=0.0, cr_meanPrev=-1.0, cr_winStart=-1.0; long cr_cntV=0;
@@ -267,7 +268,7 @@ int main(int argc,char**argv){
             if(step%20==0){ double dn=0; for(int i=0;i<nx;i++) dn=max(dn,cr_zsurf-crsurf(i)); cr_dmaxT=max(cr_dmaxT,dn); }   // track transient excavation depth
             if(t>=cr_nextlog){ double dn=0; for(int i=0;i<nx;i++) dn=max(dn,cr_zsurf-crsurf(i));   // progress to stderr (mirrors CPU)
                 fprintf(stderr,"  [GPU crater a=%.0f] t=%.1f/%.0fs steps=%d max|v|=%.2f Vexc=%.4e depth=%.2fkm meanPrev=%.4e\n",cr_a,t,tend,step,crvmax(),crvexc(),dn/1e3,cr_meanPrev); cr_nextlog+=20.0; }
-            if(cr_targ<=0 && t>cr_tauto && step%5==0){ double V=crvexc();   // run-to-settling: compare successive window-means of the excavated volume
+            if(cr_targ<=0 && t>cr_tauto && step%5==0){ double V=crdfloor();   // run-to-settling: window-means of the BOWL FLOOR DEPTH (settles fast; stops before substrate sag accrues)
                 if(cr_winStart<0)cr_winStart=t; cr_sumV+=V; cr_cntV++;
                 if(t-cr_winStart>=cr_Wwin){ double meanNow=cr_sumV/cr_cntV;
                     if(cr_meanPrev>0 && fabs(meanNow-cr_meanPrev)<cr_tolM*meanNow){ cr_tsettled=t; break; }
@@ -283,7 +284,7 @@ int main(int argc,char**argv){
         for(uint32_t c=0;c<n;c++){ if(!isfinite(r[c])||!isfinite(E[c])) fin=false;
             if(r[c]>1350.0f){ double v=sqrt((double)mu[c]*mu[c]+(double)mv[c]*mv[c]+(double)mw[c]*mw[c])/r[c]; vmx=max(vmx,v);
                 double u=(E[c]-0.5*((double)mu[c]*mu[c]+(double)mv[c]*mv[c]+(double)mw[c]*mw[c])/r[c])/r[c]; pmx=max(pmx,(double)tillP(r[c],(float)u,MG)); } }
-        double z0=crsurf(nx-1);
+        double z0=cr_zsurf-0.5*dx;   // datum = FIXED original pre-impact surface (robust vs crsurf(nx-1), which the spreading rim contaminates)
         double zfloor=z0; int ifloor=0; for(int i=0;i<nx;i++){double zs=crsurf(i); if(zs<zfloor){zfloor=zs;ifloor=i;}}
         int iD=nx-1; for(int i=ifloor;i<nx;i++){ if(crsurf(i)>=z0-0.25*dx){ iD=i; break; } }
         double rD=(iD+0.5)*dx, Dapp=2.0*rD, dapp=z0-zfloor, dD=(Dapp>0?dapp/Dapp:0.0);
