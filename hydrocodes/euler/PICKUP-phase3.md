@@ -32,13 +32,18 @@ Steps 1-3 of the prior NEXT-STEPS are DONE (not yet committed at time of writing
 - AF OFF (TDEC=0,ETA=0):       transient 1.59km -> floor **HELD at ~1.5km** stably for 700s.
 - This **overturns the prior "ROCK friction FIXES it; the crater holds"** finding — that rested on
   UNSETTLED runs (stopped t<320). Run long, AF-on craters creep toward flat and never equilibrate.
-- AF instrumentation shows af DOES decay (mean 0.44->0.007 by t=236; the af_activate gate is right).
-  The creep is TWO-PHASE: (1) fast fluidized collapse while af high, then (2) SLOW creep CONTINUING
-  AFTER af~0. Hypothesis (untested): the fluidized collapse drives D->1 everywhere, leaving only the
-  weak damaged-friction branch Y_d=Y_d0+mu_d*P (~10MPa) which cannot support the topographic load
-  ~rho*g*depth, so it creeps; AF-off stays less damaged -> keeps the strong intact branch Y_i. NEEDS a
-  damage(D)-state instrument to confirm. Lit check needed: W&I AF is supposed to relax to a STABLE
-  final crater, so creep-to-flat is likely a model/parameter artifact, not physics.
+- MECHANISM (ground-truthed with af + damage instruments; the D->1 hypothesis was REFUTED):
+  * af MEAN decays (0.44->0.007 by t=236) BUT af MAX stays ~0.85-0.99 for a long time -- a SUBSET of
+    critical crater-wall cells stay persistently fluidized (continuously re-seeded by the ongoing
+    collapse flow), even as the bulk re-solidifies.
+  * Damage is NOT the discriminator: AF-OFF is MORE damaged (D mean 0.89, 86% of cells D>0.95) yet
+    HOLDS; AF-ON is LESS damaged (D 0.18->0.76) yet CREEPS. So the damaged-friction branch Y_d alone
+    holds the crater fine -- the creep is the AF weakening of the still-fluidized wall cells (the
+    (1-af) strength cut + the af-scaled viscous flow), NOT a strength/damage deficit.
+  * => the lever is the AF ACTIVATION/DECAY (why do wall cells keep re-fluidizing under slow post-
+    collapse flow?), not Y_d/mu_d. Lit: W&I AF relaxes to a STABLE final crater, so this persistent
+    re-fluidization is most likely a model/param artifact (activation should key on a SHOCK / dP/dt,
+    not slow shear) -- the prime suspect to investigate/fix next.
 - SECONDARY: the in-loop & offline **D_app are unreliable** — the relaxing rim spreads to the domain
   edge (Rfac=18 too small), contaminating the surf(nx-1) datum. The robust depth metric is
   zsurf-surf (vs the FIXED original surface), which the progress log prints; the RESULT depth (z0-based) is not.
@@ -85,10 +90,12 @@ Steps 1-3 of the prior NEXT-STEPS are DONE (not yet committed at time of writing
    W&I-intended behaviour); (b) re-tune AF params (TDEC/ETA/C_ACT and the damage coupling); (c) characterise
    the AF-off baseline first (friction+damage holds) and treat AF as a separate sub-study. Lit-ground it:
    W&I AF relaxes to a stable final crater, so creep-to-flat is most likely a model/param artifact.
-1. **Confirm the creep mechanism:** add a damage(D)-state instrument to the crater progress (mean/max D over
-   dense cells, like the af one already added) and re-run AF-on a=300. Hypothesis: D->1 everywhere after the
-   fluidized collapse, so only the weak Y_d branch remains. If confirmed, the lever is the damaged-strength
-   model (Y_d0, mu_d) and/or limiting damage accumulation during fluidized flow.
+1. **Mechanism CONFIRMED (af + damage instruments now in the crater progress log):** the creep is driven by
+   persistent wall-cell fluidization (af max ~0.85 sustained, re-seeded by the collapse flow), NOT by damage
+   (AF-off is more damaged yet holds). NEXT here: fix the AF activation so it keys on a SHOCK (high dP/dt),
+   not slow post-collapse shear, so wall cells re-solidify; re-test that AF-on then HOLDS like AF-off but with
+   a proper collapsed (complex) morphology. Inspect update_af()'s activation criterion + C_ACT + the vib
+   re-seeding path.
 2. **Fix the datum/domain:** measure depth against the FIXED original surface zsurf (already in the progress
    log), not surf(nx-1); and/or enlarge Rfac (18 -> ~30) so the relaxing rim doesn't reach the boundary.
    Make the RESULT depth + the offline analyzer use the robust datum so d/D becomes meaningful.

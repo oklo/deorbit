@@ -426,14 +426,15 @@ int main(int argc,char**argv){
         auto vmax_dense=[&](){ double v=0; for(uint32_t c=0;c<g.r.size();c++) if(g.r[c]>1350.0){ double vv=sqrt(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c]; v=max(v,vv);} return v; };
         auto vexc=[&](){ double V=0; for(int i=0;i<Nr;i++){ double d=zsurf-surf(i); if(d>0) V+=d*(i+0.5); } return V; };   // r-weighted excavated cross-section ~ crater volume
         auto afstat=[&](double&amax){ double s=0;long c2=0;amax=0; for(uint32_t c=0;c<g.r.size();c++) if(g.r[c]>1350.0){ s+=g.af[c]; amax=max(amax,(double)g.af[c]); c2++; } return c2?s/c2:0.0; };   // AF diagnostic: is the rock still fluidized late in the run?
+        auto Dstat=[&](double&dfrac){ double s=0;long c2=0,nhi=0; for(uint32_t c=0;c<g.r.size();c++) if(g.r[c]>1350.0){ s+=g.D[c]; if(g.D[c]>0.95)nhi++; c2++; } dfrac=c2?(double)nhi/c2:0.0; return c2?s/c2:0.0; };   // damage diagnostic: mean D + fraction fully-damaged (D>0.95) -> does fluidized collapse drive D->1?
         double dmaxT=0; double t=0;int s=0; double t_settled=-1.0,next_log=t_auto;
         double sumV=0.0,meanPrev=-1.0,winStart=-1.0; long cntV=0;   // non-overlapping window-mean drift detector
         while(t<tend){double dt=CFL*dx/maxspeed(g);if(t+dt>tend)dt=tend-t;step_rk2(g,dt);
             for(int i=0;i<Nr;i++)for(int k=0;k<2;k++){int c=g.idx(i,0,k);g.r[c]=REF_R0[c];g.mu[c]=g.mv[c]=g.mw[c]=0;g.E[c]=0;}  // pin deep far-field floor
             if(s%20==0){double dnow=0;for(int i=0;i<Nr;i++)dnow=max(dnow,zsurf-surf(i));dmaxT=max(dmaxT,dnow);}   // track transient excavation
             t+=dt;s++;
-            if(t>=next_log){double vn=vmax_dense(),dn=0,amax;for(int i=0;i<Nr;i++)dn=max(dn,zsurf-surf(i));double amean=afstat(amax);   // progress to stderr (sweep DEVNULLs stderr); watch settling + AF state
-                fprintf(stderr,"  [crater a=%.0f] t=%.1f/%.0fs steps=%d max|v|=%.2f Vexc=%.4e depth=%.2fkm af(mean/max)=%.3f/%.3f\n",a,t,tend,s,vn,vexc(),dn/1e3,amean,amax); next_log+=20.0; }
+            if(t>=next_log){double vn=vmax_dense(),dn=0,amax,dfrac;for(int i=0;i<Nr;i++)dn=max(dn,zsurf-surf(i));double amean=afstat(amax),Dmean=Dstat(dfrac);   // progress to stderr (sweep DEVNULLs stderr); watch settling + AF + damage state
+                fprintf(stderr,"  [crater a=%.0f] t=%.1f/%.0fs steps=%d max|v|=%.2f Vexc=%.4e depth=%.2fkm af=%.3f/%.3f D(mean,frac>.95)=%.3f,%.2f\n",a,t,tend,s,vn,vexc(),dn/1e3,amean,amax,Dmean,dfrac); next_log+=20.0; }
             if(!fixed && t>t_auto && s%5==0){double V=vexc();   // run-to-settling: compare successive window-means of the excavated volume
                 if(winStart<0)winStart=t; sumV+=V; cntV++;
                 if(t-winStart>=Wwin){ double meanNow=sumV/cntV;
