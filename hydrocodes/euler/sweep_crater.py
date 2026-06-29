@@ -26,7 +26,11 @@ HERE   = os.path.dirname(os.path.abspath(__file__))
 STATE  = os.path.join(HERE, "state")
 PROF   = os.path.join(STATE, "profiles")
 RESCSV = os.path.join(STATE, "results.csv")
-BIN    = os.path.join(HERE, "hydro_cpu")
+# Binary: CPU oracle by default; --gpu (or --bin PATH) selects the GPU crater driver.
+# NOTE: the GPU is a single shared device -> use --jobs 1 with --gpu (concurrent GPU procs contend).
+BIN    = os.path.join(HERE, "hydro_gpu" if "--gpu" in sys.argv else "hydro_cpu")
+if "--bin" in sys.argv:
+    BIN = sys.argv[sys.argv.index("--bin") + 1]
 
 # --- physical constants / fixed run params ---
 CS, RHO = 3000.0, 2700.0     # basalt sound speed, density (AF scaling)

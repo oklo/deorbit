@@ -417,13 +417,29 @@ int main(int argc,char**argv){
         double zc=zsurf+a;   // impactor sphere on the axis, tangent to the surface, moving down
         for(int i=0;i<Nr;i++)for(int k=0;k<Nz;k++){double r=(i+0.5)*dx,z=(k+0.5)*dx;int c=g.idx(i,0,k);
             if(sqrt(r*r+(z-zc)*(z-zc))<a){g.r[c]=rho0;g.mw[c]=-rho0*U;g.E[c]=0.5*rho0*U*U;}}
-        double targ=argc>8?atof(argv[8]):-1.0, tend=(targ>0?targ:2.0*sqrt((Rfac*a)/GZ));   // tend<=0 -> default ~ gravity formation/collapse timescale
+        double targ=argc>8?atof(argv[8]):-1.0;   // explicit tend>0 -> fixed run (old behaviour); <=0 -> run-to-settling
+        double t_auto=2.0*sqrt((Rfac*a)/GZ);      // gravity formation/collapse timescale
+        bool fixed=(targ>0); double tend=fixed?targ:10.0*t_auto;   // settling cap = 10x the formation timescale
+        double tolM=0.02;                         // settled when consecutive Vexc WINDOW-MEANS agree within 2% (robust to residual sloshing + density-threshold jitter)
+        double Wwin=2.0*t_auto;                    // averaging window >= one oscillation period (2pi*sqrt(D/g)) so fast jitter/sloshing averages out
         auto surf=[&](int i){ for(int k=Nz-1;k>=0;k--){ if(g.r[g.idx(i,0,k)]>1350.0) return (k+0.5)*dx; } return 0.0; };
-        double dmaxT=0; double t=0;int s=0;
+        auto vmax_dense=[&](){ double v=0; for(uint32_t c=0;c<g.r.size();c++) if(g.r[c]>1350.0){ double vv=sqrt(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c]; v=max(v,vv);} return v; };
+        auto vexc=[&](){ double V=0; for(int i=0;i<Nr;i++){ double d=zsurf-surf(i); if(d>0) V+=d*(i+0.5); } return V; };   // r-weighted excavated cross-section ~ crater volume
+        auto afstat=[&](double&amax){ double s=0;long c2=0;amax=0; for(uint32_t c=0;c<g.r.size();c++) if(g.r[c]>1350.0){ s+=g.af[c]; amax=max(amax,(double)g.af[c]); c2++; } return c2?s/c2:0.0; };   // AF diagnostic: is the rock still fluidized late in the run?
+        double dmaxT=0; double t=0;int s=0; double t_settled=-1.0,next_log=t_auto;
+        double sumV=0.0,meanPrev=-1.0,winStart=-1.0; long cntV=0;   // non-overlapping window-mean drift detector
         while(t<tend){double dt=CFL*dx/maxspeed(g);if(t+dt>tend)dt=tend-t;step_rk2(g,dt);
             for(int i=0;i<Nr;i++)for(int k=0;k<2;k++){int c=g.idx(i,0,k);g.r[c]=REF_R0[c];g.mu[c]=g.mv[c]=g.mw[c]=0;g.E[c]=0;}  // pin deep far-field floor
             if(s%20==0){double dnow=0;for(int i=0;i<Nr;i++)dnow=max(dnow,zsurf-surf(i));dmaxT=max(dmaxT,dnow);}   // track transient excavation
-            t+=dt;s++;}
+            t+=dt;s++;
+            if(t>=next_log){double vn=vmax_dense(),dn=0,amax;for(int i=0;i<Nr;i++)dn=max(dn,zsurf-surf(i));double amean=afstat(amax);   // progress to stderr (sweep DEVNULLs stderr); watch settling + AF state
+                fprintf(stderr,"  [crater a=%.0f] t=%.1f/%.0fs steps=%d max|v|=%.2f Vexc=%.4e depth=%.2fkm af(mean/max)=%.3f/%.3f\n",a,t,tend,s,vn,vexc(),dn/1e3,amean,amax); next_log+=20.0; }
+            if(!fixed && t>t_auto && s%5==0){double V=vexc();   // run-to-settling: compare successive window-means of the excavated volume
+                if(winStart<0)winStart=t; sumV+=V; cntV++;
+                if(t-winStart>=Wwin){ double meanNow=sumV/cntV;
+                    if(meanPrev>0 && fabs(meanNow-meanPrev)<tolM*meanNow){ t_settled=t; break; }   // two consecutive window-means agree -> settled
+                    meanPrev=meanNow; sumV=0; cntV=0; winStart=t; } }
+        }
         double vmx=0,pmx=0; for(uint32_t c=0;c<g.r.size();c++){if(g.r[c]>1350){double v=sqrt(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c];vmx=max(vmx,v);pmx=max(pmx,Pcell(g,c));}}
         double z0=surf(Nr-1);   // undisturbed far-field surface level (topmost basalt cell, ~zsurf-dx/2)
         double zfloor=z0; int ifloor=0; for(int i=0;i<Nr;i++){double zs=surf(i); if(zs<zfloor){zfloor=zs;ifloor=i;}}   // deepest point
@@ -432,6 +448,7 @@ int main(int argc,char**argv){
         double zrim=z0,rrim=0; for(int i=0;i<Nr;i++){double zs=surf(i); if(zs>zrim){zrim=zs;rrim=(i+0.5)*dx;}}   // rim crest (ejecta uplift above datum)
         bool finite=isfinite(vmx)&&isfinite(pmx)&&isfinite(dapp);
         printf("CRATER a=%.0fm U=%.0f g=%.2f TDEC=%.3g ETA=%.3g | grid %dx%d dx=%.0f zsurf=%.1fkm tend=%.1fs steps=%d\n",a,U,GZ,TDEC,ETA_AF,Nr,Nz,dx,zsurf/1e3,tend,s);
+        printf("  settling: %s at t=%.1fs (t_auto=%.1fs cap=%.1fs tolM=%.1f%% Wwin=%.1fs final max|v|=%.1f m/s)\n",(t_settled>0?"SETTLED":(fixed?"FIXED-RUN":"NOT-SETTLED@cap")),(t_settled>0?t_settled:t),t_auto,tend,tolM*100,Wwin,vmx);
         printf("  D_app=%.2f km  depth(below datum)=%.2f km  transient depth=%.2f km  rim uplift=%.2f km @ r=%.2f km  d/D=%.3f\n",Dapp/1e3,dapp/1e3,dmaxT/1e3,(zrim-z0)/1e3,rrim/1e3,dD);
         printf("  stability: max|v|=%.1f m/s  maxP=%.2e Pa  %s\n",vmx,pmx,finite?"FINITE":"NONFINITE-BLOWUP");
         printf("RESULT %.1f %.4f %.4f %.4f %.4f\n",a,Dapp,dapp,dmaxT,dD);   // machine-readable (preliminary, in-loop): a D_app depth transient d/D (metres)

@@ -14,6 +14,35 @@ a genuine prediction. Vertical craters are axisymmetric → run cheap in 2D (r,z
 Phase 2b (cylindrical elastic-plastic strength + the full AF model — block activation, shock seeding,
 fluidized viscosity, vib transport) is COMPLETE, all gated, GPU==CPU (see PICKUP-phase2b.md).
 
+## SESSION UPDATE 2026-06-28 (run-to-settling DONE; AF creep crux FOUND)
+Steps 1-3 of the prior NEXT-STEPS are DONE (not yet committed at time of writing):
+- **Run-to-settling** in the `crater` driver (CPU+GPU). Criterion = WINDOWED-MEAN DRIFT of the
+  r-weighted excavated volume Vexc: settled when two consecutive means over a window Wwin=2*t_auto
+  (>= one oscillation period) agree within tolM=2%; cap=10*t_auto. (A naive max|v|<2 floor and a
+  naive 0.5% instantaneous Vexc test were both tried and REJECTED: the settled state has residual
+  max|v|~5 m/s sloshing + Vexc has ~few-% density-threshold jitter that never damps — only a
+  window-mean is robust.) Progress + AF state stream to stderr (sweep DEVNULLs it).
+- **GPU `crater` port** complete (hydro_gpu.cpp): IC + impactor-after-WB-freeze + floor-pin + surface
+  diagnostic + CLI + settling, reusing the gated kernels. All 19 GPU + 16 CPU gates still PASS, GPU==CPU.
+- **Offline analyzer** `analyze_crater.py` (median-despike + datum-crossing d/D). `sweep_crater.py`
+  gained `--gpu`/`--bin PATH` (use --jobs 1 with --gpu; single shared device).
+
+**THE CRUX FINDING (ground-truthed, a=300, Y_d0=10MPa): AF makes craters creep to FLAT.**
+- AF ON  (TDEC=20,ETA=2.4e7): transient 3.15km -> floor crept to **0.24km** (d/D garbage), NOT-SETTLED@cap.
+- AF OFF (TDEC=0,ETA=0):       transient 1.59km -> floor **HELD at ~1.5km** stably for 700s.
+- This **overturns the prior "ROCK friction FIXES it; the crater holds"** finding — that rested on
+  UNSETTLED runs (stopped t<320). Run long, AF-on craters creep toward flat and never equilibrate.
+- AF instrumentation shows af DOES decay (mean 0.44->0.007 by t=236; the af_activate gate is right).
+  The creep is TWO-PHASE: (1) fast fluidized collapse while af high, then (2) SLOW creep CONTINUING
+  AFTER af~0. Hypothesis (untested): the fluidized collapse drives D->1 everywhere, leaving only the
+  weak damaged-friction branch Y_d=Y_d0+mu_d*P (~10MPa) which cannot support the topographic load
+  ~rho*g*depth, so it creeps; AF-off stays less damaged -> keeps the strong intact branch Y_i. NEEDS a
+  damage(D)-state instrument to confirm. Lit check needed: W&I AF is supposed to relax to a STABLE
+  final crater, so creep-to-flat is likely a model/parameter artifact, not physics.
+- SECONDARY: the in-loop & offline **D_app are unreliable** — the relaxing rim spreads to the domain
+  edge (Rfac=18 too small), contaminating the surf(nx-1) datum. The robust depth metric is
+  zsurf-surf (vs the FIXED original surface), which the progress log prints; the RESULT depth (z0-based) is not.
+
 ## STATUS — what's DONE (all committed on master)
 - **`crater` driver (CPU)** — commit eae390a. Axisymmetric vertical impact: a basalt impactor sphere into a
   basalt half-space under Mars gravity, composing route-1 WB substrate + vacuum-aware free surface + strength
@@ -50,21 +79,22 @@ fluidized viscosity, vib transport) is COMPLETE, all gated, GPU==CPU (see PICKUP
    ~/investigations/daemons.json was REMOVED — re-add ONLY with a QoS fix, else it throttles. The unsettled
    first pass is archived at state/results_unsettled.csv (depth signal only; d/D unusable).
 
-## NEXT STEPS (ordered — this is the remaining Phase 3 work)
-1. **Add run-to-settling to the `crater` driver (CPU first).** Replace the fixed tend: run until max|v| over
-   dense (rho>1350) cells drops below a small threshold (e.g. a few m/s, or ~0.01*sqrt(g*a)) sustained, capped
-   at a generous max tend (~10x the current auto-tend). Report the settled crater. (Optional: also report the
-   time-to-settle.) This makes profiles smooth/final so d/D is meaningful.
-2. **Port the `crater` driver to GPU** (`hydro_gpu.cpp`). The step LOOP already exists on GPU (lop/strength/
-   vonmises/update_af/grow_damage/voidzero, with wb + axisym + rvac + ROCK all present). Remaining: the
-   impactor+WB-substrate+ambient IC, the deep-floor pin each step (mirror the CPU substrate floor-pin), the
-   surface-profile diagnostic + RESULT print, the CLI parse, and run-to-settling. Validate GPU crater ≈ CPU
-   crater on one config. GPU makes the long settled runs (step 1) affordable.
-3. **Robust OFFLINE d/D measurement** from the dumped profiles (write a small analyzer): floor depth, apparent
-   diameter at the datum (robust edge logic + smoothing, handle the central-axis cell), rim crest. Apply to
-   the settled profiles → a clean d/D-vs-D table per (Y_d0, AF).
-4. **Re-run a SETTLED sweep** (GPU, `sweep_crater.py` repointed to hydro_gpu) over Y_d0 x AF x size.
-5. **Calibrate:** digitize the W&I 2003 depth–diameter curve (and Mars d–D data) as the oracle; tune
+## NEXT STEPS (ordered — REVISED around the AF creep crux)
+0. **DECIDE the AF direction (this is now the crux; may want Greg's steer).** Run-to-settling revealed AF-on
+   craters creep to flat. Options: (a) diagnose+fix the AF model so the post-collapse crater is STABLE (the
+   W&I-intended behaviour); (b) re-tune AF params (TDEC/ETA/C_ACT and the damage coupling); (c) characterise
+   the AF-off baseline first (friction+damage holds) and treat AF as a separate sub-study. Lit-ground it:
+   W&I AF relaxes to a stable final crater, so creep-to-flat is most likely a model/param artifact.
+1. **Confirm the creep mechanism:** add a damage(D)-state instrument to the crater progress (mean/max D over
+   dense cells, like the af one already added) and re-run AF-on a=300. Hypothesis: D->1 everywhere after the
+   fluidized collapse, so only the weak Y_d branch remains. If confirmed, the lever is the damaged-strength
+   model (Y_d0, mu_d) and/or limiting damage accumulation during fluidized flow.
+2. **Fix the datum/domain:** measure depth against the FIXED original surface zsurf (already in the progress
+   log), not surf(nx-1); and/or enlarge Rfac (18 -> ~30) so the relaxing rim doesn't reach the boundary.
+   Make the RESULT depth + the offline analyzer use the robust datum so d/D becomes meaningful.
+3. **Re-run a SETTLED sweep** (GPU, `sweep_crater.py --gpu --jobs 1`) over Y_d0 x AF x size — only AFTER the
+   AF direction is set and the datum is fixed, else the d/D column stays garbage.
+4. **Calibrate:** digitize the W&I 2003 depth–diameter curve (and Mars d–D data) as the oracle; tune
    (Y_d0, Tfrac, Efrac) so model d/D-vs-D matches, esp. the ~7 km Mars simple→complex transition. Converge
    resolution (cppr 8, 12 on a couple of sizes) before trusting absolute numbers.
 6. **Then → 3D oblique Chicxulub** with the FIXED calibrated params (60°, 17 km granite, 12 km/s, NE→SW;

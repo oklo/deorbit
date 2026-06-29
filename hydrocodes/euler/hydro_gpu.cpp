@@ -58,6 +58,14 @@ int main(int argc,char**argv){
     float cact=0.0f, tdecf=0.0f, pcoh=1.0e6f;   // shock-activated AF: activation coupling, vibration decay time, cohesion floor (0 = AF off)
     float etaaf=0.0f;   // AF Newtonian viscosity coefficient (Pa.s); 0 = AF viscosity off
     int axisym=0;   // cylindrical (r,z) axisymmetric geometry (x->r, axis at r=0); 0 = Cartesian
+    // Phase-3 crater CLI (mirrors hydro_cpu crater): a U TDEC ETA g cppr tend Rfac Zfac profile rock Yd0
+    double cr_a=500,cr_U=12000,cr_TDEC=0,cr_ETA=0,cr_g=3.71,cr_cppr=5,cr_targ=-1,cr_Rfac=18,cr_Zfac=22,cr_Yd0=0; int cr_rock=1; double cr_zsurf=0; string cr_prof="crater_profile.txt";
+    if(mode=="crater"){
+        if(argc>2)cr_a=atof(argv[2]); if(argc>3)cr_U=atof(argv[3]); if(argc>4)cr_TDEC=atof(argv[4]); if(argc>5)cr_ETA=atof(argv[5]);
+        if(argc>6)cr_g=atof(argv[6]); if(argc>7)cr_cppr=atof(argv[7]); if(argc>8)cr_targ=atof(argv[8]); if(argc>9)cr_Rfac=atof(argv[9]);
+        if(argc>10)cr_Zfac=atof(argv[10]); if(argc>11)cr_prof=argv[11]; if(argc>12)cr_rock=atoi(argv[12]); if(argc>13)cr_Yd0=atof(argv[13]);
+    }
+    double cr_tauto=2.0*sqrt((cr_Rfac*cr_a)/cr_g);   // gravity formation/collapse timescale (settling cap = 10x)
     if(mode=="sod"){nx=200;ny=nz=1;Ldom=1.0;tend=0.2;CFL=0.4;emode=0;}
     else if(mode=="substrate"){nx=60;ny=1;nz=60;Ldom=30000.0;tend=200.0;CFL=0.4;emode=1;gz=3.71f;wb=1;rcfl=100.0f;}  // route 1: well-balanced gravity-loaded substrate
     else if(mode=="tracer"){nx=200;ny=nz=1;Ldom=1.0;tend=0.15;CFL=0.4;emode=0;}  // M-tag: passive material tracer advection
@@ -77,7 +85,11 @@ int main(int argc,char**argv){
     else if(mode=="af_visc"){nx=120;ny=nz=1;Ldom=120*500.0;tend=0.0;CFL=0.4;emode=1;axisym=1;etaaf=1e9f;}  // Phase-2b item 5: cylindrical AF viscosity (single-eval af=1 vs af=0); pre-loop block
     else if(mode=="vib_advect"){nx=200;ny=nz=1;Ldom=200*500.0;tend=10.0;CFL=0.4;emode=1;}  // Phase-2b item 6: vib advects with the flow (uniform v0 -> bump translates); cact=etaaf=0 -> pure advection
     else if(mode=="friction"){nx=8;ny=nz=1;Ldom=8.0;tend=0.0;CFL=0.4;emode=1;}  // Phase-3: ROCK pressure-dependent yield gate (single vonmises eval; pre-loop block)
-    else { fprintf(stderr,"unknown mode '%s' (modes: sod sedov surface bshock shear yield freefall atmos tensile pierazzo vacuum substrate tracer af_activate sedov_axi lame af_visc vib_advect friction)\n",mode.c_str()); return 2; }   // fatal: never silently validate the wrong physics
+    else if(mode=="crater"){ double dxc=cr_a/cr_cppr; nx=(int)(cr_Rfac*cr_a/dxc+0.5); ny=1; nz=(int)(cr_Zfac*cr_a/dxc+0.5);   // Phase-3: axisymmetric vertical impact crater (mirrors hydro_cpu crater)
+        Ldom=nx*dxc; CFL=0.4; emode=1; axisym=1; wb=1; gz=(float)cr_g; rcfl=100.0f; rvac=100.0f;
+        cact=(cr_TDEC>0?0.5f:0.0f); tdecf=(float)cr_TDEC; etaaf=(float)cr_ETA; pcoh=1.0e6f;
+        tend=(cr_targ>0?cr_targ:10.0*cr_tauto); }   // explicit tend>0 -> fixed run; else run-to-settling capped at 10x t_auto
+    else { fprintf(stderr,"unknown mode '%s' (modes: sod sedov surface bshock shear yield freefall atmos tensile pierazzo vacuum substrate tracer af_activate sedov_axi lame af_visc vib_advect friction crater)\n",mode.c_str()); return 2; }   // fatal: never silently validate the wrong physics
     double dx=Ldom/((nx==1&&ny==1)?nz:nx); uint32_t n=nx*ny*nz; float invdx=1.0f/dx; float gam=GAM;
     GMat MG=(mode=="pierazzo")?AL:BASALT; bool strn=(emode==1 && MG.G>0);   // Al = pure hydro (no strength/damage)
     float epsact=(float)pow(1.0/(1e61*dx*dx*dx),1.0/16.0);   // Weibull weakest-flaw activation strain (host: wk=1e61 overflows FP32)
@@ -121,16 +133,23 @@ int main(int argc,char**argv){
     else if(mode=="af_activate"){double V=2000.0;for(int i=0;i<nx;i++){r[i]=rho0;E[i]=0;if(i<nx/2)mu[i]=rho0*V;}}  // left half -> right: a planar basalt shock
     else if(mode=="vib_advect"){double v0=2000.0,x0=0.3*Ldom,wid=8e3;float*Vb=(float*)bvib->contents();for(int i=0;i<nx;i++){double x=(i+0.5)*dx;r[i]=rho0;mu[i]=rho0*v0;E[i]=0.5*rho0*v0*v0;Vb[i]=exp(-((x-x0)/wid)*((x-x0)/wid));}}  // uniform v0 flow + a vib bump
     else if(mode=="sedov_axi"){for(uint32_t c=0;c<n;c++){r[c]=1.0f;E[c]=1e-4/(GAM-1);} int kc=nz/2; E[kc]+=1.0/(3.141592653589793*dx*dx*dx);}  // on-axis point blast (cell i=0,k=kc -> linear index kc); 3D volume = pi*dx^3
+    else if(mode=="crater"){ double Abulk=BASALT.A; double Zdom=nz*dx, above=5.0*cr_a; cr_zsurf=Zdom-above;   // lithostatic basalt below the free surface, low-density ambient above (impactor added AFTER the WB reference is frozen)
+        for(int i=0;i<nx;i++)for(int k=0;k<nz;k++){ double z=(k+0.5)*dx; uint32_t c=i*nz+k;
+            if(z<cr_zsurf) r[c]=(float)(rho0*(1.0+rho0*gz*(cr_zsurf-z)/Abulk)); else r[c]=0.27f; E[c]=0; } }
     else {double x0=0.3*Ldom,wid=8e3,A=(mode=="shear"?1.0:2000.0);for(int i=0;i<nx;i++){double x=(i+0.5)*dx;r[i]=rho0;double vy=A*exp(-((x-x0)/wid)*((x-x0)/wid));mv[i]=rho0*vy;E[i]=0.5*rho0*vy*vy;}}
     auto Plop=pso("lop"),Pws=pso("wavespeed"),Prk1=pso("rk1"),Prk2=pso("rk2"),Pstr=pso("strength"),Pvm=pso("vonmises"),Prk1s=pso("rk1s"),Prk2s=pso("rk2s"),Pgd=pso("grow_damage"),Ppm=pso("pmax_update"),Pvoid=pso("voidzero"),Pdamp=pso("damp"),Prk1c=pso("rk1c"),Prk2c=pso("rk2c"),Pupaf=pso("update_af");
     float dampf=1.0f;   // route 1: relaxation damping (1 = off; the void/strength fix makes the substrate stable without it)
     int NX=nx,NY=ny,NZ=nz;
     float*RR0=(float*)bRR0->contents(),*RP0=(float*)bRP0->contents();
     if(wb){ for(uint32_t c=0;c<n;c++){ RR0[c]=r[c]; float p=tillP(r[c],0.0f,MG); RP0[c]=p<0?0:p; } }   // route 1: freeze IC as the hydrostatic reference
+    if(mode=="crater"){ double zc=cr_zsurf+cr_a;   // impactor sphere on the axis, tangent to the surface, moving down (added after the WB reference so the reference is impactor-free)
+        for(int i=0;i<nx;i++)for(int k=0;k<nz;k++){ double rr=(i+0.5)*dx, z=(k+0.5)*dx; uint32_t c=i*nz+k;
+            if(sqrt(rr*rr+(z-zc)*(z-zc))<cr_a){ r[c]=(float)rho0; mw[c]=(float)(-rho0*cr_U); E[c]=(float)(0.5*rho0*cr_U*cr_U); } } }
     auto lopA=vector<pair<const void*,size_t>>{{&NX,4},{&NY,4},{&NZ,4},{&invdx,4},{&emode,4},{&gam,4},{&MG,sizeof(GMat)},{&n,4},{&gz,4},{&wb,4},{&rvac,4},{&axisym,4}};
     SParams sp{NX,NY,NZ,invdx,n,rcfl,axisym,etaaf};   // strength scalars packed into one buffer (Metal bind-point cap)
     auto strA=vector<pair<const void*,size_t>>{{&MG,sizeof(GMat)},{&sp,sizeof(SParams)}};
     RockP rp{0,1.0e7f,1.2f,0.6f,0.0f,2.5e9f};   // default rock=0 (cohesion-only); crater/friction modes enable + set
+    if(mode=="crater" && cr_rock) rp = RockP{1, 1.0e7f, 1.2f, 0.6f, (float)cr_Yd0, 2.5e9f};   // ROCK pressure-dependent yield (mirrors CPU globals Y0/mu_i/mu_d/Y_d0/Y_m)
     auto vmA=vector<pair<const void*,size_t>>{{&MG,sizeof(GMat)},{&n,4},{&rp,sizeof(RockP)}};
     if(mode=="lame"){   // Phase-2b GPU: cylindrical strength gate -- two single-evaluation sub-checks, mirrors the CPU oracle (GPU==CPU)
         float Gm=MG.G; float dxf=(float)dx; bool A=false,B=false;
@@ -208,6 +227,12 @@ int main(int argc,char**argv){
     if(mode=="tracer"){float*RC=(float*)brc->contents();for(int i=0;i<nx;i++){rc0+=RC[i];cen0+=RC[i]*(i+0.5)*dx;} cen0/=rc0;}
     double vs0=0,vcen0=0;
     if(mode=="vib_advect"){float*Vb=(float*)bvib->contents();for(int i=0;i<nx;i++){vs0+=Vb[i];vcen0+=Vb[i]*(i+0.5)*dx;} vcen0/=vs0;}
+    // crater run-to-settling state + host-side surface diagnostics (read live from the shared buffers)
+    auto crsurf=[&](int i)->double{ for(int k=nz-1;k>=0;k--){ if(r[i*nz+k]>1350.0f) return (k+0.5)*dx; } return 0.0; };
+    auto crvexc=[&](){ double V=0; for(int i=0;i<nx;i++){ double d=cr_zsurf-crsurf(i); if(d>0) V+=d*(i+0.5); } return V; };   // r-weighted excavated cross-section ~ crater volume (continuous settling signal)
+    auto crvmax=[&](){ double v=0; for(uint32_t c=0;c<n;c++) if(r[c]>1350.0f){ double vv=sqrt((double)mu[c]*mu[c]+(double)mv[c]*mv[c]+(double)mw[c]*mw[c])/r[c]; v=max(v,vv);} return v; };
+    double cr_tolM=0.02, cr_Wwin=2.0*cr_tauto, cr_tsettled=-1.0, cr_nextlog=cr_tauto, cr_dmaxT=0.0;   // window-mean drift settling (mirrors CPU)
+    double cr_sumV=0.0, cr_meanPrev=-1.0, cr_winStart=-1.0; long cr_cntV=0;
     double t=0;int step=0;
     while(t<tend){
         run(Pws,n,{br,bmu,bmv,bmw,bE,bsp},{{&emode,4},{&gam,4},{&MG,sizeof(GMat)},{&n,4},{&rcfl,4}});
@@ -235,13 +260,40 @@ int main(int argc,char**argv){
         if(mode=="pierazzo") run(Ppm,n,{br,bmu,bmv,bmw,bE,bPmax},{{&MG,sizeof(GMat)},{&n,4}});
         if(dampf<1.0f) run(Pdamp,n,{bmu,bmv,bmw},{{&dampf,4},{&n,4}});   // route 1: quench FP32-noise velocities
         if(rcfl>0) run(Pvoid,n,{bmu,bmv,bmw,br,bE,bxx,byy,bzz,bxy,bxz,byz,bRR0},{{&rcfl,4},{&n,4}});   // route 1: void cells = passive vacuum (reset to reference)
-        if(mode=="substrate"){ for(int i=0;i<nx;i++)for(int kk=0;kk<2;kk++){int c=i*nz+kk;r[c]=RR0[c];mu[c]=mv[c]=mw[c]=0;E[c]=0;} }  // pin deep far-field floor to reference
+        if(mode=="substrate"||mode=="crater"){ for(int i=0;i<nx;i++)for(int kk=0;kk<2;kk++){int c=i*nz+kk;r[c]=RR0[c];mu[c]=mv[c]=mw[c]=0;E[c]=0;} }  // pin deep far-field floor to reference
         t+=dt;step++;
+        if(mode=="crater"){
+            if(step%20==0){ double dn=0; for(int i=0;i<nx;i++) dn=max(dn,cr_zsurf-crsurf(i)); cr_dmaxT=max(cr_dmaxT,dn); }   // track transient excavation depth
+            if(t>=cr_nextlog){ double dn=0; for(int i=0;i<nx;i++) dn=max(dn,cr_zsurf-crsurf(i));   // progress to stderr (mirrors CPU)
+                fprintf(stderr,"  [GPU crater a=%.0f] t=%.1f/%.0fs steps=%d max|v|=%.2f Vexc=%.4e depth=%.2fkm meanPrev=%.4e\n",cr_a,t,tend,step,crvmax(),crvexc(),dn/1e3,cr_meanPrev); cr_nextlog+=20.0; }
+            if(cr_targ<=0 && t>cr_tauto && step%5==0){ double V=crvexc();   // run-to-settling: compare successive window-means of the excavated volume
+                if(cr_winStart<0)cr_winStart=t; cr_sumV+=V; cr_cntV++;
+                if(t-cr_winStart>=cr_Wwin){ double meanNow=cr_sumV/cr_cntV;
+                    if(cr_meanPrev>0 && fabs(meanNow-cr_meanPrev)<cr_tolM*meanNow){ cr_tsettled=t; break; }
+                    cr_meanPrev=meanNow; cr_sumV=0; cr_cntV=0; cr_winStart=t; } }
+        }
     }
     if(mode=="sod"){
         auto pres=[&](int c){float ke=0.5f*(mu[c]*mu[c]+mv[c]*mv[c]+mw[c]*mw[c])/r[c];return (GAM-1)*(E[c]-ke);};
         double l1r=0,l1p=0,l1u=0;for(int i=0;i<nx;i++){double x=(i+0.5)*dx,re,ue,pe;exact_sod((x-0.5)/tend,re,ue,pe);l1r+=fabs(r[i]-re);l1p+=fabs(pres(i)-pe);l1u+=fabs(mu[i]/r[i]-ue);}
         printf("GPU Sod L1 vs EXACT: rho=%.4f p=%.4f u=%.4f  GATE(==CPU): %s\n",l1r/nx,l1p/nx,l1u/nx,(l1r/nx<0.007)?"PASS":"CHECK");
+    } else if(mode=="crater"){   // Phase-3 GPU crater diagnostic (mirrors hydro_cpu): floor depth, apparent diameter, rim, d/D + profile dump
+        double vmx=0,pmx=0; bool fin=true;
+        for(uint32_t c=0;c<n;c++){ if(!isfinite(r[c])||!isfinite(E[c])) fin=false;
+            if(r[c]>1350.0f){ double v=sqrt((double)mu[c]*mu[c]+(double)mv[c]*mv[c]+(double)mw[c]*mw[c])/r[c]; vmx=max(vmx,v);
+                double u=(E[c]-0.5*((double)mu[c]*mu[c]+(double)mv[c]*mv[c]+(double)mw[c]*mw[c])/r[c])/r[c]; pmx=max(pmx,(double)tillP(r[c],(float)u,MG)); } }
+        double z0=crsurf(nx-1);
+        double zfloor=z0; int ifloor=0; for(int i=0;i<nx;i++){double zs=crsurf(i); if(zs<zfloor){zfloor=zs;ifloor=i;}}
+        int iD=nx-1; for(int i=ifloor;i<nx;i++){ if(crsurf(i)>=z0-0.25*dx){ iD=i; break; } }
+        double rD=(iD+0.5)*dx, Dapp=2.0*rD, dapp=z0-zfloor, dD=(Dapp>0?dapp/Dapp:0.0);
+        double zrim=z0,rrim=0; for(int i=0;i<nx;i++){double zs=crsurf(i); if(zs>zrim){zrim=zs;rrim=(i+0.5)*dx;}}
+        printf("GPU CRATER a=%.0fm U=%.0f g=%.2f TDEC=%.3g ETA=%.3g | grid %dx%d dx=%.0f zsurf=%.1fkm tend=%.1fs steps=%d\n",cr_a,cr_U,cr_g,cr_TDEC,cr_ETA,nx,nz,dx,cr_zsurf/1e3,tend,step);
+        printf("  settling: %s at t=%.1fs (t_auto=%.1fs cap=%.1fs tolM=%.1f%% Wwin=%.1fs final max|v|=%.1f m/s)\n",(cr_tsettled>0?"SETTLED":(cr_targ>0?"FIXED-RUN":"NOT-SETTLED@cap")),(cr_tsettled>0?cr_tsettled:t),cr_tauto,tend,cr_tolM*100,cr_Wwin,vmx);
+        printf("  D_app=%.2f km  depth=%.2f km  transient depth=%.2f km  rim uplift=%.2f km @ r=%.2f km  d/D=%.3f\n",Dapp/1e3,dapp/1e3,cr_dmaxT/1e3,(zrim-z0)/1e3,rrim/1e3,dD);
+        printf("  stability: max|v|=%.1f m/s  maxP=%.2e Pa  %s\n",vmx,pmx,fin?"FINITE":"NONFINITE-BLOWUP");
+        printf("RESULT %.1f %.4f %.4f %.4f %.4f\n",cr_a,Dapp,dapp,cr_dmaxT,dD);
+        FILE*pf=fopen(cr_prof.c_str(),"w"); if(pf){ fprintf(pf,"# r_m  zsurf-z0_m   (GPU a=%.0f U=%.0f g=%.2f TDEC=%.3g ETA=%.3g dx=%.0f z0=%.1f)\n",cr_a,cr_U,cr_g,cr_TDEC,cr_ETA,dx,z0);
+            for(int i=0;i<nx;i++) fprintf(pf,"%.1f %.3f\n",(i+0.5)*dx, crsurf(i)-z0); fclose(pf); }
     } else if(mode=="sedov_axi"){   // axisymmetric geometry check: on-axis point blast = 3D spherical Sedov (same analytic as the 3D gate)
         double rpk=0,rhomax=0,zc=(nz/2+0.5)*dx;
         for(int i=0;i<nx;i++)for(int k=0;k<nz;k++){int c=i*nz+k;double rr=r[c];
