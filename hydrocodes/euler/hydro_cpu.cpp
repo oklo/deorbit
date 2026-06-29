@@ -18,6 +18,7 @@ static double TDEC = 0.0;  // acoustic-fluidization vibration decay time (s); 0 
 static double ETA_AF = 0.0; // acoustic-fluidization viscosity (Pa.s); damps fluidized flow (Wunnemann-Ivanov)
 static double C_ACT = 0.0;  // AF shock-activation coupling: vib seeded at shock = C_ACT*|post-shock v|; 0 = shock activation off (af stays at IC)
 static double P_COH = 1.0e6; // cohesion floor (Pa) for the overburden in the fluidization ratio (avoids /0 at the free surface)
+static double P_ACT = 0.0;  // AF activation: only a SHOCK-sized pressure jump (new-peak rise > P_ACT in a step) seeds vib; 0 = seed on any new peak (legacy). Stops slow collapse flow from re-fluidizing Eulerian wall cells.
 static double RHO_CFL = 0.0; // exclude near-void cells (rho<RHO_CFL) from the CFL (their hi-v dynamics are negligible)
 static double DAMP = 1.0;    // relaxation velocity damping per step (route 2: settle a gravity-loaded substrate); 1 = off
 static double RHO_VAC = 0.0; // vacuum-aware Riemann flux: a face side with rho<RHO_VAC is treated as vacuum (free surface); 0 = off
@@ -241,9 +242,10 @@ static void update_af(Grid&g,double dt){
     int n=g.nx*g.ny*g.nz; double dec=exp(-dt/TDEC);
     for(int c=0;c<n;c++){
         double P=Pcell(g,c);
-        if(P>g.Pmax[c]){                     // shock arrival (new pressure peak): seed vibrations from the post-shock velocity
-            double sp=sqrt(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/max(g.r[c],1e-30);
-            g.vib[c]=max(g.vib[c],C_ACT*sp); g.Pmax[c]=P; }
+        if(P>g.Pmax[c]){                     // new pressure peak: track it; seed vib only if the rise is SHOCK-sized (> P_ACT)
+            double dP=P-g.Pmax[c]; g.Pmax[c]=P;
+            if(dP>P_ACT){ double sp=sqrt(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/max(g.r[c],1e-30);
+                g.vib[c]=max(g.vib[c],C_ACT*sp); } }
         g.vib[c]*=dec;                        // acoustic vibrations decay
         double cs=MAT.sound_speed(g.r[c],eint(g,c)), pvib=g.r[c]*cs*g.vib[c], pov=max(P,P_COH);
         g.af[c]=pvib/(pvib+pov);              // fluidization ratio in [0,1)
@@ -405,7 +407,7 @@ int main(int argc,char**argv){
         double cppr= argc>7?atof(argv[7]):5.0;        // cells per impactor radius
         double Rfac= argc>9?atof(argv[9]):18.0, Zfac=argc>10?atof(argv[10]):22.0;   // domain size in impactor radii
         double dx=a/cppr; AXISYM=true; RHO_CFL=100.0; RHO_VAC=100.0; double CFL=0.4;
-        C_ACT=(TDEC>0?0.5:0.0); P_COH=1.0e6;
+        C_ACT=(TDEC>0?0.5:0.0); P_COH=1.0e6; P_ACT=(TDEC>0?1.0e8:0.0);   // shock-gate AF activation (>100 MPa jump): the impact shock fluidizes, slow collapse flow does NOT re-fluidize Eulerian wall cells
         ROCK=(argc>12?atoi(argv[12]):1);   // pressure-dependent friction yield (default on); arg 0 = old cohesion-only von Mises for A/B
         if(argc>13) Y_D0=atof(argv[13]);   // damaged residual cohesion (Pa); the key knob to arrest small-crater creep
         int Nr=(int)(Rfac*a/dx+0.5), Nz=(int)(Zfac*a/dx+0.5);
