@@ -84,18 +84,26 @@ Steps 1-3 of the prior NEXT-STEPS are DONE (not yet committed at time of writing
    ~/investigations/daemons.json was REMOVED — re-add ONLY with a QoS fix, else it throttles. The unsettled
    first pass is archived at state/results_unsettled.csv (depth signal only; d/D unusable).
 
-## NEXT STEPS (ordered — REVISED around the AF creep crux)
-0. **DECIDE the AF direction (this is now the crux; may want Greg's steer).** Run-to-settling revealed AF-on
-   craters creep to flat. Options: (a) diagnose+fix the AF model so the post-collapse crater is STABLE (the
-   W&I-intended behaviour); (b) re-tune AF params (TDEC/ETA/C_ACT and the damage coupling); (c) characterise
-   the AF-off baseline first (friction+damage holds) and treat AF as a separate sub-study. Lit-ground it:
-   W&I AF relaxes to a stable final crater, so creep-to-flat is most likely a model/param artifact.
-1. **Mechanism CONFIRMED (af + damage instruments now in the crater progress log):** the creep is driven by
-   persistent wall-cell fluidization (af max ~0.85 sustained, re-seeded by the collapse flow), NOT by damage
-   (AF-off is more damaged yet holds). NEXT here: fix the AF activation so it keys on a SHOCK (high dP/dt),
-   not slow post-collapse shear, so wall cells re-solidify; re-test that AF-on then HOLDS like AF-off but with
-   a proper collapsed (complex) morphology. Inspect update_af()'s activation criterion + C_ACT + the vib
-   re-seeding path.
+## NEXT STEPS (ordered — REVISED; AF crux DIAGNOSED + FIXED)
+0. **DONE — AF direction chosen (Greg) = shock-gate activation, and IMPLEMENTED.** Root cause (ground-truthed):
+   update_af seeded vib on ANY new per-cell pressure peak; with Eulerian cells the slow collapse flow kept
+   re-seeding former near-surface cells -> persistent wall fluidization (af max stuck ~0.85) -> creep to flat.
+   FIX (commit 1691f1b CPU; GPU ported, gates PASS GPU==CPU): new global/scalar P_ACT/pact -- only a
+   SHOCK-sized new-peak rise (dP>P_ACT in a step) seeds vib; default 0 (= legacy, gates bit-identical);
+   crater sets P_ACT=1e8 with AF on. VALIDATED a=300 AF-on: af MAX now decays 0.99->0.05 (re-solidifies, was
+   stuck ~0.85) and depth HOLDS ~0.57km (was creeping to 0.24). AF now relaxes to a STABLE crater (W&I-intended).
+1. **CHAOTIC-COLLAPSE / GPU!=CPU caveat (found porting the fix):** the shock-gated crater HOLDS on both codes
+   (no creep) but at DIFFERENT depths -- CPU(FP64) 0.57km vs GPU(FP32) 1.77km for the same a=300 config. The
+   sharp dP>P_ACT seeding threshold AMPLIFIES FP divergence (a cell near threshold seeds-or-not differently ->
+   different amount fluidizes -> different collapse). Even pre-fix the crept GPU/CPU craters differed ~2-3x, so
+   the collapse is intrinsically FP-sensitive/chaotic. IMPLICATION: a single-run d/D is NOT a robust number yet.
+   For calibration treat the FP64 CPU as the ORACLE; converge resolution (cppr 8,12); consider SOFTENING the
+   threshold (smooth ramp seed ~ smoothstep(dP/P_ACT) instead of a hard gate) and/or more collapse damping to
+   tame the sensitivity. (The gates remain GPU==CPU -- this is the chaotic integration, not a kernel mismatch.)
+2. **Fix the datum/domain:** the shock-gated crater HOLDS but the depression still slowly WIDENS to the
+   boundary (Vexc grows while depth holds) -> surf(nx-1) datum contaminated, d/D garbage. Enlarge Rfac (18 ->
+   ~30) and/or measure depth/D_app against the FIXED original surface zsurf (in the progress log). Then the
+   windowed-mean settling should fire cleanly and d/D becomes meaningful.
 2. **Fix the datum/domain:** measure depth against the FIXED original surface zsurf (already in the progress
    log), not surf(nx-1); and/or enlarge Rfac (18 -> ~30) so the relaxing rim doesn't reach the boundary.
    Make the RESULT depth + the offline analyzer use the robust datum so d/D becomes meaningful.

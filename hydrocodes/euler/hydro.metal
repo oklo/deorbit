@@ -315,11 +315,12 @@ kernel void update_af(device const float*r[[buffer(0)]],device const float*mu[[b
     device float*Pmax[[buffer(6)]],device float*af[[buffer(7)]],
     constant float&dt[[buffer(8)]],constant float&cact[[buffer(9)]],constant float&tdec[[buffer(10)]],
     constant float&pcoh[[buffer(11)]],constant int&mode[[buffer(12)]],constant float&gam[[buffer(13)]],
-    constant GMat&mat[[buffer(14)]],constant uint&n[[buffer(15)]],uint g[[thread_position_in_grid]]){
+    constant GMat&mat[[buffer(14)]],constant uint&n[[buffer(15)]],constant float&pact[[buffer(16)]],uint g[[thread_position_in_grid]]){
     if(g>=n)return;
     float ke=0.5f*(mu[g]*mu[g]+mv[g]*mv[g]+mw[g]*mw[g])/r[g], e=(E[g]-ke)/r[g];
     float2 pc=eospc(r[g],e,mode,gam,mat); float P=pc.x, cs=pc.y;
-    if(P>Pmax[g]){ float sp=sqrt(mu[g]*mu[g]+mv[g]*mv[g]+mw[g]*mw[g])/max(r[g],1e-30f); vib[g]=max(vib[g],cact*sp); Pmax[g]=P; }
+    if(P>Pmax[g]){ float dP=P-Pmax[g]; Pmax[g]=P;   // new peak: track it; seed vib only if the rise is SHOCK-sized (> pact)
+        if(dP>pact){ float sp=sqrt(mu[g]*mu[g]+mv[g]*mv[g]+mw[g]*mw[g])/max(r[g],1e-30f); vib[g]=max(vib[g],cact*sp); } }
     vib[g]*=exp(-dt/tdec);
     float pvib=r[g]*cs*vib[g], pov=max(P,pcoh); af[g]=pvib/(pvib+pov);
 }

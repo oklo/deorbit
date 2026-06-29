@@ -56,6 +56,7 @@ int main(int argc,char**argv){
     string mode=argc>1?argv[1]:"sod"; double rho0=2700,G=BASALT.G,Y=BASALT.Y,csb=sqrt(G/rho0);
     int nx,ny,nz,emode; double Ldom,tend,CFL; float gz=0.0f, rcfl=0.0f, rvac=0.0f; int wb=0;
     float cact=0.0f, tdecf=0.0f, pcoh=1.0e6f;   // shock-activated AF: activation coupling, vibration decay time, cohesion floor (0 = AF off)
+    float pact=0.0f;   // AF activation: only a SHOCK-sized new-peak pressure rise (>pact) seeds vib; 0 = legacy seed-on-any-peak (keeps gates bit-identical)
     float etaaf=0.0f;   // AF Newtonian viscosity coefficient (Pa.s); 0 = AF viscosity off
     int axisym=0;   // cylindrical (r,z) axisymmetric geometry (x->r, axis at r=0); 0 = Cartesian
     // Phase-3 crater CLI (mirrors hydro_cpu crater): a U TDEC ETA g cppr tend Rfac Zfac profile rock Yd0
@@ -87,7 +88,7 @@ int main(int argc,char**argv){
     else if(mode=="friction"){nx=8;ny=nz=1;Ldom=8.0;tend=0.0;CFL=0.4;emode=1;}  // Phase-3: ROCK pressure-dependent yield gate (single vonmises eval; pre-loop block)
     else if(mode=="crater"){ double dxc=cr_a/cr_cppr; nx=(int)(cr_Rfac*cr_a/dxc+0.5); ny=1; nz=(int)(cr_Zfac*cr_a/dxc+0.5);   // Phase-3: axisymmetric vertical impact crater (mirrors hydro_cpu crater)
         Ldom=nx*dxc; CFL=0.4; emode=1; axisym=1; wb=1; gz=(float)cr_g; rcfl=100.0f; rvac=100.0f;
-        cact=(cr_TDEC>0?0.5f:0.0f); tdecf=(float)cr_TDEC; etaaf=(float)cr_ETA; pcoh=1.0e6f;
+        cact=(cr_TDEC>0?0.5f:0.0f); tdecf=(float)cr_TDEC; etaaf=(float)cr_ETA; pcoh=1.0e6f; pact=(cr_TDEC>0?1.0e8f:0.0f);   // shock-gate AF activation (mirrors CPU P_ACT)
         tend=(cr_targ>0?cr_targ:10.0*cr_tauto); }   // explicit tend>0 -> fixed run; else run-to-settling capped at 10x t_auto
     else { fprintf(stderr,"unknown mode '%s' (modes: sod sedov surface bshock shear yield freefall atmos tensile pierazzo vacuum substrate tracer af_activate sedov_axi lame af_visc vib_advect friction crater)\n",mode.c_str()); return 2; }   // fatal: never silently validate the wrong physics
     double dx=Ldom/((nx==1&&ny==1)?nz:nx); uint32_t n=nx*ny*nz; float invdx=1.0f/dx; float gam=GAM;
@@ -240,7 +241,7 @@ int main(int argc,char**argv){
         float dt=CFL*dx/smax;if(t+dt>tend)dt=tend-t; auto dtA=vector<pair<const void*,size_t>>{{&dt,4},{&n,4}};
         auto gdA=vector<pair<const void*,size_t>>{{&MG,sizeof(GMat)},{&epsact,4},{&invdx,4},{&dt,4},{&n,4}};
         if(cact>0.0f) run(Pupaf,n,{br,bmu,bmv,bmw,bE,bvib,bPmax,baf},   // shock-activated AF: refresh vib + derive af BEFORE strength reads it (once per step, on the start-of-step state)
-            {{&dt,4},{&cact,4},{&tdecf,4},{&pcoh,4},{&emode,4},{&gam,4},{&MG,sizeof(GMat)},{&n,4}});
+            {{&dt,4},{&cact,4},{&tdecf,4},{&pcoh,4},{&emode,4},{&gam,4},{&MG,sizeof(GMat)},{&n,4},{&pact,4}});
         run(Plop,n,{br,bmu,bmv,bmw,bE,bdr,bdmu,bdmv,bdmw,bdE,bRR0,bRP0,brc,bdrc},lopA);
         if(strn) run(Pstr,n,{br,bmu,bmv,bmw,bE,bxx,byy,bzz,bxy,bxz,byz,bdmu,bdmv,bdmw,bdE,dxx,dyy,dzz,dxy,dxz,dyz,bD,bdD,baf,bvib,bdvib},strA);
         run(Prk1,n,{br,bmu,bmv,bmw,bE,bdr,bdmu,bdmv,bdmw,bdE,br1,bmu1,bmv1,bmw1,bE1},dtA);
