@@ -65,6 +65,27 @@ Steps 1-3 of the prior NEXT-STEPS are DONE (not yet committed at time of writing
   x dimensionless AF (TDEC=Tfrac*a/c_s, ETA=Efrac*rho*c_s*a, size-independent) x Y_d0. Dumps each profile +
   a state/results.csv row; idempotent/resumable; `--list`/`--increment N`/`--daemon`/`--jobs K`.
 
+## SESSION UPDATE 2026-06-30 (first SETTLED sweep + Garvin calibration)
+- The 42-run settled sweep RAN (CPU FP64 oracle, cppr=5, cap 6*t_auto; sweep_crater.py --jobs 14 under
+  `caffeinate` -- NOTE the throttle was the laptop SLEEPING when unattended, not QoS; caffeinate fixes it).
+  Y_d0 {1,5,10 MPa} x AF{off, on Tfrac30/Efrac0.01} x 7 sizes (a=300..3000). Profiles in state/profiles/.
+- Calibration oracle `mars_dD_oracle.py` = Garvin et al. 2003 MOLA Mars fresh-crater fits (simple
+  d=0.21D^0.81, complex d=0.36D^0.49 km; transition ~7km). `analyze_crater.py ... --csv state/dD_settled.csv`
+  then `mars_dD_oracle.py state/dD_settled.csv` prints sim-vs-oracle (ratio = sim d/D ÷ Garvin).
+- **FIRST-PASS RESULT (reliable subset only — see blocker): AF-OFF, Y_d0≈5 MPa best tracks Garvin.**
+  off_yd5M ratios across the measurable range: 1.03 (D=5.8), 1.14 (8.9), 1.18 (13.1), 0.96 (17.4 km) — and
+  d/D DECREASES with D correctly (0.155→0.135→0.115→0.080). Y_d0=1MPa too weak/shallow; Y_d0=10MPa a bit
+  deep; **AF-ON (Tfrac=30) systematically OVER-deepens (ratio 1.8-2.1)** — short TDEC + shock-gating lets it
+  dig a deeper transient then freeze. AF param space (Tfrac,Efrac) is essentially UNtuned (one slice only).
+- **NEW BLOCKER (complex branch): a>=1500 are UNMEASURABLE — D_app pins to the domain edge** (89.7/119.6/
+  179.4 km = ~2*r_max). The outer-boundary far-field SAG scales with crater size (sag -3.6km for a=3000),
+  AND the big crater fills the domain, so the mid-field-ring datum fails. Only a<=1000 (D<=~17km, simple→just
+  past transition) give trustworthy d/D. The complex branch + the ~7km transition shape are NOT yet constrained.
+- NEXT: (1) make big craters measurable — proper outer radial BC (reflective/WB so the far field stays flat),
+  and/or scale Rfac with a; (2) an AF (Tfrac,Efrac) sweep to see if AF-on can match (and to get complex
+  collapse right); (3) resolution convergence (cppr 8/12) + repeat-run scatter (collapse is FP/chaotic) on a
+  few anchor sizes before trusting absolute d/D. Single-run d/D here is one chaotic realization.
+
 ## KEY FINDINGS (the science — read these before re-running anything)
 1. **Cohesion-only strength can't hold craters** → impact damage drives Y→0 → damaged rock flows flat under
    gravity (a=300m crater relaxed 1.4km→0). ROCK friction FIXES this: the crater now holds.
