@@ -34,7 +34,7 @@ if "--bin" in sys.argv:
 
 # --- physical constants / fixed run params ---
 CS, RHO = 3000.0, 2700.0     # basalt sound speed, density (AF scaling)
-U, G, CPPR = 12000.0, 3.71, 6.0   # impact speed (m/s), Mars gravity, cells per impactor radius
+U, G, CPPR = 12000.0, 3.71, 5.0   # impact speed (m/s), Mars gravity, cells per impactor radius (5 = first-pass curve; converge cppr 8/12 on key sizes later)
 
 # --- sweep grid ---
 SIZES = [300, 500, 750, 1000, 1500, 2000, 3000]   # impactor radii (m) -> craters spanning the simple/complex transition

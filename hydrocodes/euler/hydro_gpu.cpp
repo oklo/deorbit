@@ -89,7 +89,7 @@ int main(int argc,char**argv){
     else if(mode=="crater"){ double dxc=cr_a/cr_cppr; nx=(int)(cr_Rfac*cr_a/dxc+0.5); ny=1; nz=(int)(cr_Zfac*cr_a/dxc+0.5);   // Phase-3: axisymmetric vertical impact crater (mirrors hydro_cpu crater)
         Ldom=nx*dxc; CFL=0.4; emode=1; axisym=1; wb=1; gz=(float)cr_g; rcfl=100.0f; rvac=100.0f;
         cact=(cr_TDEC>0?0.5f:0.0f); tdecf=(float)cr_TDEC; etaaf=(float)cr_ETA; pcoh=1.0e6f; pact=(cr_TDEC>0?1.0e8f:0.0f);   // shock-gate AF activation (mirrors CPU P_ACT)
-        tend=(cr_targ>0?cr_targ:10.0*cr_tauto); }   // explicit tend>0 -> fixed run; else run-to-settling capped at 10x t_auto
+        tend=(cr_targ>0?cr_targ:6.0*cr_tauto); }   // explicit tend>0 -> fixed run; else run-to-settling capped at 6x t_auto
     else { fprintf(stderr,"unknown mode '%s' (modes: sod sedov surface bshock shear yield freefall atmos tensile pierazzo vacuum substrate tracer af_activate sedov_axi lame af_visc vib_advect friction crater)\n",mode.c_str()); return 2; }   // fatal: never silently validate the wrong physics
     double dx=Ldom/((nx==1&&ny==1)?nz:nx); uint32_t n=nx*ny*nz; float invdx=1.0f/dx; float gam=GAM;
     GMat MG=(mode=="pierazzo")?AL:BASALT; bool strn=(emode==1 && MG.G>0);   // Al = pure hydro (no strength/damage)

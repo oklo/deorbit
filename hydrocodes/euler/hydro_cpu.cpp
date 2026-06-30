@@ -421,7 +421,7 @@ int main(int argc,char**argv){
             if(sqrt(r*r+(z-zc)*(z-zc))<a){g.r[c]=rho0;g.mw[c]=-rho0*U;g.E[c]=0.5*rho0*U*U;}}
         double targ=argc>8?atof(argv[8]):-1.0;   // explicit tend>0 -> fixed run (old behaviour); <=0 -> run-to-settling
         double t_auto=2.0*sqrt((Rfac*a)/GZ);      // gravity formation/collapse timescale
-        bool fixed=(targ>0); double tend=fixed?targ:10.0*t_auto;   // settling cap = 10x the formation timescale
+        bool fixed=(targ>0); double tend=fixed?targ:6.0*t_auto;   // settling cap = 6x t_auto (depth ~converged by ~5x; keeps run-to-settling affordable)
         double tolM=0.02;                         // settled when consecutive Vexc WINDOW-MEANS agree within 2% (robust to residual sloshing + density-threshold jitter)
         double Wwin=2.0*t_auto;                    // averaging window >= one oscillation period (2pi*sqrt(D/g)) so fast jitter/sloshing averages out
         auto surf=[&](int i){ for(int k=Nz-1;k>=0;k--){ if(g.r[g.idx(i,0,k)]>1350.0) return (k+0.5)*dx; } return 0.0; };
