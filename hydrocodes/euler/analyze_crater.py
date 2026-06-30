@@ -98,10 +98,13 @@ def analyze(path, datum_tol=None):
 
 
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
     csv_out = None
+    skip = set()
     if "--csv" in sys.argv:
-        csv_out = sys.argv[sys.argv.index("--csv") + 1]
+        ci = sys.argv.index("--csv")
+        csv_out = sys.argv[ci + 1]
+        skip = {ci, ci + 1}                                   # drop the flag AND its value
+    args = [a for i, a in enumerate(sys.argv[1:], start=1) if not a.startswith("--") and i not in skip]
     files = args if args else sorted(glob.glob(os.path.join(HERE, "state", "profiles", "*.txt")))
     if not files:
         print("no profiles found"); return
