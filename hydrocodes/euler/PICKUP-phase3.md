@@ -1,5 +1,25 @@
 # PICKUP — Euler Phase 3: AF + strength calibration to the depth–diameter curve
 
+> ## RESUME HERE (as of 2026-07-01, master==origin/master @ 6bea00e)
+> The AF crux is FIXED and the d-D pipeline WORKS end-to-end. We have the FIRST COMPLETE simple+complex
+> d/D-vs-D curve (sweep 42/42, sponge fix) vs the Garvin-2003 Mars oracle. Read the two "SESSION UPDATE"
+> blocks below (2026-06-30 and 2026-07-01) for the numbers.
+> **State of the science:** the model reproduces the d/D DECREASE with size; Y_d0=5-10MPa BRACKETS the Garvin
+> LEVEL; the COMPLEX branch falls TOO STEEPLY (big craters over-collapse) BUT the big-a craters are
+> NOT-SETTLED at cap=6*t_auto, so that steep falloff is the least-trusted part.
+> **IMMEDIATE NEXT STEPS (ordered):**
+>   1. **Bump the big-a settling cap** (cheap, removes the biggest caveat): the 12km transients need >6*t_auto.
+>      Raise the crater cap (hydro_cpu.cpp/hydro_gpu.cpp `6.0*t_auto`) for big a, or make it size-aware, and
+>      re-measure the complex branch (a>=1500). Check whether the complex falloff flattens toward Garvin.
+>   2. **AF (Tfrac,Efrac) sweep (task #8)** around Y_d0~7MPa: tune AF to lift the complex branch (AF's intended
+>      role) and match the LEVEL. Edit sweep_crater.py SETTINGS; run `caffeinate -i -s python3 sweep_crater.py
+>      --jobs 14` (FP64 CPU oracle -- GPU collapse is FP-chaotic for small a; big-a GPU==CPU to ~5%).
+>   3. **cppr 8/12 convergence + repeat-run averaging** on 2-3 anchor sizes (single-run d/D ~20% chaotic scatter).
+>   4. Then the 3D oblique Chicxulub run (the original goal; Collins et al. 2020).
+> **Run/measure loop:** `./hydro_cpu crater a U TDEC ETA g cppr -1 30 22 prof.txt 1 Yd0` (settling; profile out)
+> -> `python3 analyze_crater.py <profiles> --csv state/dD_settled.csv` -> `python3 mars_dD_oracle.py state/dD_settled.csv`.
+> Gates: `./gates.sh quick` (34 PASS, GPU==CPU). state/ is gitignored (profiles+CSV are local).
+
 Self-contained hand-off for a fresh context. **Repo:** github.com/oklo/deorbit, code in
 `deorbit/hydrocodes/euler/` (CPU oracle `hydro_cpu.cpp`, GPU `hydro.metal` + `hydro_gpu.cpp`,
 shared EOS `../common/eos.hpp`). master == origin/master as of commit 54ddc37.
@@ -96,10 +116,17 @@ Steps 1-3 of the prior NEXT-STEPS are DONE (not yet committed at time of writing
   0->1 to the edge), absorbing the edge sink + outgoing waves. a=3000: far field now FLAT, D_app 179km(edge
   garbage)->41km, d/D=0.043 (CPU) / 0.045 (GPU) ~= Garvin complex (~0.05). a=300 unharmed (d/D~0.186).
   NOTE: big-crater collapse is LESS FP-chaotic than small-a (GPU==CPU to ~5% at a=3000 vs ~3x at a=300).
-- Re-running the FULL 42-run sweep WITH the sponge (state/dD_settled.csv) for the complete simple+complex
-  d-D curve. CAVEAT still: single-run d/D has ~20% chaotic scatter (a=300 gave 0.155 then 0.186 on reruns) ->
-  want repeat-run averaging on anchor sizes; and big-a are NOT-SETTLED@cap (max|v|~74, 12km transient still
-  relaxing) so their d/D is a lower bound on settling-completeness.
+- FULL 42-run sponged sweep DONE (state/dD_settled.csv; view: `python3 mars_dD_oracle.py state/dD_settled.csv`).
+  **First complete simple+complex d-D CURVE (D=5..45km).** RESULT vs Garvin (sim d/D, ratio=sim/Garvin):
+    off_yd5M : D5.8=0.186(1.2) D9.5=0.168(1.5) D13.4=0.157(1.6) D17.8=0.124(1.5) D25.5=0.082(1.2) D31.6=0.051(0.8) D43.8=0.018(0.35)
+    off_yd10M: D5.0=0.229(1.5) D8.7=0.195(1.6) D12.8=0.176(1.8) D16.6=0.157(1.8) D23.7=0.127(1.8) D30=0.093(1.5) D41.4=0.043(0.8)
+  FINDINGS: (1) the model REPRODUCES the d/D DECREASE with size (simple->complex) -- invisible before #7.
+  (2) LEVEL: Y_d0=5-10MPa BRACKETS Garvin (yd5 in the fresh band at small D; yd10 ~uniformly 1.6x too deep).
+  (3) SLOPE: the COMPLEX branch falls TOO STEEPLY -- big craters OVER-collapse (off_yd5M 0.018 at D=44 vs
+  Garvin 0.054). AF-ON over-deepens small D and is erratic at big D (untuned Tfrac=30). CAVEATS on the complex
+  branch: big-a are NOT-SETTLED@cap (cap 6*t_auto too short for the 12km transients -> the steep falloff is the
+  LEAST trustworthy part), + ~20% single-run chaotic scatter (a=300: 0.155 then 0.186 on reruns). The 2 weakest
+  biggest configs (af/off_yd1M_a3000) still fail to measure (crater too shallow/spread -> D_app=domain edge).
 
 ## KEY FINDINGS (the science — read these before re-running anything)
 1. **Cohesion-only strength can't hold craters** → impact damage drives Y→0 → damaged rock flows flat under
