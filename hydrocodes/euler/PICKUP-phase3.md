@@ -20,6 +20,45 @@
 > -> `python3 analyze_crater.py <profiles> --csv state/dD_settled.csv` -> `python3 mars_dD_oracle.py state/dD_settled.csv`.
 > Gates: `./gates.sh quick` (34 PASS, GPU==CPU). state/ is gitignored (profiles+CSV are local).
 
+## SCOPED TASK 2026-07-01: Pierazzo-2008 ALUMINUM peak-pressure parity (2D iSALE head-to-head)
+Decision (Greg): the "2D iSALE replication" head-to-head benchmark = **Pierazzo et al. 2008** (MAPS 43:1917,
+"Validation of numerical codes for impact and explosion cratering: strengthless and metal targets"), the
+**aluminum-exact** case. **Collins 2020 is a 3D-OBLIQUE APPLICATION, NOT a 2D parity test** — keep it as the
+endgame, don't conflate it with code validation.
+
+FINDING (ground-truthed vs the paper + M5 gate): Pierazzo's ALUMINUM benchmark is **PEAK-SHOCK-PRESSURE vs
+distance** (documented inter-code envelope ~10-20%), NOT crater growth — crater growth is the strengthless
+DUNITE case. So the aluminum-exact head-to-head = the peak-pressure decay, and it is **~90% already done** (M5
+gate, README): 1D Al-on-Al reproduces the analytic Tillotson Hugoniot to 0.0%; 3D Al-sphere isobaric core =
+93% of Hugoniot. **OPEN CAVEAT** = the near-field decay exponent n~1.3 over r/a 1-6 is UNCONVERGED (canonical
+far-field ~2); domain too small + cppr not converged.
+
+WIN CONDITION: aluminum P_peak(r/a) along the impact axis lands **within the Pierazzo ~10-20% inter-code
+envelope** across the documented r/a range, at converged resolution, with the fitted **far-field exponent -> ~2**.
+That is a defensible "we reproduce iSALE's validated shock behavior" claim (peak P is the credibility-critical
+quantity Pierazzo stresses). Zero EOS ambiguity (Al Tillotson is exact; `Material::aluminum()` in eos.hpp,
+`AL` in hydro_gpu.cpp).
+
+CONCRETE STEPS:
+  1. **Get the paper's exact Al setup + published curve.** Al sphere into Al half-space, vertical. Extract the
+     impactor diameter, velocity(ies), and DIGITIZE the cross-code peak-pressure-vs-distance figure (iSALE line
+     + the inter-code envelope). Sources: MAPS 43:1917 (Wiley doi 10.1111/j.1945-5100.2008.tb00653.x; ADS
+     2008M&PS...43.1917P; Arizona repo repository.arizona.edu/handle/10150/656500) and the MDPI-2021 follow-up
+     "Benchmarking Numerical Methods..." (mdpi.com/2076-3417/11/6/2504) which re-plots these.
+  2. **Far-field domain + cppr convergence** on the existing `pierazzo` mode (hydro_gpu.cpp: nx=ny=80,nz=100,
+     dx=0.1, a=1m=10cppr, U=10km/s; diagnostic writes pierazzo_decay.txt + fits exponent n). Enlarge the domain
+     so r/a reaches the far field (n~2 regime); run cppr 10/15/20 and show P_core + n(r/a) converge.
+  3. **Compare** digitized iSALE/envelope vs our P(r/a): per-point ratio + fitted far-field exponent. PASS if
+     inside the envelope with n->~2.
+  4. **Gate it** (extend M5 / add a `pierazzo` convergence check to gates.sh so it stays green).
+
+SCOPE LIMIT (state it in any writeup): this validates EOS + shock capture, NOT gravity/excavation/collapse.
+The crater-FORMATION head-to-head needs either the DUNITE strengthless case (no ANEOS dunite here -> dense
+Tillotson PROXY, an EOS mismatch that weakens a strict "replication" claim) or stays on the W&I-2003 d-D
+calibration already underway (RESUME banner below). **Phase B (optional, only if Al pressure parity passes):**
+dunite-proxy transient-crater comparison (transient, strengthless -> dodges the settling/collapse chaos).
+
+---
 Self-contained hand-off for a fresh context. **Repo:** github.com/oklo/deorbit, code in
 `deorbit/hydrocodes/euler/` (CPU oracle `hydro_cpu.cpp`, GPU `hydro.metal` + `hydro_gpu.cpp`,
 shared EOS `../common/eos.hpp`). master == origin/master as of commit 54ddc37.
