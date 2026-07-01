@@ -86,6 +86,21 @@ Steps 1-3 of the prior NEXT-STEPS are DONE (not yet committed at time of writing
   collapse right); (3) resolution convergence (cppr 8/12) + repeat-run scatter (collapse is FP/chaotic) on a
   few anchor sizes before trusting absolute d/D. Single-run d/D here is one chaotic realization.
 
+## SESSION UPDATE 2026-07-01 (#7 DONE: far-field sponge -> big craters measurable)
+- Root cause of the big-a d/D failure: the axisym FREE SURFACE SINKS over long runs -- a BOUNDARY-edge
+  artifact (outer ~15%) that accumulates in time and propagates inward. a=3000 sank domain-wide to -6.6km
+  (center looked like a PEAK). Isolation (small impactor, Rfac=90, 1024s): the INTERIOR is well-balanced
+  (max|v|~5.5, flat far field 0..-60m) -- NOT a bulk WB failure, so NO radial-WB core surgery needed.
+- FIX = a far-field SPONGE (commits e7eb6ca CPU + a2c1a34 GPU, crater step loop, crater-mode-only, all gates
+  PASS GPU==CPU): each step relax the outer 15% radial zone toward the frozen WB reference (ramp sp=xi^2,
+  0->1 to the edge), absorbing the edge sink + outgoing waves. a=3000: far field now FLAT, D_app 179km(edge
+  garbage)->41km, d/D=0.043 (CPU) / 0.045 (GPU) ~= Garvin complex (~0.05). a=300 unharmed (d/D~0.186).
+  NOTE: big-crater collapse is LESS FP-chaotic than small-a (GPU==CPU to ~5% at a=3000 vs ~3x at a=300).
+- Re-running the FULL 42-run sweep WITH the sponge (state/dD_settled.csv) for the complete simple+complex
+  d-D curve. CAVEAT still: single-run d/D has ~20% chaotic scatter (a=300 gave 0.155 then 0.186 on reruns) ->
+  want repeat-run averaging on anchor sizes; and big-a are NOT-SETTLED@cap (max|v|~74, 12km transient still
+  relaxing) so their d/D is a lower bound on settling-completeness.
+
 ## KEY FINDINGS (the science — read these before re-running anything)
 1. **Cohesion-only strength can't hold craters** → impact damage drives Y→0 → damaged rock flows flat under
    gravity (a=300m crater relaxed 1.4km→0). ROCK friction FIXES this: the crater now holds.
