@@ -263,6 +263,9 @@ int main(int argc,char**argv){
         if(dampf<1.0f) run(Pdamp,n,{bmu,bmv,bmw},{{&dampf,4},{&n,4}});   // route 1: quench FP32-noise velocities
         if(rcfl>0) run(Pvoid,n,{bmu,bmv,bmw,br,bE,bxx,byy,bzz,bxy,bxz,byz,bRR0},{{&rcfl,4},{&n,4}});   // route 1: void cells = passive vacuum (reset to reference)
         if(mode=="substrate"||mode=="crater"){ for(int i=0;i<nx;i++)for(int kk=0;kk<2;kk++){int c=i*nz+kk;r[c]=RR0[c];mu[c]=mv[c]=mw[c]=0;E[c]=0;} }  // pin deep far-field floor to reference
+        if(mode=="crater"){ int isp=(int)(0.85*nx);   // far-field radial SPONGE (mirrors CPU): relax the outer 15% toward the WB reference -> absorbs the boundary-edge sink + outgoing waves
+            for(int i=isp;i<nx;i++){ float xi=(float)(i-isp)/max(1,nx-1-isp), sp=xi*xi;
+                for(int k=0;k<nz;k++){ int c=i*nz+k; r[c]=(1-sp)*r[c]+sp*RR0[c]; mu[c]*=(1-sp); mv[c]*=(1-sp); mw[c]*=(1-sp); E[c]*=(1-sp); } } }
         t+=dt;step++;
         if(mode=="crater"){
             if(step%20==0){ double dn=0; for(int i=0;i<nx;i++) dn=max(dn,cr_zsurf-crsurf(i)); cr_dmaxT=max(cr_dmaxT,dn); }   // track transient excavation depth
