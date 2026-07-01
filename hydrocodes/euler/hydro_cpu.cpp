@@ -434,6 +434,9 @@ int main(int argc,char**argv){
         double sumV=0.0,meanPrev=-1.0,winStart=-1.0; long cntV=0;   // non-overlapping window-mean drift detector
         while(t<tend){double dt=CFL*dx/maxspeed(g);if(t+dt>tend)dt=tend-t;step_rk2(g,dt);
             for(int i=0;i<Nr;i++)for(int k=0;k<2;k++){int c=g.idx(i,0,k);g.r[c]=REF_R0[c];g.mu[c]=g.mv[c]=g.mw[c]=0;g.E[c]=0;}  // pin deep far-field floor
+            { int isp=(int)(0.85*Nr);   // far-field radial SPONGE: relax the outer ~15% toward the WB reference each step -> absorbs the slow boundary-edge sink + outgoing waves (the crater sits in the flat interior, r<~0.5 r_max)
+              for(int i=isp;i<Nr;i++){ double xi=(double)(i-isp)/max(1,Nr-1-isp), sp=xi*xi;   // ramp 0 (inner edge of sponge) -> 1 (domain edge)
+                for(int k=0;k<Nz;k++){ int c=g.idx(i,0,k); g.r[c]=(1-sp)*g.r[c]+sp*REF_R0[c]; g.mu[c]*=(1-sp); g.mv[c]*=(1-sp); g.mw[c]*=(1-sp); g.E[c]*=(1-sp); } } }
             if(s%20==0){double dnow=0;for(int i=0;i<Nr;i++)dnow=max(dnow,zsurf-surf(i));dmaxT=max(dmaxT,dnow);}   // track transient excavation
             t+=dt;s++;
             if(t>=next_log){double vn=vmax_dense(),dn=0,amax,dfrac;for(int i=0;i<Nr;i++)dn=max(dn,zsurf-surf(i));double amean=afstat(amax),Dmean=Dstat(dfrac);   // progress to stderr (sweep DEVNULLs stderr); watch settling + AF + damage state
