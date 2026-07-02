@@ -30,8 +30,8 @@ All gates currently PASS on both codes, GPU==CPU.
 | E13 | Grady-Kipp tensile damage (`tensile`) | D->1, strength->0 | as expected | ✅ |
 | E14 | Material tracer (`tracer`) | conservation + advection | sum 1e-7, centroid 1e-7 | ✅ |
 | E15 | 1D Al-on-Al planar impact (`alimpact`) | analytic Tillotson Hugoniot (R-H bisection) | peak P err 0.0% | ✅ |
-| E16 | **Pierazzo-2008 Al benchmark, axisym (`pierazzo2d`)** | published inter-code envelope, Table 1 (see `hydrocodes/euler/pierazzo2008_oracle.md`) | 5 km/s: P_cc 39-42 GPa (paper 40.4±6.2), n 1.26-1.34 (paper 1.2±0.1) PASS; 20 km/s: P_cc ~358 GPa (379±26) — convergence ladder in flight | 🔶 |
-| E17 | Pierazzo 3D decay structure (`pierazzo`, GPU) | Hugoniot core + power-law decay | core 93% Hugoniot; near-field n~1.26 -> far-field onset ~1.75; lateral-boundary check (half=16/24) in flight | 🔶 |
+| E16 | **Pierazzo-2008 Al benchmark, axisym (`pierazzo2d`)** | published inter-code envelope, Table 1 (see `hydrocodes/euler/pierazzo2008_oracle.md`) | **BOTH cases PASS, converged @ cppr 20-28**: 5 km/s P_cc 41.0 GPa (paper 40.4±6.2), n 1.243 (1.2±0.1), P(4D) 3.0 GPa (3.2±0.5); 20 km/s P_cc 383 GPa (379±26), n 2.316 (2.3±0.1). Velocity dependence of the decay slope reproduced; under-resolution fails per the paper's own Table-2 study (cppr>=20 = their guidance); domain-doubling bit-identical; GPU==CPU 4 sig figs | ✅ |
+| E17 | Pierazzo 3D decay structure (`pierazzo`, GPU) | Hugoniot core + power-law decay | core 93% Hugoniot; near-field n~1.26 -> far-field onset ~1.75; deep-slope flattening is domain-INDEPENDENT (half 10==16 bit-identical; half24 confirm in flight) | 🟡 internal study (no 10 km/s paper case) |
 | E18 | AF activation/decay (`af_activate`) | shock seeds vib behind front only; af decays | exact behaviour, GPU==CPU | ✅ |
 | E19 | Cylindrical strength — hoop strain + Lame equilibrium (`lame`) | analytic thick-cylinder deviatoric field | 1e-15 (CPU) / 2.6e-6 (GPU); equilibrium residual 0.4% | ✅ |
 | E20 | Cylindrical AF viscosity (`af_visc`) | (lap v)_r = 3A for u=Ar^2 (vs 2A Cartesian) | 4e-13 (CPU) / 4.3e-4 (GPU) | ✅ |

@@ -12,6 +12,24 @@
 > n 1.26-1.34 vs range 1.13-1.41, converging downward toward iSALE's 1.13-1.2 with cppr; GPU==CPU to 4
 > significant digits, ~2 s/run on GPU). 20 km/s: P_cc 358 GPa in range [335,411] at cppr=8; n ladder in
 > flight (`state/pz2d/*/out.txt`). 2D axisym cost is trivial (16 s CPU @ cppr12) vs hours in 3D — as planned.
+>
+> **LADDER VERDICT (14:56, all runs done — BOTH PAPER CASES PASS, CONVERGED ON THE MULTI-CODE MEANS):**
+> | U | cppr 8 | 12 | 16 | 20 | 28 | paper mean | code range |
+> |---|---|---|---|---|---|---|---|
+> | 5 km/s: P_cc GPa | 37.5 | 39.3 | 39.3 | 41.7 | **41.0** | 40.4±6.2 | 28.4-48.0 |
+> | 5 km/s: n | 1.444 | 1.341 | 1.261 | 1.263 | **1.243** | 1.2±0.1 | 1.13-1.41 |
+> | 20 km/s: P_cc GPa | 357.6 | 366.3 | 375.7 | 380.5 | **383.2** | 379±26 | 334.7-411.1 |
+> | 20 km/s: n | 2.144 | 2.202 | 2.252 | 2.280 | **2.316** | 2.3±0.1 | 2.27-2.53 |
+> P(4 diam) 5 km/s -> 3.04 GPa (paper 3.2±0.5). Under-resolved runs FAIL exactly per the paper's own
+> resolution study (peak P underestimated, slope flattened; cppr>=20 required = the paper's guidance) —
+> we reproduce their Table-2 resolution behaviour too. Domain check reach 16 vs 12 @ cppr20: bit-identical.
+> The old M5 caveat is CLOSED: the velocity-dependent decay slope (1.2 @ 5 km/s vs 2.3 @ 20 km/s) is
+> REPRODUCED; "n~1.3 @ 10 km/s" was simply intermediate. Cost note: 20 km/s cppr28 = 132k steps (~3.5 h
+> CPU; ambient tiny-dt pathology) — cppr20 (100k steps) is the practical paper-grade resolution.
+> **BATCH-3 half16 VERDICT (12:13): n_far[8-17]=1.537 = IDENTICAL to half=10** -> the 3D deep-slope
+> flattening past r/a~10 is NOT lateral-boundary contamination (domain-independent, likely physical
+> transition structure at 10 km/s). half24 confirms ~17:30. GPU 20 km/s cppr20 cross-check launched
+> (state/pz2d/gpu_u20000_c20/, detached).
 > NOTE: 20 km/s runs hit the known ambient tiny-dt pathology (~10x steps of 5 km/s). Batch 3 (3D half=16/24
 > boundary check) was found DEAD (died with the prior session ~07:40); RELAUNCHED 09:26 detached
 > (nohup+caffeinate, stderr kept) — half16 ~11:50, half24 ~17:15. Validation-matrix skeleton (paper Methods)
