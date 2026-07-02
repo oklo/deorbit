@@ -533,6 +533,52 @@ int main(int argc,char**argv){
         double Phug=hugoniot_P(up);
         printf("Al-on-Al planar (U=%.0f km/s, up=%.0f m/s): peak P=%.3e Pa  Tillotson Hugoniot=%.3e (err %.1f%%)\n",2*up/1000.0,up,Pmax,Phug,100*fabs(Pmax-Phug)/Phug);
         printf("GATE (shock P matches analytic Hugoniot, <5%%): %s\n",(fabs(Pmax-Phug)/Phug<0.05)?"PASS":"CHECK");
+    } else if(mode=="pierazzo2d"){ // Pierazzo et al. 2008 Al-on-Al peak-shock-pressure benchmark, AXISYMMETRIC (r,z).
+        // Paper cases (oracle numbers in pierazzo2008_oracle.md): 1 km-DIAMETER Al sphere, vertical, U=5 or
+        // 20 km/s, strengthless. No gravity -> scale-free -> a=1 m here; paper distance (km = proj DIAMETERS)
+        // maps to d/a = 2*d_km. Metrics vs Table 1: P_cc = mean peak P over depth 0-0.6a (5 km/s) / 0-1.2a
+        // (20 km/s) below the impact point; decay slope n over d/a in [4,10] (the paper's 2-5 diameters).
+        // Caveat: the paper records LAGRANGIAN tracer peaks; we record the EULERIAN per-cell peak. Equivalent
+        // in the fit window (tracer displacement <~1% of distance there, per the paper) but softer in the CC zone.
+        // args: pierazzo2d [cppr=12] [reach=12] [U=5000] [tend=-1(auto)]   (radial halfwidth = reach: half>=reach by construction)
+        MAT=Material::aluminum(); AXISYM=true; double CFL=0.3;
+        double cppr=argc>2?atof(argv[2]):12.0, reach=argc>3?atof(argv[3]):12.0, U=argc>4?atof(argv[4]):5000.0;
+        double a=1.0, dx=a/cppr, rho0=MAT.rho0, zsurf=reach*a, zc=zsurf+a;
+        int Nr=(int)(reach*a/dx+0.5), Nz=(int)((reach+3.0)*a/dx+0.5);
+        Grid g(Nr,1,Nz,dx);
+        for(int i=0;i<Nr;i++)for(int k=0;k<Nz;k++){double r=(i+0.5)*dx,z=(k+0.5)*dx;int c=g.idx(i,0,k);
+            if(sqrt(r*r+(z-zc)*(z-zc))<a){g.r[c]=rho0;g.mw[c]=-rho0*U;g.E[c]=0.5*rho0*U*U;}   // projectile, tangent to the surface, moving down
+            else if(z<zsurf){g.r[c]=rho0;g.E[c]=0;}                                            // Al half-space
+            else {g.r[c]=0.27;g.E[c]=0;}}                                                      // low-density ambient (M2 free-surface treatment; matches the 3D pierazzo mode)
+        double targ=argc>5?atof(argv[5]):-1.0, c0=sqrt(MAT.A/rho0);
+        double tend=(targ>0?targ:1.3*reach*a/c0);   // the front never falls below the bulk speed c0 -> 1.3x covers the decelerating tail
+        double t=0;int s=0;while(t<tend){double dt=CFL*dx/maxspeed(g);if(t+dt>tend)dt=tend-t;step_rk2(g,dt);
+            for(uint32_t c=0;c<g.r.size();c++){double P=Pcell(g,c);if(P>g.Pmax[c])g.Pmax[c]=P;}   // Eulerian peak-P tracking (update_af is a no-op here: AF off)
+            t+=dt;s++;}
+        double ccd=(U>=12500.0?1.2:0.6);   // contact/compression averaging depth in a (paper Table 1: 0-300 m / 0-600 m of the 500 m radius)
+        double Pcore=0; for(int k=0;k<Nz;k++){double d=zsurf-(k+0.5)*dx;if(d>0&&d<=1.5*a)Pcore=max(Pcore,g.Pmax[g.idx(0,0,k)]);}
+        double Pcc=0;int ncc=0; double Sx=0,Sy=0,Sx2=0,Sy2=0,Sxy=0;int np=0; double P4D=0,best=1e30;
+        FILE*o=fopen("pierazzo2d_decay.txt","w");
+        if(o)fprintf(o,"# d_over_a  Ppeak_Pa   (U=%.0f cppr=%g reach=%g axisym CPU)\n",U,cppr,reach);
+        for(int k=Nz-1;k>=0;k--){double d=zsurf-(k+0.5)*dx; if(d<=0)continue; double ra=d/a,P=g.Pmax[g.idx(0,0,k)];
+            if(o&&P>0)fprintf(o,"%.4f %.6e\n",ra,P);
+            if(ra<=ccd){Pcc+=P;ncc++;}
+            if(ra>=4.0&&ra<=10.0&&P>0.005*Pcore){double lx=log(ra),ly=log(P);Sx+=lx;Sy+=ly;Sx2+=lx*lx;Sy2+=ly*ly;Sxy+=lx*ly;np++;}
+            if(fabs(ra-8.0)<best){best=fabs(ra-8.0);P4D=P;}}   // spot anchor: 4 projectile diameters (paper: 3.2+-0.5 GPa at 5 km/s)
+        if(o)fclose(o);
+        Pcc=(ncc?Pcc/ncc:0);
+        double nfit=np>2?-(np*Sxy-Sx*Sy)/(np*Sx2-Sx*Sx):0;
+        double Rcor=np>2?fabs((np*Sxy-Sx*Sy)/sqrt(max((np*Sx2-Sx*Sx)*(np*Sy2-Sy*Sy),1e-300))):0;
+        double Phug=hugoniot_P(0.5*U);   // planar impedance-match reference (up=U/2, same material both sides)
+        printf("Pierazzo-2008 Al axisym (U=%.0f km/s cppr=%g reach=%g | %dx%d cells, %d steps, tend=%.3e):\n",U/1000,cppr,reach,Nr,Nz,s,tend);
+        printf("  P_cc(0-%.1fa)=%.1f GPa  n[d/a 4-10]=%.3f (R=%.4f np=%d)  P(4 diam)=%.2f GPa  [planar Hugoniot %.1f GPa]\n",ccd,Pcc/1e9,nfit,Rcor,np,P4D/1e9,Phug/1e9);
+        printf("PZ2D U=%.0f cppr=%g reach=%g Pcc=%.4e n=%.4f R=%.4f P4D=%.4e steps=%d\n",U,cppr,reach,Pcc,nfit,Rcor,P4D,s);
+        if(fabs(U-5000)<1||fabs(U-20000)<1){ bool five=(fabs(U-5000)<1);   // gate vs the PUBLISHED inter-code range (Table 1; the paper's own pass criterion is "within the code spread")
+            double plo=five?28.4e9:334.7e9, phi=five?48.0e9:411.1e9, nlo=five?1.13:2.27, nhi=five?1.41:2.53;
+            printf("  paper Table 1 range: P_cc [%.1f,%.1f] GPa (mean %s)  n [%.2f,%.2f] (mean %s)\n",plo/1e9,phi/1e9,five?"40.4+-6.2":"379+-26",nlo,nhi,five?"1.2+-0.1":"2.3+-0.1");
+            printf("GATE (Pierazzo-2008 inter-code envelope: P_cc & n inside the published code range): %s\n",
+                (Pcc>=plo&&Pcc<=phi&&nfit>=nlo&&nfit<=nhi)?"PASS":"CHECK");
+        }
     } else if(mode=="substrate"){ // route 1: well-balanced gravity-loaded substrate must stay stable (no rarefaction), no damping
         MAT=Material::basalt(); GZ=3.71; double rho0=2700,A=2.67e10; int NXc=60,NZc=60;double dx=500.0,CFL=0.4;
         double zsurf=20e3,tend=200.0; DAMP=1.0; RHO_CFL=100.0;
@@ -594,7 +640,7 @@ int main(int argc,char**argv){
         double vmax=0;for(int k=0;k<N;k++){int c=g.idx(0,0,k);vmax=max(vmax,fabs(g.mw[c]/g.r[c]));}
         printf("Free surface max|v|=%.3f m/s  GATE: %s\n",vmax,vmax<5.0?"PASS":"CHECK");
     } else {
-        fprintf(stderr,"unknown mode '%s' (modes: sod sedov shear yield vacuum bshock freefall atmos tensile alimpact substrate collapse surface tracer af_activate sedov_axi lame af_visc vib_advect friction crater)\n",mode.c_str());
+        fprintf(stderr,"unknown mode '%s' (modes: sod sedov shear yield vacuum bshock freefall atmos tensile alimpact pierazzo2d substrate collapse surface tracer af_activate sedov_axi lame af_visc vib_advect friction crater)\n",mode.c_str());
         return 2;   // fatal: never silently validate the wrong physics
     }
     return 0;

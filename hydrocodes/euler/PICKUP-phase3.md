@@ -214,11 +214,7 @@ Steps 1-3 of the prior NEXT-STEPS are DONE (not yet committed at time of writing
    flux sweep + re-gate + GPU).
 3. **Re-run a SETTLED sweep** (GPU `--gpu --jobs 1`, or CPU oracle) over Y_d0 x AF x size; analyze with the
    local-datum analyzer -> d/D-vs-D table. Use the FP64 CPU as the oracle (GPU collapse is FP-sensitive, item 1).
-2. **Fix the datum/domain:** measure depth against the FIXED original surface zsurf (already in the progress
-   log), not surf(nx-1); and/or enlarge Rfac (18 -> ~30) so the relaxing rim doesn't reach the boundary.
-   Make the RESULT depth + the offline analyzer use the robust datum so d/D becomes meaningful.
-3. **Re-run a SETTLED sweep** (GPU, `sweep_crater.py --gpu --jobs 1`) over Y_d0 x AF x size — only AFTER the
-   AF direction is set and the datum is fixed, else the d/D column stays garbage.
+   [DONE 2026-06-30/07-01 — see the SESSION UPDATE blocks above; stale duplicate steps removed 2026-07-02.]
 4. **Calibrate:** digitize the W&I 2003 depth–diameter curve (and Mars d–D data) as the oracle; tune
    (Y_d0, Tfrac, Efrac) so model d/D-vs-D matches, esp. the ~7 km Mars simple→complex transition. Converge
    resolution (cppr 8, 12 on a couple of sizes) before trusting absolute numbers.

@@ -1,6 +1,24 @@
 # PICKUP — Pierazzo-2008 aluminum peak-pressure benchmark scale-up
 
-> ## RESUME HERE (2026-07-02, mid-task; code UNCOMMITTED)
+> ## SESSION UPDATE 2026-07-02 (PAPER IN HAND — course correction + `pierazzo2d` built)
+> Greg supplied PierazzoEtAl2008.pdf. **The paper's benchmark velocities are 5 and 20 km/s — there is NO
+> 10 km/s case**, so the 3D ladder below is an INTERNAL convergence/boundary study, not the head-to-head.
+> The quantitative oracle (Table 1 per-code values, CC windows, fit range = d/a 4-10) is extracted to
+> **`pierazzo2008_oracle.md`** — no figure digitization needed for pass/fail (Fig. 1 overlay = optional bonus).
+> **BUILT (committed on this branch): `pierazzo2d`** — the paper-exact AXISYMMETRIC benchmark mode, CPU
+> oracle + GPU port + `gates.sh` gate (both codes, default cppr=12 U=5 km/s). It measures the paper's own
+> metrics (P_cc contact/compression mean, decay slope n over d/a 4-10, P at 4 diameters) and gates against
+> the PUBLISHED inter-code range. **FIRST RESULTS: 5 km/s PASSES the envelope** (P_cc 39-42 GPa vs 40.4±6.2;
+> n 1.26-1.34 vs range 1.13-1.41, converging downward toward iSALE's 1.13-1.2 with cppr; GPU==CPU to 4
+> significant digits, ~2 s/run on GPU). 20 km/s: P_cc 358 GPa in range [335,411] at cppr=8; n ladder in
+> flight (`state/pz2d/*/out.txt`). 2D axisym cost is trivial (16 s CPU @ cppr12) vs hours in 3D — as planned.
+> NOTE: 20 km/s runs hit the known ambient tiny-dt pathology (~10x steps of 5 km/s). Batch 3 (3D half=16/24
+> boundary check) was found DEAD (died with the prior session ~07:40); RELAUNCHED 09:26 detached
+> (nohup+caffeinate, stderr kept) — half16 ~11:50, half24 ~17:15. Validation-matrix skeleton (paper Methods)
+> = `docs/validation_matrix.md`. NEXT: read ladder + batch-3 verdicts -> commit -> 45° oblique benchmark
+> (Table 1 lower block) as the 3D-oblique anchor -> Chicxulub 60° capstone (Greg-approved for Methods).
+
+> ## RESUME HERE (2026-07-02 morning, superseded by the update above; 3D-ladder context below still valid)
 > Scaling up the `pierazzo` 3D Al-on-Al peak-shock-pressure benchmark (domain + resolution) to close the
 > **M5 caveat** (near-field n~1.3 unconverged; far-field slope unseen because the old grid reached only r/a~7).
 > The parent scoped task + rationale is in **PICKUP-phase3.md → "SCOPED TASK 2026-07-01"** (read it first);

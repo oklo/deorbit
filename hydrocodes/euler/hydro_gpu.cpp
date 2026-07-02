@@ -72,6 +72,11 @@ int main(int argc,char**argv){
         if(argc>2)pz_cppr=atof(argv[2]); if(argc>3)pz_reach=atof(argv[3]); if(argc>4)pz_half=atof(argv[4]);
         if(argc>5)pz_U=atof(argv[5]); if(argc>6)pz_tend=atof(argv[6]); if(argc>7)pz_rcfl=atof(argv[7]);   // rcfl>0: exclude near-vacuum/evacuated cells (rho<rcfl) from the CFL limit (tames the resolution-dependent dt pathology)
     }
+    // Pierazzo-2008 AXISYMMETRIC benchmark CLI (mirrors hydro_cpu pierazzo2d): cppr reach U tend
+    double p2_cppr=12,p2_reach=12,p2_U=5000,p2_tend=-1;
+    if(mode=="pierazzo2d"){
+        if(argc>2)p2_cppr=atof(argv[2]); if(argc>3)p2_reach=atof(argv[3]); if(argc>4)p2_U=atof(argv[4]); if(argc>5)p2_tend=atof(argv[5]);
+    }
     double cr_tauto=2.0*sqrt((cr_Rfac*cr_a)/cr_g);   // gravity formation/collapse timescale (settling cap = 10x)
     if(mode=="sod"){nx=200;ny=nz=1;Ldom=1.0;tend=0.2;CFL=0.4;emode=0;}
     else if(mode=="substrate"){nx=60;ny=1;nz=60;Ldom=30000.0;tend=200.0;CFL=0.4;emode=1;gz=3.71f;wb=1;rcfl=100.0f;}  // route 1: well-balanced gravity-loaded substrate
@@ -86,6 +91,8 @@ int main(int argc,char**argv){
     else if(mode=="tensile"){nx=100;ny=nz=1;Ldom=10e3;tend=0.1;CFL=0.3;emode=1;}
     else if(mode=="pierazzo"){ double dxp=1.0/pz_cppr; nx=ny=(int)(2*pz_half/dxp+0.5); nz=(int)((pz_reach+3.0)/dxp+0.5); Ldom=nx*dxp;   // 3D Al sphere (a=1m); reach=max r/a depth below surface, half=lateral halfwidth (a); +3a headroom above surface
         tend=(pz_tend>0?pz_tend:pz_reach/5833.0*(pz_reach>8?1.35:1.0)); CFL=0.3; emode=1; rcfl=(float)pz_rcfl; }   // auto tend: front ~5.8km/s + 35% margin for the decelerating deep front (default reach=7 -> 1.2e-3, = M5 gate)
+    else if(mode=="pierazzo2d"){ double dxp=1.0/p2_cppr; nx=(int)(p2_reach/dxp+0.5); ny=1; nz=(int)((p2_reach+3.0)/dxp+0.5); Ldom=nx*dxp;   // Pierazzo-2008 Al benchmark, axisym (r,z): radial halfwidth = reach (half>=reach by construction)
+        double c0al=sqrt(7.52e10/2700.0); tend=(p2_tend>0?p2_tend:1.3*p2_reach/c0al); CFL=0.3; emode=1; axisym=1; }   // front >= Al bulk speed c0 -> 1.3x covers the decelerating tail (mirrors hydro_cpu)
     else if(mode=="yield"){nx=400;ny=nz=1;Ldom=400e3;tend=15e3/csb;CFL=0.3;emode=1;}
     else if(mode=="af_activate"){nx=200;ny=nz=1;Ldom=100e3;tend=3.0;CFL=0.4;emode=1;cact=0.5f;tdecf=10.0f;}  // shock-activated AF unit test (matches CPU Run A)
     else if(mode=="sedov_axi"){nx=64;ny=1;nz=128;Ldom=2.0;tend=0.5;CFL=0.3;emode=0;axisym=1;}  // axisymmetric (r,z) on-axis point blast = 3D spherical Sedov
@@ -97,9 +104,9 @@ int main(int argc,char**argv){
         Ldom=nx*dxc; CFL=0.4; emode=1; axisym=1; wb=1; gz=(float)cr_g; rcfl=100.0f; rvac=100.0f;
         cact=(cr_TDEC>0?0.5f:0.0f); tdecf=(float)cr_TDEC; etaaf=(float)cr_ETA; pcoh=1.0e6f; pact=(cr_TDEC>0?1.0e8f:0.0f);   // shock-gate AF activation (mirrors CPU P_ACT)
         tend=(cr_targ>0?cr_targ:6.0*cr_tauto); }   // explicit tend>0 -> fixed run; else run-to-settling capped at 6x t_auto
-    else { fprintf(stderr,"unknown mode '%s' (modes: sod sedov surface bshock shear yield freefall atmos tensile pierazzo vacuum substrate tracer af_activate sedov_axi lame af_visc vib_advect friction crater)\n",mode.c_str()); return 2; }   // fatal: never silently validate the wrong physics
+    else { fprintf(stderr,"unknown mode '%s' (modes: sod sedov surface bshock shear yield freefall atmos tensile pierazzo pierazzo2d vacuum substrate tracer af_activate sedov_axi lame af_visc vib_advect friction crater)\n",mode.c_str()); return 2; }   // fatal: never silently validate the wrong physics
     double dx=Ldom/((nx==1&&ny==1)?nz:nx); uint32_t n=nx*ny*nz; float invdx=1.0f/dx; float gam=GAM;
-    GMat MG=(mode=="pierazzo")?AL:BASALT; bool strn=(emode==1 && MG.G>0);   // Al = pure hydro (no strength/damage)
+    GMat MG=(mode=="pierazzo"||mode=="pierazzo2d")?AL:BASALT; bool strn=(emode==1 && MG.G>0);   // Al = pure hydro (no strength/damage)
     float epsact=(float)pow(1.0/(1e61*dx*dx*dx),1.0/16.0);   // Weibull weakest-flaw activation strain (host: wk=1e61 overflows FP32)
     D_=MTL::CreateSystemDefaultDevice();
     if(!D_){fprintf(stderr,"no Metal device (this gate needs a Mac GPU)\n");return 1;}
@@ -138,6 +145,11 @@ int main(int argc,char**argv){
             else if(z<zsurf){r[c]=rho0;E[c]=0;}                            // Al half-space
             else {r[c]=0.27f;E[c]=0;}                                      // low-density ambient
         }}
+    else if(mode=="pierazzo2d"){double a=1.0,U=p2_U,zsurf=p2_reach,zc=zsurf+a;   // axisym: Al sphere on the axis, tangent to the surface, moving down (mirrors hydro_cpu pierazzo2d)
+        for(int i=0;i<nx;i++)for(int k=0;k<nz;k++){uint32_t c=i*nz+k; double rr=(i+0.5)*dx,z=(k+0.5)*dx;
+            if(sqrt(rr*rr+(z-zc)*(z-zc))<a){r[c]=rho0;mw[c]=(float)(-rho0*U);E[c]=(float)(0.5*rho0*U*U);}   // projectile
+            else if(z<zsurf){r[c]=rho0;E[c]=0;}                                                             // Al half-space
+            else {r[c]=0.27f;E[c]=0;}}}                                                                     // low-density ambient
     else if(mode=="af_activate"){double V=2000.0;for(int i=0;i<nx;i++){r[i]=rho0;E[i]=0;if(i<nx/2)mu[i]=rho0*V;}}  // left half -> right: a planar basalt shock
     else if(mode=="vib_advect"){double v0=2000.0,x0=0.3*Ldom,wid=8e3;float*Vb=(float*)bvib->contents();for(int i=0;i<nx;i++){double x=(i+0.5)*dx;r[i]=rho0;mu[i]=rho0*v0;E[i]=0.5*rho0*v0*v0;Vb[i]=exp(-((x-x0)/wid)*((x-x0)/wid));}}  // uniform v0 flow + a vib bump
     else if(mode=="sedov_axi"){for(uint32_t c=0;c<n;c++){r[c]=1.0f;E[c]=1e-4/(GAM-1);} int kc=nz/2; E[kc]+=1.0/(3.141592653589793*dx*dx*dx);}  // on-axis point blast (cell i=0,k=kc -> linear index kc); 3D volume = pi*dx^3
@@ -266,7 +278,7 @@ int main(int argc,char**argv){
                   run(Prk2s,n,{bxx,byy,bzz,bxy,bxz,byz,sxx1,syy1,szz1,sxy1,sxz1,syz1,dxx,dyy,dzz,dxy,dxz,dyz,bD,bD1,bdD},dtA);
                   run(Pgd,n,{br,bmu,bmv,bmw,bE,bxx,byy,bzz,bD},gdA);
                   run(Pvm,n,{bxx,byy,bzz,bxy,bxz,byz,bD,baf,br,bmu,bmv,bmw,bE},vmA); }   // corrector state for ROCK pressure
-        if(mode=="pierazzo") run(Ppm,n,{br,bmu,bmv,bmw,bE,bPmax},{{&MG,sizeof(GMat)},{&n,4}});
+        if(mode=="pierazzo"||mode=="pierazzo2d") run(Ppm,n,{br,bmu,bmv,bmw,bE,bPmax},{{&MG,sizeof(GMat)},{&n,4}});
         if(dampf<1.0f) run(Pdamp,n,{bmu,bmv,bmw},{{&dampf,4},{&n,4}});   // route 1: quench FP32-noise velocities
         if(rcfl>0) run(Pvoid,n,{bmu,bmv,bmw,br,bE,bxx,byy,bzz,bxy,bxz,byz,bRR0},{{&rcfl,4},{&n,4}});   // route 1: void cells = passive vacuum (reset to reference)
         if(mode=="substrate"||mode=="crater"){ for(int i=0;i<nx;i++)for(int kk=0;kk<2;kk++){int c=i*nz+kk;r[c]=RR0[c];mu[c]=mv[c]=mw[c]=0;E[c]=0;} }  // pin deep far-field floor to reference
@@ -390,6 +402,31 @@ int main(int argc,char**argv){
         printf("Pierazzo Al-sphere (U=%.0fkm/s cppr=%g reach=%g half=%g | grid %dx%dx%d=%u cells): core P=%.3e Pa (Hugoniot %.3e, %.0f%%); n_near[1.2-6]=%.2f (np=%d) n_far[%.1f-%.1f]=%.2f (np=%d)\n",pz_U/1000,pz_cppr,pz_reach,pz_half,nx,ny,nz,n,Pcore,Phug,100*Pcore/Phug,nnear,npn,rlo,rhi,nfar,npf);
         printf("PZSUMMARY cppr=%g reach=%g half=%g ncells=%u corepct=%.1f nnear=%.3f nfar=%.3f tend=%.3e steps=%d\n",pz_cppr,pz_reach,pz_half,n,100*Pcore/Phug,nnear,nfar,tend,step);
         printf("GATE (core P >0.7*Hugoniot & decay n in [1,3]): %s\n",(Pcore>0.7*Phug&&nnear>1.0&&nnear<3.0)?"PASS":"CHECK");
+    } else if(mode=="pierazzo2d"){   // Pierazzo-2008 Table-1 metrics on the axis column i=0 (mirrors hydro_cpu pierazzo2d; oracle in pierazzo2008_oracle.md)
+        float*Pm=(float*)bPmax->contents(); double a=1.0,zsurf=p2_reach,U=p2_U;
+        double ccd=(U>=12500.0?1.2:0.6);
+        double Pcore=0; for(int k=0;k<nz;k++){double d=zsurf-(k+0.5)*dx;if(d>0&&d<=1.5*a)Pcore=max(Pcore,(double)Pm[k]);}
+        double Pcc=0;int ncc=0; double Sx=0,Sy=0,Sx2=0,Sy2=0,Sxy=0;int np=0; double P4D=0,best=1e30;
+        FILE*o=fopen("pierazzo2d_decay.txt","w");
+        if(o)fprintf(o,"# d_over_a  Ppeak_Pa   (U=%.0f cppr=%g reach=%g axisym GPU)\n",U,p2_cppr,p2_reach);
+        for(int k=nz-1;k>=0;k--){double d=zsurf-(k+0.5)*dx; if(d<=0)continue; double ra=d/a,P=(double)Pm[k];
+            if(o&&P>0)fprintf(o,"%.4f %.6e\n",ra,P);
+            if(ra<=ccd){Pcc+=P;ncc++;}
+            if(ra>=4.0&&ra<=10.0&&P>0.005*Pcore){double lx=log(ra),ly=log(P);Sx+=lx;Sy+=ly;Sx2+=lx*lx;Sy2+=ly*ly;Sxy+=lx*ly;np++;}
+            if(fabs(ra-8.0)<best){best=fabs(ra-8.0);P4D=P;}}
+        if(o)fclose(o);
+        Pcc=(ncc?Pcc/ncc:0);
+        double nfit=np>2?-(np*Sxy-Sx*Sy)/(np*Sx2-Sx*Sx):0;
+        double Rcor=np>2?fabs((np*Sxy-Sx*Sy)/sqrt(max((np*Sx2-Sx*Sx)*(np*Sy2-Sy*Sy),1e-300))):0;
+        printf("GPU Pierazzo-2008 Al axisym (U=%.0f km/s cppr=%g reach=%g | %dx%d cells, %d steps, tend=%.3e):\n",U/1000,p2_cppr,p2_reach,nx,nz,step,tend);
+        printf("  P_cc(0-%.1fa)=%.1f GPa  n[d/a 4-10]=%.3f (R=%.4f np=%d)  P(4 diam)=%.2f GPa\n",ccd,Pcc/1e9,nfit,Rcor,np,P4D/1e9);
+        printf("PZ2D U=%.0f cppr=%g reach=%g Pcc=%.4e n=%.4f R=%.4f P4D=%.4e steps=%d\n",U,p2_cppr,p2_reach,Pcc,nfit,Rcor,P4D,step);
+        if(fabs(U-5000)<1||fabs(U-20000)<1){ bool five=(fabs(U-5000)<1);
+            double plo=five?28.4e9:334.7e9, phi=five?48.0e9:411.1e9, nlo=five?1.13:2.27, nhi=five?1.41:2.53;
+            printf("  paper Table 1 range: P_cc [%.1f,%.1f] GPa (mean %s)  n [%.2f,%.2f] (mean %s)\n",plo/1e9,phi/1e9,five?"40.4+-6.2":"379+-26",nlo,nhi,five?"1.2+-0.1":"2.3+-0.1");
+            printf("GATE (Pierazzo-2008 inter-code envelope: P_cc & n inside the published code range): %s\n",
+                (Pcc>=plo&&Pcc<=phi&&nfit>=nlo&&nfit<=nhi)?"PASS":"CHECK");
+        }
     } else printf("GPU %s done steps=%d\n",mode.c_str(),step);
     return 0;
 }
