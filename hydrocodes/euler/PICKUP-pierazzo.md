@@ -8,9 +8,8 @@
 >      [[deorbit-euler-code]]; the 3D 10 km/s study is then fully closed (internal study, not the benchmark).
 >      If it DIFFERS: the deep slope is half-sensitive after all -> re-open the boundary question (unlikely;
 >      pierazzo2d reach 12 vs 16 was bit-identical).
->   2. **GPU 20 km/s cross-check** (pierazzo2d cppr20): `cat state/pz2d/gpu_u20000_c20/out.txt` (empty file
->      = still running; err.txt has stderr). Expected: PASS, ==CPU (5 km/s GPU was ==CPU to 4 sig figs).
->      Record the GPU vs CPU numbers in the SESSION UPDATE block; that completes the E16 row's GPU claim.
+>   2. **GPU 20 km/s cross-check: DONE + PASS (14:59).** GPU P_cc=380.5 GPa n=2.2796 == CPU cppr20
+>      (380.5 / 2.280) to 4 sig figs. E16 GPU claim complete at BOTH velocities.
 > **THEN the next Methods anchor (Greg-approved ladder): the 45° OBLIQUE Al benchmark** — 3D, U=5+20 km/s,
 > sphere velocity 45° from vertical; measure peak-P along (a) straight down from the impact point and
 > (b) 45° downrange starting ~1 projectile radius downrange (paper Fig. 2a geometry: d=sqrt((x-R_pr)^2+z^2)).

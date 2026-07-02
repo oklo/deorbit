@@ -26,5 +26,7 @@ echo "== GPU gates =="
 for m in sod sedov surface shear yield tensile freefall atmos pierazzo pierazzo2d vacuum tracer af_activate sedov_axi lame af_visc vib_advect friction substrate; do
   ./hydro_gpu "$m" 2>/dev/null | grep -i 'gate' | sed "s/^/  [$m] /"
 done
+# 45-deg oblique Pierazzo smoke gate (low-res, ~1 s; full oracle head-to-head = run_pierazzo45_ladder.sh at cppr>=16)
+./hydro_gpu pierazzo 6 8 4 5000 -1 0 45 2>/dev/null | grep -i 'gate' | sed "s/^/  [pierazzo45] /"
 
 echo "== done. (collapse = M6 AF-calibration demo, not a pass/fail gate yet) =="

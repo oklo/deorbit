@@ -68,9 +68,11 @@ int main(int argc,char**argv){
     }
     // Phase-3 Pierazzo-2008 Al peak-pressure benchmark CLI (scale-up): cppr reach(r/a max depth) half(lateral halfwidth in a) U tend
     double pz_cppr=10,pz_reach=7,pz_half=4,pz_U=10000,pz_tend=-1,pz_rcfl=0;   // defaults reproduce the M5 gate grid (80x80x100, dx=0.1, zsurf=7); rcfl=0 -> M5 gate untouched
+    double pz_ang=0,pz_hup=6,pz_hdn=-1;   // oblique benchmark (Table 1 lower block): ang = impact angle from vertical (deg); hup/hdn = uprange/downrange x-extent in a (hdn<0 -> =reach); ang=0 = legacy vertical (M5 gate untouched)
     if(mode=="pierazzo"){
         if(argc>2)pz_cppr=atof(argv[2]); if(argc>3)pz_reach=atof(argv[3]); if(argc>4)pz_half=atof(argv[4]);
         if(argc>5)pz_U=atof(argv[5]); if(argc>6)pz_tend=atof(argv[6]); if(argc>7)pz_rcfl=atof(argv[7]);   // rcfl>0: exclude near-vacuum/evacuated cells (rho<rcfl) from the CFL limit (tames the resolution-dependent dt pathology)
+        if(argc>8)pz_ang=atof(argv[8]); if(argc>9)pz_hup=atof(argv[9]); if(argc>10)pz_hdn=atof(argv[10]);
     }
     // Pierazzo-2008 AXISYMMETRIC benchmark CLI (mirrors hydro_cpu pierazzo2d): cppr reach U tend
     double p2_cppr=12,p2_reach=12,p2_U=5000,p2_tend=-1;
@@ -89,7 +91,10 @@ int main(int argc,char**argv){
     else if(mode=="freefall"){nx=ny=1;nz=50;Ldom=500.0;tend=10.0;CFL=0.4;emode=0;gz=9.8f;}
     else if(mode=="atmos"){nx=ny=1;nz=200;double H=1e5/9.8;Ldom=4*H;tend=0.05*Ldom/sqrt(GAM*1e5);CFL=0.4;emode=0;gz=9.8f;}
     else if(mode=="tensile"){nx=100;ny=nz=1;Ldom=10e3;tend=0.1;CFL=0.3;emode=1;}
-    else if(mode=="pierazzo"){ double dxp=1.0/pz_cppr; nx=ny=(int)(2*pz_half/dxp+0.5); nz=(int)((pz_reach+3.0)/dxp+0.5); Ldom=nx*dxp;   // 3D Al sphere (a=1m); reach=max r/a depth below surface, half=lateral halfwidth (a); +3a headroom above surface
+    else if(mode=="pierazzo"){ double dxp=1.0/pz_cppr;   // 3D Al sphere (a=1m); reach=max r/a depth below surface, half=lateral halfwidth (a); +3a headroom above surface
+        if(pz_ang>0){ if(pz_hdn<0)pz_hdn=pz_reach; nx=(int)((pz_hup+pz_hdn)/dxp+0.5); ny=(int)(2*pz_half/dxp+0.5); }   // oblique: asymmetric x (impact point at x=hup), half = y-halfwidth only
+        else { nx=ny=(int)(2*pz_half/dxp+0.5); }
+        nz=(int)((pz_reach+3.0)/dxp+0.5); Ldom=nx*dxp;
         tend=(pz_tend>0?pz_tend:pz_reach/5833.0*(pz_reach>8?1.35:1.0)); CFL=0.3; emode=1; rcfl=(float)pz_rcfl; }   // auto tend: front ~5.8km/s + 35% margin for the decelerating deep front (default reach=7 -> 1.2e-3, = M5 gate)
     else if(mode=="pierazzo2d"){ double dxp=1.0/p2_cppr; nx=(int)(p2_reach/dxp+0.5); ny=1; nz=(int)((p2_reach+3.0)/dxp+0.5); Ldom=nx*dxp;   // Pierazzo-2008 Al benchmark, axisym (r,z): radial halfwidth = reach (half>=reach by construction)
         double c0al=sqrt(7.52e10/2700.0); tend=(p2_tend>0?p2_tend:1.3*p2_reach/c0al); CFL=0.3; emode=1; axisym=1; }   // front >= Al bulk speed c0 -> 1.3x covers the decelerating tail (mirrors hydro_cpu)
@@ -138,10 +143,12 @@ int main(int argc,char**argv){
     else if(mode=="freefall"){for(int k=0;k<nz;k++){r[k]=1.0f;E[k]=1e5/(GAM-1);}}
     else if(mode=="atmos"){double H=1e5/9.8;for(int k=0;k<nz;k++){double z=(k+0.5)*dx;r[k]=exp(-z/H);E[k]=(1e5*exp(-z/H))/(GAM-1);}}
     else if(mode=="tensile"){double rate=1e-2;for(int i=0;i<nx;i++){double x=(i+0.5)*dx;r[i]=rho0;double vx=rate*(x-0.5*Ldom);mu[i]=rho0*vx;E[i]=0.5*rho0*vx*vx;}}
-    else if(mode=="pierazzo"){double a=1.0,U=pz_U,zsurf=pz_reach,cx=0.5*Ldom,cy=0.5*Ldom,cz=zsurf+a;   // Al sphere tangent to surface (z=zsurf=reach), moving down; max on-axis depth below surface = zsurf (at z=0)
+    else if(mode=="pierazzo"){double a=1.0,U=pz_U,zsurf=pz_reach,cy=0.5*ny*dx,cz=zsurf+a;   // Al sphere tangent to surface (z=zsurf=reach); max on-axis depth below surface = zsurf (at z=0)
+        double cx=(pz_ang>0?pz_hup:0.5*Ldom);   // oblique: sphere center directly above the impact point x=hup (tangency point is below center regardless of velocity direction)
+        double ango=pz_ang*3.14159265358979323846/180.0, mux=rho0*U*sin(ango), muz=-rho0*U*cos(ango);   // velocity ang deg from vertical, downrange = +x
         for(int i=0;i<nx;i++)for(int j=0;j<ny;j++)for(int k=0;k<nz;k++){uint32_t c=(i*ny+j)*nz+k;
             double x=(i+0.5)*dx,y=(j+0.5)*dx,z=(k+0.5)*dx; double dr=sqrt((x-cx)*(x-cx)+(y-cy)*(y-cy)+(z-cz)*(z-cz));
-            if(dr<a){r[c]=rho0;mw[c]=-rho0*U;E[c]=0.5*rho0*U*U;}            // projectile
+            if(dr<a){r[c]=rho0;mu[c]=(float)mux;mw[c]=(float)muz;E[c]=0.5*rho0*U*U;}   // projectile
             else if(z<zsurf){r[c]=rho0;E[c]=0;}                            // Al half-space
             else {r[c]=0.27f;E[c]=0;}                                      // low-density ambient
         }}
@@ -383,6 +390,37 @@ int main(int argc,char**argv){
         printf("GPU tensile damage: max D=%.4f max|Sxx|=%.3e (Y=%.3e ratio %.4f)  GATE: %s\n",Dmax,Sxxmax,Y,Sxxmax/Y,(Dmax>0.9&&Sxxmax<0.5*Y)?"PASS":"CHECK");
     } else if(mode=="bshock"){
         FILE*o=fopen("bshock_gpu.txt","w");for(int i=0;i<nx;i++)fprintf(o,"%.8e\n",r[i]);fclose(o);printf("GPU bshock wrote bshock_gpu.txt\n");
+    } else if(mode=="pierazzo"&&pz_ang>0){   // oblique benchmark diagnostics (Pierazzo-2008 Table 1 lower block; oracle = pierazzo2008_oracle.md)
+        float*Pm=(float*)bPmax->contents(); double a=1.0,zsurf=pz_reach,ximp=pz_hup; int cj=ny/2,ii=(int)(ximp/dx),ksurf=(int)(zsurf/dx);
+        auto PmAt=[&](int i,int j,int k)->double{ if(i<0||i>=nx||j<0||j>=ny||k<0||k>=nz)return 0.0; return (double)Pm[((uint32_t)i*ny+j)*nz+k]; };
+        double Pc0=0; for(int k=ksurf;k>=ksurf-(int)(1.5*a/dx)&&k>=0;k--)Pc0=max(Pc0,PmAt(ii,cj,k));   // fit threshold reference (near-impact max, down column)
+        // ray 0deg: straight down from the impact point. ray 45deg: d=sqrt((x-R_pr)^2+z^2), starts 1 projectile radius DOWNRANGE (paper Fig. 2a / Fig. 3)
+        double S[2][5]={{0},{0}}; int np2[2]={0,0};   // Sx Sy Sxx Syy Sxy per ray, fit d/a in [4,10] (paper: ~2-5 projectile diameters)
+        FILE*o0=fopen("pierazzo45_down.txt","w"),*o1=fopen("pierazzo45_ray.txt","w");
+        for(int k=ksurf-1;k>=0;k--){double d=zsurf-(k+0.5)*dx,ra=d/a; double P=PmAt(ii,cj,k);
+            if(o0&&ra>=0.5&&P>0)fprintf(o0,"%.4f %.6e\n",ra,P);
+            if(ra>=4.0&&ra<=10.0&&P>0.005*Pc0){double lx=log(ra),ly=log(P);S[0][0]+=lx;S[0][1]+=ly;S[0][2]+=lx*lx;S[0][3]+=ly*ly;S[0][4]+=lx*ly;np2[0]++;}}
+        for(double d=0.5*dx;d/a<=0.98*pz_reach*1.41421356;d+=dx){ double dep=d*0.70710678,x=ximp+a+d*0.70710678; if(dep>=zsurf-0.5*dx||x>=(nx-0.5)*dx)break;
+            int i=(int)(x/dx),k=(int)((zsurf-dep)/dx); double P=PmAt(i,cj,k),ra=d/a;
+            if(o1&&ra>=0.2&&P>0)fprintf(o1,"%.4f %.6e\n",ra,P);
+            if(ra>=4.0&&ra<=10.0&&P>0.005*Pc0){double lx=log(ra),ly=log(P);S[1][0]+=lx;S[1][1]+=ly;S[1][2]+=lx*lx;S[1][3]+=ly*ly;S[1][4]+=lx*ly;np2[1]++;}}
+        if(o0)fclose(o0); if(o1)fclose(o1);
+        double nfit[2]={0,0},Rcor[2]={0,0};
+        for(int q=0;q<2;q++){int m=np2[q]; if(m>2){ nfit[q]=-(m*S[q][4]-S[q][0]*S[q][1])/(m*S[q][2]-S[q][0]*S[q][0]);
+            Rcor[q]=fabs((m*S[q][4]-S[q][0]*S[q][1])/sqrt(max((m*S[q][2]-S[q][0]*S[q][0])*(m*S[q][3]-S[q][1]*S[q][1]),1e-300)));}}
+        // qualitative check (paper Fig. 2b/c): peak-P along a row 3 cells below the surface should max ~1 projectile radius DOWNRANGE
+        int k3=ksurf-3; double rowmax=0; int irow=ii; FILE*o2=fopen("pierazzo45_row.txt","w");
+        for(int i=0;i<nx;i++){double P=PmAt(i,cj,k3),xo=((i+0.5)*dx-ximp)/a; if(o2&&P>0)fprintf(o2,"%.4f %.6e\n",xo,P); if(P>rowmax){rowmax=P;irow=i;}}
+        if(o2)fclose(o2); double xoff=((irow+0.5)*dx-ximp)/a;
+        printf("GPU Pierazzo-2008 Al OBLIQUE %g deg (U=%.0f km/s cppr=%g reach=%g half=%g hup=%g hdn=%g | %dx%dx%d=%u cells, %d steps, tend=%.3e):\n",pz_ang,pz_U/1000,pz_cppr,pz_reach,pz_half,pz_hup,pz_hdn,nx,ny,nz,n,step,tend);
+        printf("  n(0deg)[d/a 4-10]=%.3f (R=%.4f np=%d)  n(45deg)=%.3f (R=%.4f np=%d)  row-max offset=%.2f a downrange (expect ~1)\n",nfit[0],Rcor[0],np2[0],nfit[1],Rcor[1],np2[1],xoff);
+        printf("PZ45SUMMARY U=%.0f cppr=%g reach=%g ang=%g n0=%.4f R0=%.4f n45=%.4f R45=%.4f xoff=%.2f steps=%d\n",pz_U,pz_cppr,pz_reach,pz_ang,nfit[0],Rcor[0],nfit[1],Rcor[1],xoff,step);
+        bool five=fabs(pz_U-5000)<1,twenty=fabs(pz_U-20000)<1;
+        if((five||twenty)&&pz_ang==45){ double n0lo=five?0.90:1.06,n0hi=five?1.226:1.95,n1lo=five?0.87:1.11,n1hi=five?1.318:2.57;
+            printf("  paper Table 1 (45deg block) code ranges: n(0deg) [%.2f,%.2f] (mean %s)  n(45deg) [%.2f,%.2f] (mean %s)\n",n0lo,n0hi,five?"1.1+-0.1":"1.5+-0.3",n1lo,n1hi,five?"1.1+-0.1":"2.1+-0.6");
+            if(pz_cppr>=16) printf("GATE (Pierazzo-2008 oblique envelope: n(0deg) & n(45deg) inside the published code ranges): %s\n",(nfit[0]>=n0lo&&nfit[0]<=n0hi&&nfit[1]>=n1lo&&nfit[1]<=n1hi)?"PASS":"CHECK");
+            else printf("GATE (oblique smoke, under-resolved cppr<16: slopes in [0.5,3] & row max downrange): %s\n",(nfit[0]>0.5&&nfit[0]<3.0&&nfit[1]>0.5&&nfit[1]<3.0&&xoff>0)?"PASS":"CHECK");
+        } else printf("GATE (oblique smoke: slopes in [0.5,3] & row max downrange): %s\n",(nfit[0]>0.5&&nfit[0]<3.0&&nfit[1]>0.5&&nfit[1]<3.0&&xoff>0)?"PASS":"CHECK");
     } else if(mode=="pierazzo"){
         float*Pm=(float*)bPmax->contents(); double a=1.0,zsurf=pz_reach; int ci=nx/2,cj=ny/2,ksurf=(int)(zsurf/dx);
         double Pcore=0; for(int k=ksurf;k>=ksurf-(int)(a/dx) && k>=0;k--){Pcore=max(Pcore,(double)Pm[(ci*ny+cj)*nz+k]);}

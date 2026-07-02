@@ -36,11 +36,27 @@ Inter-code shock-pressure variability (Summary): within **15% (5 km/s)** and **8
 Planar impedance-match limits (text, side note): ~60 GPa (5 km/s), 522 GPa (20 km/s) — the CC
 tracer averages sit well BELOW these (spherical geometry; no tracer exactly at impact point).
 
-## Table 1 — 45-deg oblique (3D codes; future 3D-oblique validation anchor)
-Slope n measured downward (0 deg) and at 45 deg downrange (d = sqrt((x-R_pr)^2+z^2)):
-- 5 km/s: mean n = 1.1±0.1 (both directions). iSALE3D: n/a at 5 km/s in 0-deg col; 1.53±0.02 (0deg listed under 20?) — see Table 1 lower block: iSALE3D 0deg 1.53±0.02, 45deg 2.304±0.009 are the 20 km/s values.
-- 20 km/s: mean n(0deg) = 1.5±0.3, n(45deg) = 2.1±0.6. iSALE3D: 1.53±0.02 / 2.304±0.009.
-- Max peak-shock P occurs ~1 projectile radius DOWNRANGE of the impact point (Fig. 2).
+## Table 1 — 45-deg oblique (3D codes; VERIFIED against the PDF p. 1923, 2026-07-02)
+Slope n measured downward (0 deg) and at 45 deg downrange (d = sqrt((x-R_pr)^2+z^2), i.e. the
+45-deg ray STARTS ~1 projectile radius downrange of the impact point; fit range same ~2-5
+projectile diameters = d/a 4-10). NO P_cc column in the oblique block — slopes only.
+
+| Code | n(0°) 5km/s | n(45°) 5km/s | n(0°) 20km/s | n(45°) 20km/s |
+|---|---|---|---|---|
+| ALE3D (LEOS) | 1.226±0.007 | 1.18±0.03 | 1.95±0.01 | 2.46±0.01 |
+| iSALE3D (Tillotson) | — | — | 1.53±0.02 | 2.304±0.009 |
+| RAGE (SESAME) | 1.112±0.004 | 1.318±0.009 | 1.06±0.02 | 1.11±0.03 |
+| SOVA (ANEOS tables) | 1.12±0.03 | 0.96±0.01 | 1.635±0.006 | 2.188±0.007 |
+| ZEUS-MP (Tillotson) | 0.90±0.02 | 0.87±0.03 | 1.51±0.03 | 2.57±0.02 |
+| **Mean** | **1.1±0.1** | **1.1±0.1** | **1.5±0.3** | **2.1±0.6** |
+
+Code ranges (pass/fail envelope): 5 km/s 0° [0.90,1.226], 45° [0.87,1.318];
+20 km/s 0° [1.06,1.95], 45° [1.11,2.57]. NOTE: iSALE3D ran NO 5 km/s oblique case; RAGE is a
+low outlier at 20 km/s (1.06/1.11) — excluding RAGE the 20 km/s ranges are 0° [1.51,1.95],
+45° [2.188,2.57]. Text (p. 1925): at 20 km/s the downward slope (1.5±0.3) is SHALLOWER than
+both the 45-deg slope (2.1±0.6) and the vertical-impact slope (2.3±0.1) — a qualitative check.
+- Max peak-shock P occurs ~1 projectile radius DOWNRANGE of the impact point (Fig. 2b/c:
+  P along a line parallel to the surface, 60 m = 3 cells BELOW it; second qualitative check).
 
 ## Resolution guidance (Table 2 + text)
 - **>= 20 cppr**: peak shock P within ~10% of converged; 10 cppr "reasonable".

@@ -36,7 +36,7 @@ All gates currently PASS on both codes, GPU==CPU.
 | E19 | Cylindrical strength — hoop strain + Lame equilibrium (`lame`) | analytic thick-cylinder deviatoric field | 1e-15 (CPU) / 2.6e-6 (GPU); equilibrium residual 0.4% | ✅ |
 | E20 | Cylindrical AF viscosity (`af_visc`) | (lap v)_r = 3A for u=Ar^2 (vs 2A Cartesian) | 4e-13 (CPU) / 4.3e-4 (GPU) | ✅ |
 | E21 | vib advection (`vib_advect`) | translation at v0, conservation | exact | ✅ |
-| E22 | 45° oblique Al benchmark (3D) | Pierazzo-2008 Table 1 lower block (n 0°/45°, downrange peak offset) | — natural pre-Chicxulub 3D-OBLIQUE anchor | ⬜ |
+| E22 | 45° oblique Al benchmark (3D, `pierazzo ... ang=45`) | Pierazzo-2008 Table 1 lower block (n 0°/45° over d/a 4-10; peak-P max ~1 R_pr downrange), verified vs PDF p. 1923 | cppr8 scouting: 20 km/s ALREADY in envelope (n0 1.567 vs [1.06,1.95]; n45 2.127 vs [1.11,2.57], mean 2.1±0.6); 5 km/s just above range (matches known under-resolution steepening); row-max 0.8-0.9 a downrange as paper predicts; production ladder cppr 12/16/20 in flight (`run_pierazzo45_ladder.sh` -> state/pz45/) | 🔶 |
 | E23 | Al validation #2: 6.35 mm Al sphere -> Al 1100-O / 6061-T6 @ ~7 km/s | EXPERIMENT (Prater 1970; paper Table 4 R(t),d(t)) | — tests strength model against lab data; we have von Mises + Y knob | ⬜ |
 | E24 | **Chicxulub 60° peak-ring reproduction (3D oblique)** | Collins et al. 2020 (published iSALE3D application) | — the Methods capstone (Greg-approved) | ⬜ |
 
