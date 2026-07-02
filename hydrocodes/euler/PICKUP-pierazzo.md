@@ -1,5 +1,27 @@
 # PICKUP — Pierazzo-2008 aluminum peak-pressure benchmark scale-up
 
+> ## RESUME HERE (2026-07-02 ~15:00, master==origin/master @ 2a6ea95; all work committed+pushed)
+> **The head-to-head is DONE and PASSED** — read the SESSION UPDATE block below for the verdict table.
+> TWO RUNS STILL IN FLIGHT (both nohup+caffeinate detached, survive session/clear):
+>   1. **Batch-3 half24** (3D boundary confirm, ETA ~17:30): `tail -5 state/pierazzo/ladder.log`.
+>      Expected: n_far == 1.537 (same as half10/half16). If so: one-line confirm in this file + in
+>      [[deorbit-euler-code]]; the 3D 10 km/s study is then fully closed (internal study, not the benchmark).
+>      If it DIFFERS: the deep slope is half-sensitive after all -> re-open the boundary question (unlikely;
+>      pierazzo2d reach 12 vs 16 was bit-identical).
+>   2. **GPU 20 km/s cross-check** (pierazzo2d cppr20): `cat state/pz2d/gpu_u20000_c20/out.txt` (empty file
+>      = still running; err.txt has stderr). Expected: PASS, ==CPU (5 km/s GPU was ==CPU to 4 sig figs).
+>      Record the GPU vs CPU numbers in the SESSION UPDATE block; that completes the E16 row's GPU claim.
+> **THEN the next Methods anchor (Greg-approved ladder): the 45° OBLIQUE Al benchmark** — 3D, U=5+20 km/s,
+> sphere velocity 45° from vertical; measure peak-P along (a) straight down from the impact point and
+> (b) 45° downrange starting ~1 projectile radius downrange (paper Fig. 2a geometry: d=sqrt((x-R_pr)^2+z^2)).
+> Oracle values in pierazzo2008_oracle.md (Table 1 lower block; iSALE3D: n=1.53±0.02 (0°) / 2.304±0.009
+> (45°) at 20 km/s; check the 5 km/s column against the PDF pp. 1923 when implementing — the 45° block
+> transcription there is the least certain part of the oracle file). Also expect the max peak-P ~1 R_pr
+> DOWNRANGE of the impact point (Fig. 2) — a qualitative check our 3D mode can do. Budget note: 3D at
+> cppr 20 was ~1 h (GPU, 9M cells) at 10 km/s; 20 km/s costs ~2-3x steps. After that: Prater-1970 Al-alloy
+> strength validation (Table 4 data in the oracle file) -> Chicxulub 60° (Collins 2020) capstone.
+> Paper Methods skeleton to keep updated: docs/validation_matrix.md (E16 done; E22/E23/E24 next).
+
 > ## SESSION UPDATE 2026-07-02 (PAPER IN HAND — course correction + `pierazzo2d` built)
 > Greg supplied PierazzoEtAl2008.pdf. **The paper's benchmark velocities are 5 and 20 km/s — there is NO
 > 10 km/s case**, so the 3D ladder below is an INTERNAL convergence/boundary study, not the head-to-head.
