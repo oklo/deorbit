@@ -79,6 +79,13 @@ int main(int argc,char**argv){
     if(mode=="pierazzo2d"){
         if(argc>2)p2_cppr=atof(argv[2]); if(argc>3)p2_reach=atof(argv[3]); if(argc>4)p2_U=atof(argv[4]); if(argc>5)p2_tend=atof(argv[5]);
     }
+    // Prater-1970 Al crater-growth validation CLI (mirrors hydro_cpu prater): cppr U Y G Rfac tend rcfl
+    double pr_cppr=10,pr_U=7000,pr_Y=414e6,pr_G=27.6e9,pr_Rfac=8,pr_tend=70e-6,pr_rcfl=100;
+    if(mode=="prater"){
+        if(argc>2)pr_cppr=atof(argv[2]); if(argc>3)pr_U=atof(argv[3]); if(argc>4)pr_Y=atof(argv[4]); if(argc>5)pr_G=atof(argv[5]);
+        if(argc>6)pr_Rfac=atof(argv[6]); if(argc>7)pr_tend=atof(argv[7]); if(argc>8)pr_rcfl=atof(argv[8]);
+    }
+    const double pr_a=3.175e-3;   // 6.35 mm diameter Al 2017-T4 sphere (Prater 1970)
     double cr_tauto=2.0*sqrt((cr_Rfac*cr_a)/cr_g);   // gravity formation/collapse timescale (settling cap = 10x)
     if(mode=="sod"){nx=200;ny=nz=1;Ldom=1.0;tend=0.2;CFL=0.4;emode=0;}
     else if(mode=="substrate"){nx=60;ny=1;nz=60;Ldom=30000.0;tend=200.0;CFL=0.4;emode=1;gz=3.71f;wb=1;rcfl=100.0f;}  // route 1: well-balanced gravity-loaded substrate
@@ -98,6 +105,8 @@ int main(int argc,char**argv){
         tend=(pz_tend>0?pz_tend:pz_reach/5833.0*(pz_reach>8?1.35:1.0)); CFL=0.3; emode=1; rcfl=(float)pz_rcfl; }   // auto tend: front ~5.8km/s + 35% margin for the decelerating deep front (default reach=7 -> 1.2e-3, = M5 gate)
     else if(mode=="pierazzo2d"){ double dxp=1.0/p2_cppr; nx=(int)(p2_reach/dxp+0.5); ny=1; nz=(int)((p2_reach+3.0)/dxp+0.5); Ldom=nx*dxp;   // Pierazzo-2008 Al benchmark, axisym (r,z): radial halfwidth = reach (half>=reach by construction)
         double c0al=sqrt(7.52e10/2700.0); tend=(p2_tend>0?p2_tend:1.3*p2_reach/c0al); CFL=0.3; emode=1; axisym=1; }   // front >= Al bulk speed c0 -> 1.3x covers the decelerating tail (mirrors hydro_cpu)
+    else if(mode=="prater"){ double dxp=pr_a/pr_cppr; nx=(int)(pr_Rfac*pr_a/dxp+0.5); ny=1; nz=(int)((pr_Rfac+3.0)*pr_a/dxp+0.5); Ldom=nx*dxp;   // Prater-1970 Al-on-Al crater growth (validation #2), axisym; mirrors hydro_cpu prater
+        tend=pr_tend; CFL=0.3; emode=1; axisym=1; rvac=100.0f; rcfl=(float)pr_rcfl; }   // rcfl=100 crater-validated; 1350 corrupts (see hydro_cpu note)
     else if(mode=="yield"){nx=400;ny=nz=1;Ldom=400e3;tend=15e3/csb;CFL=0.3;emode=1;}
     else if(mode=="af_activate"){nx=200;ny=nz=1;Ldom=100e3;tend=3.0;CFL=0.4;emode=1;cact=0.5f;tdecf=10.0f;}  // shock-activated AF unit test (matches CPU Run A)
     else if(mode=="sedov_axi"){nx=64;ny=1;nz=128;Ldom=2.0;tend=0.5;CFL=0.3;emode=0;axisym=1;}  // axisymmetric (r,z) on-axis point blast = 3D spherical Sedov
@@ -109,10 +118,13 @@ int main(int argc,char**argv){
         Ldom=nx*dxc; CFL=0.4; emode=1; axisym=1; wb=1; gz=(float)cr_g; rcfl=100.0f; rvac=100.0f;
         cact=(cr_TDEC>0?0.5f:0.0f); tdecf=(float)cr_TDEC; etaaf=(float)cr_ETA; pcoh=1.0e6f; pact=(cr_TDEC>0?1.0e8f:0.0f);   // shock-gate AF activation (mirrors CPU P_ACT)
         tend=(cr_targ>0?cr_targ:6.0*cr_tauto); }   // explicit tend>0 -> fixed run; else run-to-settling capped at 6x t_auto
-    else { fprintf(stderr,"unknown mode '%s' (modes: sod sedov surface bshock shear yield freefall atmos tensile pierazzo pierazzo2d vacuum substrate tracer af_activate sedov_axi lame af_visc vib_advect friction crater)\n",mode.c_str()); return 2; }   // fatal: never silently validate the wrong physics
+    else { fprintf(stderr,"unknown mode '%s' (modes: sod sedov surface bshock shear yield freefall atmos tensile pierazzo pierazzo2d prater vacuum substrate tracer af_activate sedov_axi lame af_visc vib_advect friction crater)\n",mode.c_str()); return 2; }   // fatal: never silently validate the wrong physics
     double dx=Ldom/((nx==1&&ny==1)?nz:nx); uint32_t n=nx*ny*nz; float invdx=1.0f/dx; float gam=GAM;
-    GMat MG=(mode=="pierazzo"||mode=="pierazzo2d")?AL:BASALT; bool strn=(emode==1 && MG.G>0);   // Al = pure hydro (no strength/damage)
+    GMat MG=(mode=="pierazzo"||mode=="pierazzo2d"||mode=="prater")?AL:BASALT;   // Al = pure hydro (no strength/damage)...
+    if(mode=="prater"){ MG.G=(float)pr_G; MG.Y=(float)pr_Y; }                   // ...except prater: von Mises Al 6061-T6 (iSALE Table 6)
+    bool strn=(emode==1 && MG.G>0);
     float epsact=(float)pow(1.0/(1e61*dx*dx*dx),1.0/16.0);   // Weibull weakest-flaw activation strain (host: wk=1e61 overflows FP32)
+    if(mode=="prater") epsact=1e30f;   // ductile Al: no brittle damage (CPU: wk=0 -> grow_damage no-op; the 1e61 above is basalt's Weibull)
     D_=MTL::CreateSystemDefaultDevice();
     if(!D_){fprintf(stderr,"no Metal device (this gate needs a Mac GPU)\n");return 1;}
     Q_=D_->newCommandQueue(); NS::Error* e=nullptr;
@@ -157,6 +169,11 @@ int main(int argc,char**argv){
             if(sqrt(rr*rr+(z-zc)*(z-zc))<a){r[c]=rho0;mw[c]=(float)(-rho0*U);E[c]=(float)(0.5*rho0*U*U);}   // projectile
             else if(z<zsurf){r[c]=rho0;E[c]=0;}                                                             // Al half-space
             else {r[c]=0.27f;E[c]=0;}}}                                                                     // low-density ambient
+    else if(mode=="prater"){double U=pr_U,zsurf=pr_Rfac*pr_a,zc=zsurf+pr_a;   // axisym: Al sphere tangent to the surface, moving down (mirrors hydro_cpu prater)
+        for(int i=0;i<nx;i++)for(int k=0;k<nz;k++){uint32_t c=i*nz+k; double rr=(i+0.5)*dx,z=(k+0.5)*dx;
+            if(sqrt(rr*rr+(z-zc)*(z-zc))<pr_a){r[c]=rho0;mw[c]=(float)(-rho0*U);E[c]=(float)(0.5*rho0*U*U);}   // projectile
+            else if(z<zsurf){r[c]=rho0;E[c]=0;}                                                                // Al target half-space
+            else {r[c]=0.27f;E[c]=0;}}}                                                                        // low-density ambient (vacuum-flagged by rvac)
     else if(mode=="af_activate"){double V=2000.0;for(int i=0;i<nx;i++){r[i]=rho0;E[i]=0;if(i<nx/2)mu[i]=rho0*V;}}  // left half -> right: a planar basalt shock
     else if(mode=="vib_advect"){double v0=2000.0,x0=0.3*Ldom,wid=8e3;float*Vb=(float*)bvib->contents();for(int i=0;i<nx;i++){double x=(i+0.5)*dx;r[i]=rho0;mu[i]=rho0*v0;E[i]=0.5*rho0*v0*v0;Vb[i]=exp(-((x-x0)/wid)*((x-x0)/wid));}}  // uniform v0 flow + a vib bump
     else if(mode=="sedov_axi"){for(uint32_t c=0;c<n;c++){r[c]=1.0f;E[c]=1e-4/(GAM-1);} int kc=nz/2; E[kc]+=1.0/(3.141592653589793*dx*dx*dx);}  // on-axis point blast (cell i=0,k=kc -> linear index kc); 3D volume = pi*dx^3
@@ -169,6 +186,7 @@ int main(int argc,char**argv){
     int NX=nx,NY=ny,NZ=nz;
     float*RR0=(float*)bRR0->contents(),*RP0=(float*)bRP0->contents();
     if(wb){ for(uint32_t c=0;c<n;c++){ RR0[c]=r[c]; float p=tillP(r[c],0.0f,MG); RP0[c]=p<0?0:p; } }   // route 1: freeze IC as the hydrostatic reference
+    if(mode=="prater"){ for(uint32_t c=0;c<n;c++){ RR0[c]=0.27f; RP0[c]=0.0f; } }   // prater void reference = AMBIENT everywhere: an IC reference would REFILL evacuated below-surface cells with rho0=2700 (tested: crater floor creeps back up); rho=0 reference NaNs FP32
     if(mode=="crater"){ double zc=cr_zsurf+cr_a;   // impactor sphere on the axis, tangent to the surface, moving down (added after the WB reference so the reference is impactor-free)
         for(int i=0;i<nx;i++)for(int k=0;k<nz;k++){ double rr=(i+0.5)*dx, z=(k+0.5)*dx; uint32_t c=i*nz+k;
             if(sqrt(rr*rr+(z-zc)*(z-zc))<cr_a){ r[c]=(float)rho0; mw[c]=(float)(-rho0*cr_U); E[c]=(float)(0.5*rho0*cr_U*cr_U); } } }
@@ -261,6 +279,15 @@ int main(int argc,char**argv){
     auto crvmax=[&](){ double v=0; for(uint32_t c=0;c<n;c++) if(r[c]>1350.0f){ double vv=sqrt((double)mu[c]*mu[c]+(double)mv[c]*mv[c]+(double)mw[c]*mw[c])/r[c]; v=max(v,vv);} return v; };
     double cr_tolM=0.02, cr_Wwin=2.0*cr_tauto, cr_tsettled=-1.0, cr_nextlog=cr_tauto, cr_dmaxT=0.0;   // window-mean drift settling (mirrors CPU)
     double cr_sumV=0.0, cr_meanPrev=-1.0, cr_winStart=-1.0; long cr_cntV=0;
+    // prater crater-growth series (mirrors hydro_cpu): contiguous-solid interfaces, robust to on-axis jet/flowback debris
+    double pr_zs=pr_Rfac*pr_a; int pr_ks=(int)(pr_zs/dx+0.5);
+    FILE*prf=nullptr; double pr_tlog=0,pr_Rsum=0,pr_Dsum=0,pr_Rmx=0,pr_Dmx=0; int pr_nfin=0;
+    if(mode=="prater"){ prf=fopen("prater_growth_gpu.txt","w");
+        if(prf)fprintf(prf,"# t_us R_cm D_cm (U=%.0f Y=%.3e G=%.3e cppr=%g GPU; exp oracle = prater1970_oracle.md Table 4)\n",pr_U,(double)MG.Y,(double)MG.G,pr_cppr); }
+    auto prsctg=[&](int i){ float cut=0.5f*MG.rho0; int k=0; while(k<nz && r[i*nz+k]>=cut) k++; return k*dx; };   // ground level = top of the dense column CONTIGUOUS from the bottom (flying ejecta/jet debris ignored)
+    auto prRD=[&](double&R,double&D){ double zfl=pr_zs; int ifl=0; for(int i=0;i<nx;i++){ double zs=prsctg(i); if(zs<zfl){zfl=zs;ifl=i;} }
+        D=pr_zs-prsctg(0); R=nx*dx;   // depth on the axis (X-ray convention); radius = profile recovers to the original surface plane, scanning out from the floor
+        for(int i=ifl;i<nx;i++){ if(prsctg(i)>=pr_zs-0.15*pr_a){ R=(i+0.5)*dx; break; } } };   // 0.15a tolerance dodges the sub-cell free-surface dip (mirrors hydro_cpu)
     double t=0;int step=0;
     while(t<tend){
         run(Pws,n,{br,bmu,bmv,bmw,bE,bsp},{{&emode,4},{&gam,4},{&MG,sizeof(GMat)},{&n,4},{&rcfl,4}});
@@ -293,6 +320,10 @@ int main(int argc,char**argv){
             for(int i=isp;i<nx;i++){ float xi=(float)(i-isp)/max(1,nx-1-isp), sp=xi*xi;
                 for(int k=0;k<nz;k++){ int c=i*nz+k; r[c]=(1-sp)*r[c]+sp*RR0[c]; mu[c]*=(1-sp); mv[c]*=(1-sp); mw[c]*=(1-sp); E[c]*=(1-sp); } } }
         t+=dt;step++;
+        if(mode=="prater"&&t>=pr_tlog){ double R,D; prRD(R,D);
+            if(prf)fprintf(prf,"%.3f %.4f %.4f\n",t*1e6,R*100,D*100); pr_tlog+=0.5e-6;
+            pr_Rmx=max(pr_Rmx,R); pr_Dmx=max(pr_Dmx,D);
+            if(t>=tend-10e-6){pr_Rsum+=R;pr_Dsum+=D;pr_nfin++;} }   // final values = mean over the last 10 us
         if(mode=="crater"){
             if(step%20==0){ double dn=0; for(int i=0;i<nx;i++) dn=max(dn,cr_zsurf-crsurf(i)); cr_dmaxT=max(cr_dmaxT,dn); }   // track transient excavation depth
             if(t>=cr_nextlog){ double dn=0; for(int i=0;i<nx;i++) dn=max(dn,cr_zsurf-crsurf(i));   // progress to stderr (mirrors CPU)
@@ -390,6 +421,21 @@ int main(int argc,char**argv){
         printf("GPU tensile damage: max D=%.4f max|Sxx|=%.3e (Y=%.3e ratio %.4f)  GATE: %s\n",Dmax,Sxxmax,Y,Sxxmax/Y,(Dmax>0.9&&Sxxmax<0.5*Y)?"PASS":"CHECK");
     } else if(mode=="bshock"){
         FILE*o=fopen("bshock_gpu.txt","w");for(int i=0;i<nx;i++)fprintf(o,"%.8e\n",r[i]);fclose(o);printf("GPU bshock wrote bshock_gpu.txt\n");
+    } else if(mode=="prater"){   // Prater-1970 crater-growth verdict (mirrors hydro_cpu; oracle = prater1970_oracle.md)
+        if(prf)fclose(prf);
+        FILE*ppf=fopen("prater_profile_gpu.txt","w");   // final crater profile (mirrors the X-ray cross-sections)
+        if(ppf){ fprintf(ppf,"# r_cm  (surf-z0)_cm  (GPU U=%.0f Y=%.3e cppr=%g t=%.0fus)\n",pr_U,(double)MG.Y,pr_cppr,tend*1e6);
+            for(int i=0;i<nx;i++) fprintf(ppf,"%.4f %.4f\n",(i+0.5)*dx*100,(prsctg(i)-pr_zs)*100); fclose(ppf); }
+        double Rf=pr_nfin?pr_Rsum/pr_nfin:0, Df=pr_nfin?pr_Dsum/pr_nfin:0, Rexp=1.31e-2, Dexp=1.31e-2;   // 6061-T6 plateau values (Table 4)
+        printf("GPU Prater-1970 Al crater growth (U=%.0f km/s cppr=%g Y=%.0f MPa | %dx%d cells, %d steps, tend=%.0f us):\n",pr_U/1000,pr_cppr,MG.Y/1e6,nx,nz,step,tend*1e6);
+        printf("  final R=%.3f cm (exp %.2f, err %+.1f%%)  D=%.3f cm (exp %.2f, err %+.1f%%)  transient max R=%.3f D=%.3f\n",Rf*100,Rexp*100,100*(Rf-Rexp)/Rexp,Df*100,Dexp*100,100*(Df-Dexp)/Dexp,pr_Rmx*100,pr_Dmx*100);
+        printf("PRSUMMARY U=%.0f cppr=%g Y=%.4e G=%.4e Rf=%.4e Df=%.4e Rmx=%.4e Dmx=%.4e steps=%d\n",pr_U,pr_cppr,(double)MG.Y,(double)MG.G,Rf,Df,pr_Rmx,pr_Dmx,step);
+        if(fabs(pr_U-7000)<1&&fabs(pr_Y-414e6)<1){   // paper-exact case (mirrors hydro_cpu; see the limitation note there)
+            if(pr_cppr>=10) printf("GATE (Prater-1970 6061-T6 von Mises: Dmax within 10%% & final D in [-20%%,+25%%] & final R in [-30%%,+10%%]): %s\n",
+                (fabs(pr_Dmx-Dexp)<=0.10*Dexp && Df-Dexp>=-0.20*Dexp && Df-Dexp<=0.25*Dexp && Rf-Rexp>=-0.30*Rexp && Rf-Rexp<=0.10*Rexp)?"PASS":"CHECK");
+            else printf("GATE (prater smoke, under-resolved cppr<10: crater forms, Dmax>0.7*exp & final R>0.35*exp): %s\n",
+                (pr_Dmx>0.7*Dexp && Rf>0.35*Rexp)?"PASS":"CHECK");
+        }
     } else if(mode=="pierazzo"&&pz_ang>0){   // oblique benchmark diagnostics (Pierazzo-2008 Table 1 lower block; oracle = pierazzo2008_oracle.md)
         float*Pm=(float*)bPmax->contents(); double a=1.0,zsurf=pz_reach,ximp=pz_hup; int cj=ny/2,ii=(int)(ximp/dx),ksurf=(int)(zsurf/dx);
         auto PmAt=[&](int i,int j,int k)->double{ if(i<0||i>=nx||j<0||j>=ny||k<0||k>=nz)return 0.0; return (double)Pm[((uint32_t)i*ny+j)*nz+k]; };

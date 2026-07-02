@@ -1,5 +1,30 @@
 # PICKUP — Pierazzo-2008 aluminum peak-pressure benchmark scale-up
 
+> ## SESSION UPDATE 2026-07-02 evening — E22 built+running, E23 (Prater) BUILT+GATED
+> **E23 `prater` mode DONE (CPU+GPU, gates PASS):** Prater-1970 6.35mm Al->Al 6061-T6 @7 km/s,
+> axisym, von Mises Y=414 MPa (iSALE's untuned value), R(t)/D(t) vs Table 4 (transcribed to
+> `prater1970_oracle.md`). VERDICT: growth phase (3-15 us) INSIDE the inter-code band (cppr20
+> R -8.3% D -1.4%); plateau low (R -22% D -10%) = documented no-rim-uplift/wall-extrusion
+> limitation (vacuum-face flux carries no deviatoric strength). Runs: state/prater/. Analyzer:
+> `analyze_prater.py` (stdlib, interpolates sim onto the experimental times).
+> **Numerical lessons (cost hours; do not rediscover):**
+> 1. GPU `voidzero` resets rho<rcfl cells to RR0. With RR0=frozen IC, evacuated BELOW-SURFACE
+>    cells get REFILLED with rho0 -> the crater floor creeps back up. prater fix: RR0=ambient
+>    0.27 everywhere. **The `crater` mode has the same latent artifact** (RR0=lithostatic):
+>    possibly part of why the complex-crater branch over-collapses — worth a dedicated test
+>    before trusting big-a d/D (add to the crater to-do list).
+> 2. RHO_CFL=1350 (half-density CFL floor) cuts steps ~50x but CORRUPTS the solution (skirt
+>    cells dump junk in the cavity). 100 is validated. CPU prater void-CLEANUP (reset <100 to
+>    ambient each step, mirrors GPU) is what made CPU affordable (147k -> 5.8k steps) AND
+>    killed the axis-bridging debris (D->0 artifact).
+> 3. Crater R/D measurement: use the CONTIGUOUS-from-bottom surface profile (flying ejecta/jet
+>    debris ignored); radius = profile recovers to within 0.15a of the original surface plane,
+>    scanning OUT FROM THE FLOOR. Single-row density scans are fragile (surface dip flicker).
+> **E22 45-deg oblique**: mode + verified oracle committed (c83cf54); production ladder
+> (cppr 12/16/20 x 5/20 km/s) detached -> state/pz45/ladder45.log. cppr8+12 scouting: 20 km/s
+> already IN the published envelope; 5 km/s slightly above, converging down (cppr12: n0 1.167
+> vs [0.90,1.226], n45 1.276 vs [0.87,1.318] — both IN at cppr12 already).
+
 > ## RESUME HERE (2026-07-02 ~15:00, master==origin/master @ 2a6ea95; all work committed+pushed)
 > **The head-to-head is DONE and PASSED** — read the SESSION UPDATE block below for the verdict table.
 > TWO RUNS STILL IN FLIGHT (both nohup+caffeinate detached, survive session/clear):

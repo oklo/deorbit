@@ -28,5 +28,13 @@ for m in sod sedov surface shear yield tensile freefall atmos pierazzo pierazzo2
 done
 # 45-deg oblique Pierazzo smoke gate (low-res, ~1 s; full oracle head-to-head = run_pierazzo45_ladder.sh at cppr>=16)
 ./hydro_gpu pierazzo 6 8 4 5000 -1 0 45 2>/dev/null | grep -i 'gate' | sed "s/^/  [pierazzo45] /"
+# Prater-1970 Al-alloy strength validation (E23; oracle = prater1970_oracle.md). quick = cppr6 smoke (~20s+50s);
+# full adds the cppr10 experiment-envelope gate on both codes (~1+2 min).
+./hydro_cpu prater 6 2>/dev/null | grep -i 'gate' | sed "s/^/  [prater cpu6] /"
+./hydro_gpu prater 6 2>/dev/null | grep -i 'gate' | sed "s/^/  [prater gpu6] /"
+if [ "$QUICK" != "quick" ]; then
+  ./hydro_cpu prater 10 2>/dev/null | grep -i 'gate' | sed "s/^/  [prater cpu10] /"
+  ./hydro_gpu prater 10 2>/dev/null | grep -i 'gate' | sed "s/^/  [prater gpu10] /"
+fi
 
 echo "== done. (collapse = M6 AF-calibration demo, not a pass/fail gate yet) =="
