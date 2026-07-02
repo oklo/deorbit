@@ -1,0 +1,108 @@
+# PICKUP — Pierazzo-2008 aluminum peak-pressure benchmark scale-up
+
+> ## RESUME HERE (2026-07-02, mid-task; code UNCOMMITTED)
+> Scaling up the `pierazzo` 3D Al-on-Al peak-shock-pressure benchmark (domain + resolution) to close the
+> **M5 caveat** (near-field n~1.3 unconverged; far-field slope unseen because the old grid reached only r/a~7).
+> The parent scoped task + rationale is in **PICKUP-phase3.md → "SCOPED TASK 2026-07-01"** (read it first);
+> memory [[deorbit-euler-code]] has the multi-session history. Repo: github.com/oklo/deorbit, code in
+> `hydrocodes/euler/`. Runs write to gitignored `state/pierazzo/`; log = `state/pierazzo/ladder.log`.
+>
+> **HEADLINE RESULT (batch 1 done, all PASS):** the scale-up to r/a=20 resolved the decay STRUCTURE the old
+> r/a<=7 benchmark could not see. Local decay exponent n (P ~ (r/a)^-n), converged across cppr 8/10/12:
+> | r/a band | 1-3 | 3-6 | **6-10** | 10-15 | 15-20 |
+> |---|---|---|---|---|---|
+> | n | 0.85 | ~1.6 | **1.75** | ~1.5 | ~1.42 |
+> core P converged to **93% of the analytic Hugoniot** (the documented ~7% deficit; plateaus by cppr 10).
+> INTERPRETATION (literature-grounded): impact peak-P decay is physically a WEAK-decay near field (isobaric
+> core, out to r/a~7-15) -> STRONG far-field power law. The old "n~1.3" sat ENTIRELY in the weak near field --
+> NOT a bug. Our extended domain now reaches the far-field onset (n climbs to ~1.75, well converged).
+>
+> **OPEN QUESTION being tested RIGHT NOW (batch 3 running):** the apparent RE-flattening past r/a~10
+> (1.75 -> 1.42) is SUSPECT -- the lateral half-width was half=10 (CLOSER than the r/a=20 measurement depth).
+> Batch 3 = cppr10 reach20 at half=16 and half=24 to see if the deep slope steepens with half (=> boundary
+> contamination, true far-field ~1.75+) or holds (=> physical flattening). Lateral BC is zero-gradient/outflow
+> (hydro.metal lines 156/250) -- so contamination should be modest but not necessarily zero.
+>
+> **IMMEDIATE NEXT STEPS (ordered):**
+>   1. **Read batch-3 verdict:** `tail -30 state/pierazzo/ladder.log`; then re-run the slope-bin table (script
+>      below) including decay_half16.txt / decay_half24.txt. Compare the 10-15 & 15-20 bins vs half=10. That
+>      settles the far-field slope. If half<measurement-depth is the problem, the RULE is half >~ reach.
+>   2. **Digitize the PUBLISHED Pierazzo iSALE Al P(r/a) curve** for the strict "within 10-20% inter-code
+>      envelope" pass/fail -- the ONE missing piece for the actual head-to-head. Paper: Pierazzo et al. 2008,
+>      MAPS 43:1917 (Wiley doi 10.1111/j.1945-5100.2008.tb00653.x; ADS 2008M&PS...43.1917P; open copy maybe at
+>      repository.arizona.edu/handle/10150/656500). WebFetch got 403 on MDPI; may need the PDF from Greg.
+>   3. **Commit** the harness + a short findings writeup (see "COMMIT CHECKLIST").
+>   4. **STRATEGIC (recommended):** port `pierazzo` to AXISYMMETRIC (2D r,z) -- iSALE itself is 2D-axisym for
+>      this benchmark, and 2D makes cppr 20-40 + half>=reach TRIVIALLY affordable (3D here is ~cppr^5-6 cost).
+>      The axisym solver is already validated (sedov_axi = on-axis point blast vs analytic Sedov). This is the
+>      clean way to a converged, boundary-clean far-field slope AND is truer to "2D iSALE replication."
+
+## WHAT WAS BUILT (uncommitted; `git status` in hydrocodes/euler)
+- **`hydro_gpu.cpp` — parameterized the `pierazzo` mode** (was hardcoded cppr=10, r/a<=7). New optional CLI:
+  `./hydro_gpu pierazzo [cppr=10] [reach=7] [half=4] [U=10000] [tend=-1auto] [rcfl=0]`
+  - `reach` = max on-axis depth in r/a units; `half` = lateral halfwidth in a units (a=1 m); grid built as
+    dx=1/cppr, nz=(reach+3)*cppr, nx=ny=2*half*cppr; auto tend = reach/5833*1.35 (front ~5.8 km/s + margin).
+  - **Defaults reproduce the M5 gate EXACTLY** (80x80x100, core 92.8%, n=1.262, PASS) -> gates.sh untouched.
+  - Diagnostic now also fits a **far-field slope n_far** over [max(6,0.4*reach), 0.85*reach] and prints a
+    machine-readable **PZSUMMARY** line (cppr reach half ncells corepct nnear nfar tend steps).
+  - **`rcfl` arg is INERT/DO-NOT-USE for pierazzo:** a CFL density floor was TESTED and it DESTABILIZES the run
+    (NaN after ~21 steps) -- unlike `crater`, pierazzo has no voidzero, so the live low-density ambient cells
+    NEED the small dt. That is why 3D cost is high (~cppr^5-6): the timestep is throttled by those cells and
+    their spurious wavespeed grows with resolution (implied cmax ~1.4e6 m/s, ~100x physical). Left as-is;
+    the real fix is axisym (step 4) or adding voidzero to pierazzo (a physics change needing M5 re-validation).
+- **`run_pierazzo_ladder.sh`** — the runner (deadline-guarded, logs to state/pierazzo/ladder.log). Batch 1 used
+  it; batches 2/3 were inline loops appending to the same log.
+- Rebuild: `clang++ -std=c++17 -O2 -I../common/metal-cpp hydro_gpu.cpp -framework Metal -framework Foundation -framework QuartzCore -o hydro_gpu`
+  (metallib already built; only rebuild it if hydro.metal changed).
+
+## RUNS DONE / IN FLIGHT (all in state/pierazzo/)
+- Batch 1 (DONE, 4.4 h, all PASS): conv_cppr8/10/12 @ reach20 half10 + deep_r30 @ cppr10 reach30 half12.
+  Decay files: decay_conv_cppr8.txt, _cppr10, _cppr12, decay_deep_r30.txt.
+  Numbers: core% 89.2/92.8/92.6/92.8; n_far[8-17] 1.51/1.54/1.58; deep_r30 n_far[12-25.5]=1.66 (BUT its far
+  end r/a>~20 is un-arrived noise floor -> ignore; reach20 already fills to r/a~20, so reach30 added no range).
+- Batch 2 (KILLED): cppr14/16 @ half10 -- abandoned (half10 => same deep contamination; near field already
+  converged). Its partial decay files were removed.
+- **Batch 3 (RUNNING): cppr10 reach20 @ half=16 then half=24.** half16 started 07:40, ~2.4 h; half24 ~5.4 h.
+  Will write decay_half16.txt / decay_half24.txt + PZSUMMARY lines to ladder.log. If a fresh session finds
+  them missing (process died on context-clear/sleep), RE-RUN:
+  `cd state/pierazzo && for h in 16 24; do ../../hydro_gpu pierazzo 10 20 $h 10000 >rung_half$h.out 2>/dev/null; mv pierazzo_decay.txt decay_half$h.txt; grep PZSUMMARY rung_half$h.out; done`
+  (wrap the whole thing in `caffeinate -i -m -s` -- see GOTCHA).
+
+## SLOPE-BIN ANALYSIS SCRIPT (stdlib only -- no numpy on this box)
+Run from `state/pierazzo/`. Add ('half16','decay_half16.txt') etc. to `files` once batch 3 lands.
+```python
+python3 -c "
+import math
+bins=[(1.2,3),(3,6),(6,10),(10,15),(15,20)]
+files=[('cppr8','decay_conv_cppr8.txt'),('cppr10','decay_conv_cppr10.txt'),('cppr12','decay_conv_cppr12.txt')]
+def slope(xs,ys):
+    n=len(xs);sx=sum(xs);sy=sum(ys);sxx=sum(x*x for x in xs);sxy=sum(x*y for x,y in zip(xs,ys))
+    return (n*sxy-sx*sy)/(n*sxx-sx*sx)
+print(f'{\"run\":11s} '+' '.join(f'{lo}-{hi}'.rjust(8) for lo,hi in bins))
+for name,f in files:
+    ra=[];P=[]
+    for line in open(f): a,b=line.split();ra.append(float(a));P.append(float(b))
+    core=max(p for r,p in zip(ra,P) if 0.5<=r<1.5); row=[]
+    for lo,hi in bins:
+        xs=[math.log(r) for r,p in zip(ra,P) if lo<=r<=hi and p>0.005*core]
+        ys=[math.log(p) for r,p in zip(ra,P) if lo<=r<=hi and p>0.005*core]
+        row.append(f'{-slope(xs,ys):8.2f}' if len(xs)>2 else '   --   ')
+    print(f'{name:11s} '+' '.join(row))
+"
+```
+
+## GOTCHA (cost me ~6.5 h overnight)
+Batches 2/3 were launched WITHOUT `caffeinate` -> the laptop SLEPT ~01:00-07:40 and the run stalled the whole
+time (matches the known "unattended slowdown = laptop SLEEPING" note in [[deorbit-euler-code]]). ALWAYS wrap
+long runs: `caffeinate -i -m -s ./whatever` (or `nohup caffeinate -i -m -s -t <sec> &` as a standalone keep-awake).
+A protective `caffeinate -t 32400` (~9 h) was started at pickup time to cover batch 3.
+
+## COMMIT CHECKLIST (when the picture is complete)
+- Commit `hydro_gpu.cpp` (parameterized pierazzo + far-field diagnostic + inert rcfl arg) and
+  `run_pierazzo_ladder.sh` and this `PICKUP-pierazzo.md`. NOT `state/` (gitignored). Confirm `./gates.sh quick`
+  still green (esp. `[pierazzo] ... PASS`, unchanged).
+- Add a dated "SESSION UPDATE" block to PICKUP-phase3.md with the headline numbers + the boundary verdict.
+- Commit as user.name='oklo' user.email='oklo@mac.com'; end msg with
+  `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`; `git fetch && rebase origin/master` before push.
+- Update memory [[deorbit-euler-code]] with the result (near->far decay structure resolved; far-field-onset
+  n~1.75; 93% Hugoniot; the old n~1.3 = near-field-only artifact EXPLAINED).
