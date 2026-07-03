@@ -260,119 +260,134 @@ def main():
 
 
 def plane_view(P, tdays, norm, geo, coasts, out):
-    """Vantage straight down the capture-orbit angular momentum: the apsidal
-    geometry becomes legible. Overlays each pass's apsidal ray (Earth center
-    -> apogee) and prints the apogee-direction rotation pass to pass."""
+    """Vantage tipped -45 deg from the capture-plane normal (perigee side
+    toward the viewer). All translucent surfaces (orbital-plane sheet,
+    equatorial rotation arrow, orbit-following motion arrow) are true 3D
+    planar objects tessellated into cells; each cell is line-of-sight
+    culled against the globe, so occlusion is exact everywhere with no
+    cover polygons. Unlabeled (caption carries the annotations); the
+    apsidal table prints to stdout."""
     r = np.linalg.norm(P, axis=1)
     iapo = [i for i in range(1, len(r) - 1)
             if r[i] > 2.0 and r[i] >= r[i - 1] and r[i] > r[i + 1]]
+    iper = [i for i in range(1, len(r) - 1)
+            if r[i] < 1.1 and r[i] <= r[i - 1] and r[i] < r[i + 1]]
     hhat = np.asarray(geo["h_hat"])
     e1 = P[iapo[0]] - (P[iapo[0]] @ hhat) * hhat
     e1 /= np.linalg.norm(e1)
     e2 = np.cross(hhat, e1)
     print("apogee-direction angle in the initial orbit plane (deg), per pass:")
-    angs, tilts = [], []
+    angs = []
     for k, i in enumerate(iapo):
         a = math.degrees(math.atan2(P[i] @ e2, P[i] @ e1))
         hk = np.cross(P[max(0, i - 40)], P[min(len(P) - 1, i + 40)])
         hk /= np.linalg.norm(hk)
         tilt = math.degrees(math.acos(abs(float(np.clip(hk @ hhat, -1, 1)))))
         angs.append(a)
-        tilts.append(tilt)
-        print(f"  pass {k+1}: apo_dir {a:+7.2f} deg   plane tilt vs initial {tilt:5.2f} deg"
-              f"   r_apo {r[i]:.2f} R_E")
+        print(f"  pass {k+1}: apo_dir {a:+7.2f} deg   plane tilt vs initial "
+              f"{tilt:5.2f} deg   r_apo {r[i]:.2f} R_E")
+    print(f"apogee-direction spread {max(angs)-min(angs):.2f} deg; "
+          f"cascade {tdays[-1]:.2f} d = {tdays[-1]*86400/86164.1:.2f} sidereal rev")
 
-    # --- 45-deg tilted vantage, close-in, with a translucent in-plane sheet ---
     TILT = math.radians(45.0)
-    EYE_DIST = 7.5                                   # R_E
-    # tilt toward the PERIGEE side: apogee recedes into the page at top,
-    # the perigee bundle + impact stay on the near (visible) side, and the
-    # whole cascade keeps positive camera depth at this eye distance
+    EYE_DIST = 7.5
     n_hat = math.cos(TILT) * hhat - math.sin(TILT) * e1
     cam = Camera(EYE_DIST * n_hat, (0.0, 0.0, 0.0), up=e1)
-    side = lambda Q: (np.atleast_2d(Q) @ hhat) > 0.0   # camera side of the plane
 
-    fig = plt.figure(figsize=(9.2, 9.2), facecolor="white")
+    fig = plt.figure(figsize=(9.2, 8.4), facecolor="white")
     ax = fig.add_subplot(111, facecolor="white")
     ax.set_aspect("equal")
     ax.axis("off")
     th = np.linspace(0, 2 * np.pi, 361)
 
-    def graticule_lines():
-        out_ = []
-        for lam in np.radians(np.arange(0, 180, 15)):
-            out_.append(np.column_stack([np.cos(th) * np.cos(lam),
-                                         np.cos(th) * np.sin(lam), np.sin(th)]))
-        for phi in np.radians(np.arange(-75, 76, 15)):
-            out_.append(np.column_stack([np.cos(phi) * np.cos(th),
-                                         np.cos(phi) * np.sin(th),
-                                         np.full_like(th, np.sin(phi))]))
-        return out_
+    # ---- helpers: tessellated translucent surfaces, cell-level occlusion ----
+    def cells_visible(centers):
+        _, _, zc = cam.project(centers)
+        return (~cam.occluded(centers)) & (zc > 0.05)
 
-    # 1. far (below-plane) half of the globe, veiled by the sheet drawn after
-    for ln in graticule_lines():
-        draw_sphere_lines(ax, cam, ln, extra_mask=~side(ln).ravel(),
-                          color="#c3c9cf", lw=0.3, zorder=1)
+    def fill_quads(quads, color, alpha, zorder):
+        from matplotlib.collections import PolyCollection
+        cen = quads.mean(axis=1)
+        ok = cells_visible(cen)
+        q = quads[ok]
+        if not len(q):
+            return
+        flat = q.reshape(-1, 3)
+        X, Y, _ = cam.project(flat)
+        scr = np.stack([X.reshape(-1, 4).T, Y.reshape(-1, 4).T]).T
+        pc = PolyCollection(list(scr), facecolor=color, alpha=alpha,
+                            edgecolor=color, linewidths=0.3, zorder=zorder)
+        ax.add_collection(pc)
+
+    def fill_strip(outer, inner, color, alpha, zorder):
+        """Planar strip: merge contiguous visible spans into single fills
+        (seamless at low alpha)."""
+        cen = 0.5 * (outer + inner)
+        ok = cells_visible(cen)
+        k0 = None
+        for k in range(len(ok) + 1):
+            on = k < len(ok) and ok[k]
+            if on and k0 is None:
+                k0 = k
+            if not on and k0 is not None:
+                if k - k0 > 1:
+                    ox, oy, _ = cam.project(outer[k0:k])
+                    ixn, iyn, _ = cam.project(inner[k0:k][::-1])
+                    ax.fill(np.concatenate([ox, ixn]), np.concatenate([oy, iyn]),
+                            color=color, alpha=alpha, lw=0, zorder=zorder)
+                k0 = None
+
+    def fill_head(tip, base_c, side_hat, half_w, color, alpha, zorder):
+        tri = np.array([tip, base_c + half_w * side_hat, base_c - half_w * side_hat])
+        if cells_visible(tri.mean(axis=0)[None, :])[0]:
+            tx, ty, _ = cam.project(tri)
+            ax.fill(tx, ty, color=color, alpha=alpha, lw=0, zorder=zorder)
+
+    # ---- globe: near-side graticule + coastlines + horizon ----
+    for lam in np.radians(np.arange(0, 180, 15)):
+        ln = np.column_stack([np.cos(th) * np.cos(lam),
+                              np.cos(th) * np.sin(lam), np.sin(th)])
+        draw_sphere_lines(ax, cam, ln, color="#c3c9cf", lw=0.3, zorder=4)
+    for phi in np.radians(np.arange(-75, 76, 15)):
+        ln = np.column_stack([np.cos(phi) * np.cos(th),
+                              np.cos(phi) * np.sin(th),
+                              np.full_like(th, np.sin(phi))])
+        draw_sphere_lines(ax, cam, ln, color="#c3c9cf", lw=0.3, zorder=4)
     for c in coasts:
-        draw_sphere_lines(ax, cam, c, extra_mask=~side(c).ravel(),
-                          color="#4a5560", lw=0.55, zorder=1)
+        draw_sphere_lines(ax, cam, c, color="#4a5560", lw=0.55, zorder=4)
     H = cam.horizon(n=361)
     hx, hy, _ = cam.project(H)
-    far_h = ~side(H).ravel()
-    ax.plot(np.where(far_h, hx, np.nan), np.where(far_h, hy, np.nan),
-            color="#8a939c", lw=0.8, zorder=1)
+    ax.plot(hx, hy, color="#8a939c", lw=0.8, zorder=4)
+    # in-plane unit circle (plane-planet intersection), visible arc
+    circ3 = np.outer(np.cos(th), e1) + np.outer(np.sin(th), e2)
+    draw_sphere_lines(ax, cam, circ3, color="#aab4bd", lw=0.5, zorder=4)
 
-    # 2. the translucent orbital-plane sheet: square (half-size 1.2 R_E) with
-    #    the r<1 disk removed (that part is inside the planet)
-    from matplotlib.patches import PathPatch
-    from matplotlib.path import Path as MplPath
+    # ---- orbital-plane sheet: 120x120 cell grid, half-size 1.5 R_E ----
+    g = np.linspace(-1.5, 1.5, 121)
+    GA, GB = np.meshgrid(g[:-1], g[:-1], indexing="ij")
+    da = g[1] - g[0]
+    corners = []
+    for du, dv in ((0, 0), (da, 0), (da, da), (0, da)):
+        A = (GA + du).ravel()[:, None]
+        B = (GB + dv).ravel()[:, None]
+        corners.append(A * e1 + B * e2)
+    sheet_quads = np.stack(corners, axis=1)
+    fill_quads(sheet_quads, "#7d94aa", 0.10, 2)
+    # crisp square outline, LOS-culled
     tsq = np.linspace(-1.5, 1.5, 61)
     per = np.concatenate([
-        np.column_stack([tsq, np.full_like(tsq, -1.2)]),
-        np.column_stack([np.full_like(tsq, 1.2), tsq]),
-        np.column_stack([tsq[::-1], np.full_like(tsq, 1.2)]),
-        np.column_stack([np.full_like(tsq, -1.2), tsq[::-1]])])
+        np.column_stack([tsq, np.full_like(tsq, -1.5)]),
+        np.column_stack([np.full_like(tsq, 1.5), tsq]),
+        np.column_stack([tsq[::-1], np.full_like(tsq, 1.5)]),
+        np.column_stack([np.full_like(tsq, -1.5), tsq[::-1]])])
     sq3 = per[:, :1] * e1 + per[:, 1:2] * e2
-    circ3 = np.outer(np.cos(th), e1) + np.outer(np.sin(th), e2)
-    sqx, sqy, _ = cam.project(sq3)
-    cx, cy, _ = cam.project(circ3)
-    verts = np.concatenate([np.column_stack([sqx, sqy]),
-                            np.column_stack([cx, cy])[::-1]])
-    codes = ([MplPath.MOVETO] + [MplPath.LINETO] * (len(sqx) - 1) + [MplPath.CLOSEPOLY]
-             + [MplPath.MOVETO] + [MplPath.LINETO] * (len(cx) - 1) + [MplPath.CLOSEPOLY])
-    verts = np.concatenate([verts[:len(sqx)], verts[:1] * 0,
-                            verts[len(sqx):], verts[len(sqx):len(sqx) + 1] * 0])
-    # (CLOSEPOLY vertices are ignored; supply zeros)
-    patch = PathPatch(MplPath(verts, codes), facecolor="#7d94aa", alpha=0.10,
-                      edgecolor="none", zorder=2)
-    ax.add_patch(patch)
-    # crisp square outline, hidden where the ball blocks the line of sight
     occ_sq = cam.occluded(sq3)
-    ax.plot(np.where(~occ_sq, sqx, np.nan), np.where(~occ_sq, sqy, np.nan),
+    sqx, sqy, sqz = cam.project(sq3)
+    bad = occ_sq | (sqz <= 0.05)
+    ax.plot(np.where(~bad, sqx, np.nan), np.where(~bad, sqy, np.nan),
             color="#93a7bb", lw=0.8, zorder=2)
 
-    # 3. opaque near half-ball: horizon arc (camera side of plane) joined to
-    #    the visible arc of the in-plane unit circle -> filled white
-    arcH = _circular_arc(H, side(H).ravel())
-    arcC = _circular_arc(circ3, cam.near_cap(circ3).ravel())
-    if np.linalg.norm(arcH[-1] - arcC[0]) > np.linalg.norm(arcH[-1] - arcC[-1]):
-        arcC = arcC[::-1]
-    bx, by, _ = cam.project(np.vstack([arcH, arcC]))
-    ax.fill(bx, by, color="white", zorder=3)
-    ax.plot(*cam.project(arcC)[:2], color="#aab4bd", lw=0.6, zorder=4)
-    near_h = side(H).ravel()
-    ax.plot(np.where(near_h, hx, np.nan), np.where(near_h, hy, np.nan),
-            color="#8a939c", lw=0.8, zorder=4)
-
-    # 4. near (above-plane) half of the globe
-    for ln in graticule_lines():
-        draw_sphere_lines(ax, cam, ln, extra_mask=side(ln).ravel(),
-                          color="#c3c9cf", lw=0.3, zorder=4)
-    for c in coasts:
-        draw_sphere_lines(ax, cam, c, extra_mask=side(c).ravel(),
-                          color="#4a5560", lw=0.55, zorder=4)
-
-    # 5. trajectory (in-plane), line-of-sight culled, far->near
+    # ---- trajectory ----
     occ = cam.occluded(P)
     X, Y, z = cam.project(P)
     good = ~occ[:-1] & ~occ[1:] & (z[:-1] > 0.05) & (z[1:] > 0.05)
@@ -388,14 +403,13 @@ def plane_view(P, tdays, norm, geo, coasts, out):
     lc.set_array(tmid[order])
     ax.add_collection(lc)
 
-    # 6. apsidal rays + impact
+    # ---- apsidal lines (perigee through apogee), impact star ----
     cmap = plt.get_cmap("managua")
     for k, i in enumerate(iapo):
         dirk = P[i] / r[i]
-        # full apsidal LINE: perigee stub (-1.35 R_E) through apogee
         ray = np.linspace(-1.35, 1.04 * r[i], 300)[:, None] * dirk[None, :]
         rocc = cam.occluded(ray)
-        rin = np.linalg.norm(ray, axis=1) < 0.999      # interior to the planet
+        rin = np.linalg.norm(ray, axis=1) < 0.999
         rx, ry, rz = cam.project(ray)
         rbad = rocc | rin | (rz <= 0.05)
         ax.plot(np.where(~rbad, rx, np.nan), np.where(~rbad, ry, np.nan),
@@ -404,50 +418,46 @@ def plane_view(P, tdays, norm, geo, coasts, out):
         ix, iy, _ = cam.project(P[-1])
         ax.plot(ix, iy, marker="*", color="#d62728", ms=12, zorder=6)
 
-    # --- direction arrows (semi-transparent, in true 3D, LOS-culled) ---
-    def curved_arrow(pts, nrm, color, alpha, lw, hl, hw, label, lab_dxy):
-        occ_a = cam.occluded(pts)
-        axp, ayp, azp = cam.project(pts)
-        bad = occ_a | (azp <= 0.05)
-        ax.plot(np.where(~bad, axp, np.nan), np.where(~bad, ayp, np.nan),
-                color=color, alpha=alpha, lw=lw, zorder=5,
-                solid_capstyle="round")
-        t_hat = pts[-1] - pts[-2]
-        t_hat /= np.linalg.norm(t_hat)
-        s_hat = np.cross(nrm, t_hat)
-        s_hat /= np.linalg.norm(s_hat)
-        tri = np.array([pts[-1] + hl * t_hat,
-                        pts[-1] + hw * s_hat, pts[-1] - hw * s_hat])
-        tx, ty, _ = cam.project(tri)
-        ax.fill(tx, ty, color=color, alpha=alpha, lw=0, zorder=5)
-        mx_, my_, _ = cam.project(pts[len(pts) // 2])
-        ax.annotate(label, (mx_[0], my_[0]), textcoords="offset points",
-                    xytext=lab_dxy, color=color, fontsize=8.5, style="italic")
-
-    # orbital motion: in-plane arc at 1.35 R_E, tangent = h_hat x r_hat
-    tha = np.radians(np.linspace(200.0, 258.0, 60))
-    arc_o = 1.35 * (np.cos(tha)[:, None] * e1 + np.sin(tha)[:, None] * e2)
-    curved_arrow(arc_o, hhat, "#3b6ea5", 0.40, 3.5, 0.16, 0.07,
-                 "orbital motion", (10, -14))
-    # Earth rotation: equatorial arc at 1.16 R_E on the camera side, eastward
+    # ---- Earth-rotation arrow: annular ribbon IN the equatorial plane ----
     eq_dir = cam.E - cam.E[2] * np.array([0.0, 0.0, 1.0])
     phi0 = math.atan2(eq_dir[1], eq_dir[0])
-    phe = phi0 + np.radians(np.linspace(-52.0, 40.0, 80))
-    arc_e = 1.16 * np.column_stack([np.cos(phe), np.sin(phe), np.zeros_like(phe)])
-    curved_arrow(arc_e, np.array([0.0, 0.0, 1.0]), "#c08a3e", 0.30, 6.0,
-                 0.22, 0.10, "Earth rotation (≈2.1 rev during cascade)", (18, 16))
+    phe = phi0 + np.radians(np.linspace(-58.0, 34.0, 90))
+    rin_, rout_ = 1.05, 1.21
+    ring = np.column_stack([np.cos(phe), np.sin(phe), np.zeros_like(phe)])
+    fill_strip(rout_ * ring, rin_ * ring, "#c08a3e", 0.30, 4.5)
+    pm = phe[-1]
+    rmid = 0.5 * (rin_ + rout_)
+    t_hat = np.array([-math.sin(pm), math.cos(pm), 0.0])
+    r_hat = np.array([math.cos(pm), math.sin(pm), 0.0])
+    fill_head(rmid * r_hat + 0.26 * t_hat, rmid * r_hat, r_hat, 0.145,
+              "#c08a3e", 0.30, 4.5)
 
-    # frame on the globe neighborhood: the sheet + outer loops run off-frame
+    # ---- orbit-motion arrow: ribbon offset from the FLOWN trajectory ----
+    # ascending branch after the 3rd perigee, r in [1.35, 3.0]
+    k3 = iper[2] if len(iper) > 2 else iper[-1]
+    idx = []
+    for i in range(k3, min(k3 + 4000, len(P) - 1)):
+        if r[i] > 3.0:
+            break
+        if r[i] > 1.35:
+            idx.append(i)
+    idx = idx[::6]
+    Q = P[idx]
+    T = np.gradient(Q, axis=0)
+    T /= np.linalg.norm(T, axis=1)[:, None]
+    M = np.cross(T, hhat)
+    M /= np.linalg.norm(M, axis=1)[:, None]
+    d_off, hw = 0.34, 0.055
+    C = Q + d_off * M
+    fill_strip(C + hw * M, C - hw * M, "#3b6ea5", 0.35, 4.5)
+    fill_head(C[-1] + 0.24 * T[-1], C[-1], M[-1], 0.125, "#3b6ea5", 0.35, 4.5)
+
+    # ---- frame on the globe neighborhood ----
     rh = 0.5 * (hx.max() - hx.min())
     cxh, cyh = 0.5 * (hx.max() + hx.min()), 0.5 * (hy.max() + hy.min())
     ax.set_xlim(cxh - 3.1 * rh, cxh + 3.1 * rh)
     ax.set_ylim(cyh - 1.85 * rh, cyh + 2.85 * rh)
-    spread = max(angs) - min(angs)
-    ax.set_title("orbital plane tipped −45° (perigee side toward viewer); translucent sheet = "
-                 f"capture-orbit plane (1.5 R_E half-size square)\n"
-                 f"dashed: apsidal line, perigee through apogee (per-pass spread {spread:.1f}°) — "
-                 "inertial frame, continents drawn at impact epoch",
-                 color=INK, fontsize=10)
+    fig.subplots_adjust(left=0.01, right=0.99, top=0.99, bottom=0.01)
     for ext in ("png", "pdf"):
         fig.savefig(os.path.join(HERE, "figures", f"{out}_plane.{ext}"), dpi=180,
                     facecolor="white", bbox_inches="tight")
