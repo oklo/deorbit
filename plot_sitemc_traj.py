@@ -294,7 +294,7 @@ def plane_view(P, tdays, norm, geo, coasts, out, draw):
     n_hat = math.cos(TILT) * hhat - math.sin(TILT) * e1
     cam = Camera(EYE_DIST * n_hat, (0.0, 0.0, 0.0), up=e1)
 
-    fig = plt.figure(figsize=(9.2, 8.4), facecolor="white")
+    fig = plt.figure(figsize=(6.9, 13.8), facecolor="white")
     ax = fig.add_subplot(111, facecolor="white")
     ax.set_aspect("equal")
     ax.axis("off")
@@ -446,7 +446,7 @@ def plane_view(P, tdays, norm, geo, coasts, out, draw):
     # ---- Earth-rotation arrow: annular ribbon IN the equatorial plane ----
     eq_dir = cam.E - cam.E[2] * np.array([0.0, 0.0, 1.0])
     phi0 = math.atan2(eq_dir[1], eq_dir[0])
-    phe = phi0 + np.radians(np.linspace(-58.0, -28.0, 40))
+    phe = phi0 + np.radians(np.linspace(-28.0, 2.0, 40))
     rin_, rout_ = 1.05, 1.21
     ring = np.column_stack([np.cos(phe), np.sin(phe), np.zeros_like(phe)])
     fill_strip(rout_ * ring, rin_ * ring, "#c08a3e", 0.30, 4.5)
@@ -457,17 +457,10 @@ def plane_view(P, tdays, norm, geo, coasts, out, draw):
     fill_head(rmid * r_hat + 0.26 * t_hat, rmid * r_hat, r_hat, 0.145,
               "#c08a3e", 0.30, 4.5)
 
-    # ---- orbit-motion arrow: ON the flown trajectory, inbound (left) branch,
-    # pointing toward the impact site; ~1/3 the previous length ----
-    k3 = iper[2] if len(iper) > 2 else iper[-1]
-    idx = []
-    for i in range(k3, 0, -1):                 # walk backward from perigee 3
-        if r[i] > 2.15:
-            break
-        if r[i] > 1.65:
-            idx.append(i)
-    idx = idx[::-1][::4]                       # time-ordered, thinned
-    Q = P[idx]
+    # ---- incoming-motion arrow: ON the hyperbolic approach leg ----
+    rhyp = np.linalg.norm(hyp, axis=1)
+    hsel = (rhyp > 2.7) & (rhyp < 3.6)          # just outside the sheet, left
+    Q = hyp[hsel][::2]
     T = np.gradient(Q, axis=0)
     T /= np.linalg.norm(T, axis=1)[:, None]
     M = np.cross(T, hhat)
@@ -479,9 +472,9 @@ def plane_view(P, tdays, norm, geo, coasts, out, draw):
     # ---- frame on the globe neighborhood ----
     rh = 0.5 * (hx.max() - hx.min())
     cxh, cyh = 0.5 * (hx.max() + hx.min()), 0.5 * (hy.max() + hy.min())
-    ax.set_xlim(cxh - 3.1 * rh, cxh + 3.1 * rh)
-    ax.set_ylim(cyh - 1.85 * rh, cyh + 2.85 * rh)
-    fig.subplots_adjust(left=0.01, right=0.99, top=0.99, bottom=0.01)
+    ax.set_xlim(cxh - 3.1 * rh, cxh + 3.1 * rh)          # width 6.2 rh
+    ax.set_ylim(cyh - 1.9 * rh, cyh + 10.5 * rh)         # height 12.4 rh = 2x
+    fig.subplots_adjust(left=0.01, right=0.99, top=0.995, bottom=0.005)
     for ext in ("png", "pdf"):
         fig.savefig(os.path.join(HERE, "figures", f"{out}_plane.{ext}"), dpi=180,
                     facecolor="white", bbox_inches="tight")
