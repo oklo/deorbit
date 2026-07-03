@@ -1,3 +1,22 @@
+> ## RESUME HERE (2026-07-03 evening — vamb sweep HARVESTED; AF ladder RUNNING)
+> **CLEAN (vamb=0.27) GARVIN VERDICT (42/42 settled, analyze_crater -> mars_dD_oracle):**
+> the artifact-free baseline UNDER-COLLAPSES EVERYWHERE, and the deficit GROWS with size:
+> simple branch off-arms ratio 1.46-1.62 (yd1M-yd10M); complex branch off_yd5M 1.9 (D=9.5)
+> -> 4.0 (D=69); off_yd1M 2.0 -> 3.9; AF-on Tfrac=30 is WORSE everywhere (2.1 -> 5.8,
+> the known rebound-damping over-deepening). The 2026-07-01 published-quality claim
+> "complex branch falls too steeply" is FORMALLY DEAD (it was the voidzero refill).
+> Y_d0 ordering is now SECONDARY (1-10 MPa arms differ ~20-30%); the missing physics is
+> LATE-STAGE COLLAPSE -> the AF (Tfrac 60/100/200 x Efrac 0.003/0.01/0.03 @ yd5M,
+> a=300/1000/2000/3000) ladder is THE calibration lever and is RUNNING (--jobs 7,
+> launched 2026-07-03 ~17:50, nohup+caffeinate, log state/sweep_af.log; 36 jobs,
+> ETA ~overnight; 7/7 core split with the sitemc MC per Greg). NOTE the required
+> collapse enhancement grows with D -- watch whether the impactor-scaled AF
+> (TDEC ~ a, ETA ~ a) reproduces that trend or needs stronger size-scaling.
+> **WHEN AF DONE:** same harvest (analyze_crater.py state/profiles/af5M_T*_E*.txt
+> --csv state/dD_af.csv; mars_dD_oracle.py) -> pick (Tfrac,Efrac) that flattens the
+> ratio-vs-D trend toward 1 WITHOUT wrecking the a=300 simple guard.
+> E22 cppr20: decision point 2026-07-04 morning (PICKUP-pierazzo.md).
+
 # PICKUP — Euler Phase 3: AF + strength calibration to the depth–diameter curve
 
 > ## RESUME HERE (2026-07-03 ~midday, master==origin/master @ 8360397; all code+docs committed)
