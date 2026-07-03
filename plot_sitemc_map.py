@@ -76,24 +76,31 @@ def main():
                   rasterized=True, alpha=0.55, shading="auto")
     ax.contour(LO, LA, sub, levels=[0.0], colors="#4a5560", linewidths=0.35)
 
-    def pts(rows):
-        lo = np.radians([float(r["lon_e_deg"]) for r in rows])
-        la = np.radians([float(r["lat_deg"]) for r in rows])
-        return lo, la
-
-    if steep:
-        ax.scatter(*pts(steep), s=9, c="#ff6a3d", alpha=0.75, lw=0,
-                   label=f"steep (Moon-pumped, n={len(steep)})", zorder=4)
-    if graz:
-        ax.scatter(*pts(graz), s=7, c="#ffd76a", alpha=0.6, lw=0,
-                   label=f"grazing (n={len(graz)})", zorder=5)
+    # dots colored by impact obliquity |fpa| (log scale: 0.3-70 deg spans the
+    # grazing cluster and the Moon-pumped steep tail); steepest drawn on top
+    from matplotlib.colors import LogNorm
+    lo = np.radians([float(r["lon_e_deg"]) for r in de])
+    la = np.radians([float(r["lat_deg"]) for r in de])
+    fpa = np.abs([float(r["fpa_deg"]) for r in de])
+    fpa = np.clip(fpa, 0.3, 70.0)
+    order = np.argsort(fpa)
+    sc = ax.scatter(lo[order], la[order], s=9, c=fpa[order],
+                    cmap="viridis", norm=LogNorm(vmin=0.3, vmax=70.0),
+                    alpha=0.85, lw=0, zorder=5)
+    cax = fig.add_axes([0.055, 0.115, 0.20, 0.022])
+    cb = fig.colorbar(sc, cax=cax, orientation="horizontal")
+    cb.set_label("impact flight-path angle |fpa| (deg)", color=INK, fontsize=8)
+    cb.set_ticks([0.3, 1, 3, 10, 30, 70])
+    cb.set_ticklabels(["0.3", "1", "3", "10", "30", "70"])
+    cb.ax.tick_params(colors=INK, labelsize=7)
+    cb.outline.set_edgecolor("#3a4148")
 
     from deorbit.site_selection import PEAKS
     plo = np.radians([p[2] for p in PEAKS]); pla = np.radians([p[1] for p in PEAKS])
     ax.scatter(plo, pla, marker="^", s=26, c="#5ad7ff", lw=0.4,
                edgecolors=BG, label="named summits", zorder=6)
 
-    ax.legend(loc="lower left", fontsize=8, facecolor=BG, edgecolor="none",
+    ax.legend(loc="lower right", fontsize=8, facecolor=BG, edgecolor="none",
               labelcolor=INK, framealpha=0.4)
     ax.set_title(f"km iron monolith — deorbit impact sites ({tag})",
                  color=INK, fontsize=12, pad=14)
