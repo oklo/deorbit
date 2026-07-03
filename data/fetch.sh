@@ -17,3 +17,11 @@ grep ' data/ephemerides/' data/checksums.sha256 | shasum -a 256 -c -
 
 echo "OK. DEM tiles (SRTMGL1 N00W078, N00W079) need a NASA EarthData login --"
 echo "see data/README.md -- download, gunzip, and place the .hgt files in data/dem/."
+
+echo "fetching ETOPO1 global relief (site-selection MC terrain, ~322 MB zipped)..."
+if [ ! -f data/dem/etopo1_ice_g_i2.bin ]; then
+  curl -sL -o data/dem/etopo1_ice_g_i2.zip \
+    https://www.ngdc.noaa.gov/mgg/global/relief/ETOPO1/data/ice_surface/grid_registered/binary/etopo1_ice_g_i2.zip
+  (cd data/dem && unzip -o etopo1_ice_g_i2.zip && rm etopo1_ice_g_i2.zip)
+fi
+grep ' data/dem/etopo1' data/checksums.sha256 | shasum -a 256 -c -
