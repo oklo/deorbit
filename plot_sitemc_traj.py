@@ -75,22 +75,67 @@ def coast_segments(gmst_deg):
     return out
 
 
-def draw_globe(ax, coasts):
-    u = np.linspace(0, 2 * np.pi, 25)
-    v = np.linspace(-np.pi / 2, np.pi / 2, 13)
-    UU, VV = np.meshgrid(u, v)
-    ax.plot_wireframe(np.cos(VV) * np.cos(UU), np.cos(VV) * np.sin(UU),
-                      np.sin(VV), color="#b9c0c7", lw=0.25, alpha=0.7)
+def view_dir(elev_deg, azim_deg):
+    """Unit vector from origin toward the (orthographic) camera, matching
+    mplot3d's view_init convention."""
+    el, az = math.radians(elev_deg), math.radians(azim_deg)
+    return np.array([math.cos(el) * math.cos(az),
+                     math.cos(el) * math.sin(az), math.sin(el)])
+
+
+def visible_mask(P, vhat, R=1.0):
+    """True where an exterior point is NOT occluded by the sphere of radius R
+    (orthographic camera at +inf along vhat): occluded iff inside the
+    silhouette cylinder AND behind the center plane."""
+    d = P @ vhat
+    perp2 = (P * P).sum(axis=1) - d * d
+    return ~((d < 0.0) & (perp2 < R * R))
+
+
+def _plot_runs(ax, poly, mask, **kw):
+    p = poly.copy()
+    p[~mask] = np.nan
+    ax.plot(p[:, 0], p[:, 1], p[:, 2], **kw)
+
+
+def draw_globe(ax, coasts, vhat):
+    """Hidden-line globe: near-side wireframe + coastlines, faint far side,
+    crisp limb circle. All culling done in data space (ortho camera)."""
+    # wireframe as explicit polylines so we can cull per point
+    th = np.linspace(0, 2 * np.pi, 181)
+    lines = []
+    for lam in np.radians(np.arange(0, 180, 15)):          # meridians
+        lines.append(np.column_stack([np.cos(th) * np.cos(lam),
+                                      np.cos(th) * np.sin(lam), np.sin(th)]))
+    for phi in np.radians(np.arange(-75, 76, 15)):         # parallels
+        lines.append(np.column_stack([np.cos(phi) * np.cos(th),
+                                      np.cos(phi) * np.sin(th),
+                                      np.full_like(th, np.sin(phi))]))
+    for ln in lines:
+        m = visible_mask(ln, vhat)
+        _plot_runs(ax, ln, ~m, color="#b9c0c7", lw=0.25, alpha=0.18, zorder=1)
+        _plot_runs(ax, ln, m, color="#b9c0c7", lw=0.3, alpha=0.65, zorder=2)
     for c in coasts:
-        ax.plot(c[:, 0], c[:, 1], c[:, 2], color="#4a5560", lw=0.55)
+        _plot_runs(ax, c, visible_mask(c, vhat), color="#4a5560", lw=0.6, zorder=3)
+    # limb (silhouette) circle: plane through origin perpendicular to vhat
+    e1 = np.cross(vhat, [0.0, 0.0, 1.0])
+    if np.linalg.norm(e1) < 1e-6:
+        e1 = np.cross(vhat, [1.0, 0.0, 0.0])
+    e1 /= np.linalg.norm(e1)
+    e2 = np.cross(vhat, e1)
+    limb = np.outer(np.cos(th), e1) + np.outer(np.sin(th), e2)
+    ax.plot(limb[:, 0], limb[:, 1], limb[:, 2], color="#8a939c", lw=0.8, zorder=3)
 
 
-def traj_collection(P, tdays, norm, decimate=1):
+def traj_collection(P, tdays, norm, vhat, decimate=1):
+    """Time-colored trajectory with sphere-occluded segments removed."""
     pts = P[::decimate]
     td = tdays[::decimate]
-    segs = np.stack([pts[:-1], pts[1:]], axis=1)
-    lc = Line3DCollection(segs, cmap="managua", norm=norm, lw=0.9)
-    lc.set_array(0.5 * (td[:-1] + td[1:]))
+    vis = visible_mask(pts, vhat)
+    keep = vis[:-1] & vis[1:]                  # segment visible if both ends are
+    segs = np.stack([pts[:-1], pts[1:]], axis=1)[keep]
+    lc = Line3DCollection(segs, cmap="managua", norm=norm, lw=0.9, zorder=4)
+    lc.set_array((0.5 * (td[:-1] + td[1:]))[keep])
     return lc
 
 
@@ -114,9 +159,14 @@ def main():
                  f"{res['t_days']:.2f} d, impact {res['v_end']/1e3:.1f} km/s "
                  f"@ {res['fpa_deg']:.2f}°)", color=INK, fontsize=11)
 
+    az_imp = math.degrees(math.atan2(imp[1], imp[0]))
     for k, (dec, ttl) in enumerate(((2, "full cascade"), (1, "endgame (zoom)"))):
         ax = fig.add_subplot(1, 2, k + 1, projection="3d", facecolor="white")
-        draw_globe(ax, coasts)
+        ax.set_proj_type("ortho")          # culling math assumes ortho camera
+        ax.computed_zorder = False         # we own the paint order
+        elev, azim = 18.0, az_imp + (25.0 if k == 0 else 5.0)
+        vhat = view_dir(elev, azim)
+        draw_globe(ax, coasts, vhat)
         if k == 0:
             sel = np.ones(len(P), bool)
             lo_ = np.minimum(P.min(axis=0), -1.0)
@@ -127,21 +177,22 @@ def main():
             sel = np.linalg.norm(P, axis=1) < 3.0
             ctr = np.zeros(3)
             half = 2.1
-        lc = traj_collection(P[sel], tdays[sel], norm, decimate=dec)
+        lc = traj_collection(P[sel], tdays[sel], norm, vhat, decimate=dec)
         lc.set_linewidth(1.1 if k == 0 else 0.9)
         ax.add_collection3d(lc)
-        ax.scatter(*imp, color="#d62728", marker="*", s=90, zorder=6)
+        if visible_mask(imp[None, :], vhat)[0]:
+            ax.scatter(*imp, color="#d62728", marker="*", s=90, zorder=5)
         if k == 0:
-            ax.scatter(*P[0], color=INK, marker="o", s=12)
-            ax.text(P[0][0], P[0][1] - 0.4 * half, P[0][2] - 0.12 * half, "arrival", color=INK, fontsize=8, ha="center")
+            ax.scatter(*P[0], color=INK, marker="o", s=12, zorder=5)
+            ax.text(P[0][0], P[0][1] - 0.4 * half, P[0][2] - 0.12 * half,
+                    "arrival", color=INK, fontsize=8, ha="center", zorder=5)
         else:
-            ax.text(*imp, "  impact", color="#d62728", fontsize=9)
+            ax.text(*imp, "  impact", color="#d62728", fontsize=9, zorder=5)
         ax.set_box_aspect((1, 1, 1))
         ax.set_xlim(ctr[0] - half, ctr[0] + half)
         ax.set_ylim(ctr[1] - half, ctr[1] + half)
         ax.set_zlim(ctr[2] - half, ctr[2] + half)
-        az = math.degrees(math.atan2(imp[1], imp[0]))
-        ax.view_init(elev=18, azim=az + (25 if k == 0 else 5))
+        ax.view_init(elev=elev, azim=azim)
         ax.set_axis_off()
         ax.set_title(ttl, color=INK, fontsize=10, pad=0, y=0.93)
     fig.subplots_adjust(left=-0.04, right=1.04, top=0.99, bottom=0.0, wspace=-0.18)
