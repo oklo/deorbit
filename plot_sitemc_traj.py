@@ -256,10 +256,10 @@ def main():
         fig.savefig(os.path.join(HERE, "figures", f"{out}.{ext}"), dpi=180,
                     facecolor="white", bbox_inches="tight")
     print(f"wrote figures/{out}.png/.pdf")
-    plane_view(P, tdays, norm, geo, coasts, out)
+    plane_view(P, tdays, norm, geo, coasts, out, d)
 
 
-def plane_view(P, tdays, norm, geo, coasts, out):
+def plane_view(P, tdays, norm, geo, coasts, out, draw):
     """Vantage tipped -45 deg from the capture-plane normal (perigee side
     toward the viewer). All translucent surfaces (orbital-plane sheet,
     equatorial rotation arrow, orbit-following motion arrow) are true 3D
@@ -363,7 +363,7 @@ def plane_view(P, tdays, norm, geo, coasts, out):
     draw_sphere_lines(ax, cam, circ3, color="#aab4bd", lw=0.5, zorder=4)
 
     # ---- orbital-plane sheet: 120x120 cell grid, half-size 1.5 R_E ----
-    g = np.linspace(-1.5, 1.5, 121)
+    g = np.linspace(-2.0, 2.0, 161)
     GA, GB = np.meshgrid(g[:-1], g[:-1], indexing="ij")
     da = g[1] - g[0]
     corners = []
@@ -374,12 +374,12 @@ def plane_view(P, tdays, norm, geo, coasts, out):
     sheet_quads = np.stack(corners, axis=1)
     fill_quads(sheet_quads, "#7d94aa", 0.10, 2)
     # crisp square outline, LOS-culled
-    tsq = np.linspace(-1.5, 1.5, 61)
+    tsq = np.linspace(-2.0, 2.0, 61)
     per = np.concatenate([
-        np.column_stack([tsq, np.full_like(tsq, -1.5)]),
-        np.column_stack([np.full_like(tsq, 1.5), tsq]),
-        np.column_stack([tsq[::-1], np.full_like(tsq, 1.5)]),
-        np.column_stack([np.full_like(tsq, -1.5), tsq[::-1]])])
+        np.column_stack([tsq, np.full_like(tsq, -2.0)]),
+        np.column_stack([np.full_like(tsq, 2.0), tsq]),
+        np.column_stack([tsq[::-1], np.full_like(tsq, 2.0)]),
+        np.column_stack([np.full_like(tsq, -2.0), tsq[::-1]])])
     sq3 = per[:, :1] * e1 + per[:, 1:2] * e2
     occ_sq = cam.occluded(sq3)
     sqx, sqy, sqz = cam.project(sq3)
@@ -387,14 +387,35 @@ def plane_view(P, tdays, norm, geo, coasts, out):
     ax.plot(np.where(~bad, sqx, np.nan), np.where(~bad, sqy, np.nan),
             color="#93a7bb", lw=0.8, zorder=2)
 
-    # ---- trajectory ----
-    occ = cam.occluded(P)
-    X, Y, z = cam.project(P)
+    # ---- trajectory, with the incoming hyperbola reconstructed ----
+    from deorbit.corridor.physics import MU
+    s0, _ = sample.entry_state(draw["v_inf"], draw["u_hat"], draw["theta_B"],
+                               A_EQ + draw["rp_alt_m"])
+    rv, vv = np.array(s0[:3]), np.array(s0[3:])
+    hv = np.cross(rv, vv)
+    ev = np.cross(vv, hv) / MU - rv / np.linalg.norm(rv)
+    ecc = np.linalg.norm(ev)
+    pfoc = (hv @ hv) / MU
+    p_hat = ev / ecc
+    q_hat = np.cross(hv / np.linalg.norm(hv), p_hat)
+    r0n = np.linalg.norm(rv)
+    nu0 = -math.acos(max(-1.0, min(1.0, (pfoc / r0n - 1.0) / ecc)))
+    r_far = 16.0 * A_EQ
+    nu_far = -math.acos(max(-1.0, min(1.0, (pfoc / r_far - 1.0) / ecc)))
+    nus = np.linspace(nu_far, nu0, 250)
+    rr = pfoc / (1.0 + ecc * np.cos(nus))
+    hyp = (rr[:, None] * (np.cos(nus)[:, None] * p_hat
+                          + np.sin(nus)[:, None] * q_hat)) / A_EQ
+    Pd = np.vstack([hyp, P])
+    tdd = np.concatenate([np.full(len(hyp), -1e-4), tdays])
+
+    occ = cam.occluded(Pd)
+    X, Y, z = cam.project(Pd)
     good = ~occ[:-1] & ~occ[1:] & (z[:-1] > 0.05) & (z[1:] > 0.05)
     seg = np.stack([np.column_stack([X[:-1], Y[:-1]]),
                     np.column_stack([X[1:], Y[1:]])], axis=1)[good]
     zmid = (0.5 * (z[:-1] + z[1:]))[good]
-    tmid = (0.5 * (tdays[:-1] + tdays[1:]))[good]
+    tmid = (0.5 * (tdd[:-1] + tdd[1:]))[good]
     order = np.argsort(-zmid)
     zref = np.median(zmid)
     lw = np.clip(0.95 * zref / zmid[order], 0.5, 1.8)
@@ -405,15 +426,19 @@ def plane_view(P, tdays, norm, geo, coasts, out):
 
     # ---- apsidal lines (perigee through apogee), impact star ----
     cmap = plt.get_cmap("managua")
-    for k, i in enumerate(iapo):
-        dirk = P[i] / r[i]
-        ray = np.linspace(-1.35, 1.04 * r[i], 300)[:, None] * dirk[None, :]
+
+    def plane_line(dirv, color, span=2.4):
+        ray = np.linspace(-span, span, 400)[:, None] * dirv[None, :]
         rocc = cam.occluded(ray)
         rin = np.linalg.norm(ray, axis=1) < 0.999
         rx, ry, rz = cam.project(ray)
         rbad = rocc | rin | (rz <= 0.05)
         ax.plot(np.where(~rbad, rx, np.nan), np.where(~rbad, ry, np.nan),
-                ls="--", lw=0.7, color=cmap(norm(tdays[i])), alpha=0.85, zorder=5)
+                ls="--", lw=0.7, color=color, alpha=0.85, zorder=5)
+
+    for i in (iapo[0], iapo[-1]):              # initial + final apsidal lines
+        plane_line(P[i] / r[i], cmap(norm(tdays[i])))
+    plane_line(e2, "#9aa2ab")                  # +/-90 deg (latus) grounding line
     if cam.near_cap(P[-1])[0]:
         ix, iy, _ = cam.project(P[-1])
         ax.plot(ix, iy, marker="*", color="#d62728", ms=12, zorder=6)
@@ -421,7 +446,7 @@ def plane_view(P, tdays, norm, geo, coasts, out):
     # ---- Earth-rotation arrow: annular ribbon IN the equatorial plane ----
     eq_dir = cam.E - cam.E[2] * np.array([0.0, 0.0, 1.0])
     phi0 = math.atan2(eq_dir[1], eq_dir[0])
-    phe = phi0 + np.radians(np.linspace(-58.0, 34.0, 90))
+    phe = phi0 + np.radians(np.linspace(-58.0, -28.0, 40))
     rin_, rout_ = 1.05, 1.21
     ring = np.column_stack([np.cos(phe), np.sin(phe), np.zeros_like(phe)])
     fill_strip(rout_ * ring, rin_ * ring, "#c08a3e", 0.30, 4.5)
@@ -432,25 +457,24 @@ def plane_view(P, tdays, norm, geo, coasts, out):
     fill_head(rmid * r_hat + 0.26 * t_hat, rmid * r_hat, r_hat, 0.145,
               "#c08a3e", 0.30, 4.5)
 
-    # ---- orbit-motion arrow: ribbon offset from the FLOWN trajectory ----
-    # ascending branch after the 3rd perigee, r in [1.35, 3.0]
+    # ---- orbit-motion arrow: ON the flown trajectory, inbound (left) branch,
+    # pointing toward the impact site; ~1/3 the previous length ----
     k3 = iper[2] if len(iper) > 2 else iper[-1]
     idx = []
-    for i in range(k3, min(k3 + 4000, len(P) - 1)):
-        if r[i] > 3.0:
+    for i in range(k3, 0, -1):                 # walk backward from perigee 3
+        if r[i] > 2.15:
             break
-        if r[i] > 1.35:
+        if r[i] > 1.65:
             idx.append(i)
-    idx = idx[::6]
+    idx = idx[::-1][::4]                       # time-ordered, thinned
     Q = P[idx]
     T = np.gradient(Q, axis=0)
     T /= np.linalg.norm(T, axis=1)[:, None]
     M = np.cross(T, hhat)
     M /= np.linalg.norm(M, axis=1)[:, None]
-    d_off, hw = 0.34, 0.055
-    C = Q + d_off * M
-    fill_strip(C + hw * M, C - hw * M, "#3b6ea5", 0.35, 4.5)
-    fill_head(C[-1] + 0.24 * T[-1], C[-1], M[-1], 0.125, "#3b6ea5", 0.35, 4.5)
+    hw = 0.055
+    fill_strip(Q + hw * M, Q - hw * M, "#3b6ea5", 0.35, 4.5)
+    fill_head(Q[-1] + 0.20 * T[-1], Q[-1], M[-1], 0.10, "#3b6ea5", 0.35, 4.5)
 
     # ---- frame on the globe neighborhood ----
     rh = 0.5 * (hx.max() - hx.min())
