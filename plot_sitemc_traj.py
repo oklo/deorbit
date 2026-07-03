@@ -243,6 +243,89 @@ def main():
         fig.savefig(os.path.join(HERE, "figures", f"{out}.{ext}"), dpi=180,
                     facecolor="white", bbox_inches="tight")
     print(f"wrote figures/{out}.png/.pdf")
+    plane_view(P, tdays, norm, geo, coasts, out)
+
+
+def plane_view(P, tdays, norm, geo, coasts, out):
+    """Vantage straight down the capture-orbit angular momentum: the apsidal
+    geometry becomes legible. Overlays each pass's apsidal ray (Earth center
+    -> apogee) and prints the apogee-direction rotation pass to pass."""
+    r = np.linalg.norm(P, axis=1)
+    iapo = [i for i in range(1, len(r) - 1)
+            if r[i] > 2.0 and r[i] >= r[i - 1] and r[i] > r[i + 1]]
+    hhat = np.asarray(geo["h_hat"])
+    e1 = P[iapo[0]] - (P[iapo[0]] @ hhat) * hhat
+    e1 /= np.linalg.norm(e1)
+    e2 = np.cross(hhat, e1)
+    print("apogee-direction angle in the initial orbit plane (deg), per pass:")
+    angs, tilts = [], []
+    for k, i in enumerate(iapo):
+        a = math.degrees(math.atan2(P[i] @ e2, P[i] @ e1))
+        hk = np.cross(P[max(0, i - 40)], P[min(len(P) - 1, i + 40)])
+        hk /= np.linalg.norm(hk)
+        tilt = math.degrees(math.acos(abs(float(np.clip(hk @ hhat, -1, 1)))))
+        angs.append(a)
+        tilts.append(tilt)
+        print(f"  pass {k+1}: apo_dir {a:+7.2f} deg   plane tilt vs initial {tilt:5.2f} deg"
+              f"   r_apo {r[i]:.2f} R_E")
+
+    ctr = 0.5 * (P.min(axis=0) + P.max(axis=0))
+    half = 0.5 * (P.max(axis=0) - P.min(axis=0)).max()
+    cam = Camera(ctr + 3.0 * half * hhat, ctr, up=e1)
+    fig = plt.figure(figsize=(8.6, 8.6), facecolor="white")
+    ax = fig.add_subplot(111, facecolor="white")
+    ax.set_aspect("equal")
+    ax.axis("off")
+    th = np.linspace(0, 2 * np.pi, 181)
+    for lam in np.radians(np.arange(0, 180, 15)):
+        ln = np.column_stack([np.cos(th) * np.cos(lam),
+                              np.cos(th) * np.sin(lam), np.sin(th)])
+        draw_sphere_lines(ax, cam, ln, color="#c3c9cf", lw=0.3, zorder=1)
+    for phi in np.radians(np.arange(-75, 76, 15)):
+        ln = np.column_stack([np.cos(phi) * np.cos(th),
+                              np.cos(phi) * np.sin(th),
+                              np.full_like(th, np.sin(phi))])
+        draw_sphere_lines(ax, cam, ln, color="#c3c9cf", lw=0.3, zorder=1)
+    for c in coasts:
+        draw_sphere_lines(ax, cam, c, color="#4a5560", lw=0.55, zorder=2)
+    hx, hy, _ = cam.project(cam.horizon())
+    ax.plot(hx, hy, color="#8a939c", lw=0.8, zorder=2)
+
+    occ = cam.occluded(P)
+    X, Y, z = cam.project(P)
+    good = ~occ[:-1] & ~occ[1:] & (z[:-1] > 0.05) & (z[1:] > 0.05)
+    seg = np.stack([np.column_stack([X[:-1], Y[:-1]]),
+                    np.column_stack([X[1:], Y[1:]])], axis=1)[good]
+    zmid = (0.5 * (z[:-1] + z[1:]))[good]
+    tmid = (0.5 * (tdays[:-1] + tdays[1:]))[good]
+    order = np.argsort(-zmid)
+    lc = LineCollection(seg[order], cmap="managua", norm=norm,
+                        linewidths=0.9, zorder=3)
+    lc.set_array(tmid[order])
+    ax.add_collection(lc)
+
+    # apsidal rays: Earth center -> each apogee
+    cmap = plt.get_cmap("managua")
+    ox, oy, _ = cam.project(np.zeros(3))
+    for k, i in enumerate(iapo):
+        axx, ayy, _ = cam.project(1.04 * P[i])
+        ax.plot([ox[0], axx[0]], [oy[0], ayy[0]], ls="--", lw=0.7,
+                color=cmap(norm(tdays[i])), alpha=0.8, zorder=2)
+    ix, iy, _ = cam.project(P[-1])
+    ax.plot(ix, iy, marker="*", color="#d62728", ms=11, zorder=4)
+    allx = np.concatenate([seg[:, :, 0].ravel(), hx[~np.isnan(hx)]])
+    ally = np.concatenate([seg[:, :, 1].ravel(), hy[~np.isnan(hy)]])
+    mx = 0.05 * max(allx.max() - allx.min(), ally.max() - ally.min())
+    ax.set_xlim(allx.min() - mx, allx.max() + mx)
+    ax.set_ylim(ally.min() - mx, ally.max() + mx)
+    spread = max(angs) - min(angs)
+    ax.set_title("view down the capture-orbit angular momentum "
+                 f"(dashed = per-pass apsidal rays; apogee-direction spread "
+                 f"{spread:.1f}°)", color=INK, fontsize=10)
+    for ext in ("png", "pdf"):
+        fig.savefig(os.path.join(HERE, "figures", f"{out}_plane.{ext}"), dpi=180,
+                    facecolor="white", bbox_inches="tight")
+    print(f"wrote figures/{out}_plane.png/.pdf")
 
 
 if __name__ == "__main__":
