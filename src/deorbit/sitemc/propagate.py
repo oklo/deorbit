@@ -27,10 +27,16 @@ class Config:
     """Force/model switches + body + epoch. Defaults = full physics."""
 
     def __init__(self, body_k, jd0=2451545.0, oblate=True, j2=True, moonsun=True,
-                 omega=OMEGA_E, f_rho=1.0, f_H=1.0, terrain=None, re_sphere=RE_SPHERE):
+                 omega=OMEGA_E, f_rho=1.0, f_H=1.0, terrain=None, re_sphere=RE_SPHERE,
+                 sph_surface=False):
         self.k = body_k                  # 0.5*Cd*A/m
         self.jd0 = jd0
         self.oblate = oblate
+        # sph_surface: impact/altitude REFERENCE surface is the re_sphere ball
+        # (full-legacy 2D parity). Default False = real ellipsoid surface even
+        # when the DRAG is spherical (oblate=False), so atmosphere-model A/Bs
+        # don't smuggle in a phantom impact surface.
+        self.sph_surface = sph_surface
         self.j2 = j2
         self.moonsun = moonsun
         self.omega = omega
@@ -102,19 +108,22 @@ def _rk4(t, s, dt, cfg):
 
 def _alt_ref(x, y, z, r, cfg):
     """Reference altitude used for step control / impact test."""
-    if cfg.oblate:
-        sl = z / r
-        cl = math.sqrt(max(0.0, 1.0 - sl * sl))
-        return r - ellipsoid_radius(sl, cl)
-    return r - cfg.re_sphere
+    if cfg.sph_surface:
+        return r - cfg.re_sphere
+    sl = z / r
+    cl = math.sqrt(max(0.0, 1.0 - sl * sl))
+    return r - ellipsoid_radius(sl, cl)
 
 
 def fly(s0, cfg, t0=0.0, max_days=200.0, want_track=False):
     """Integrate from an inbound entry state to an outcome.
 
     Returns dict: outcome 'impact'|'escape'|'timeout', diagnostics, and the
-    impact state if any. Pass bookkeeping: a 'pass' = a perigee crossing
-    (vr sign - -> +); low pass = min geodetic alt < TERRAIN_ALT during it.
+    impact state if any. Pass bookkeeping: a 'pass' = one excursion below the
+    atmosphere interface (entry->exit), so radial-velocity wobbles during a
+    single skimming arc do not inflate the count; apogee/eps are recorded at
+    atmosphere EXIT (after the full drag dv of the pass). A low pass reached
+    geodetic alt < TERRAIN_ALT.
     """
     s = list(s0)
     t = t0
@@ -123,9 +132,9 @@ def fly(s0, cfg, t0=0.0, max_days=200.0, want_track=False):
     n_low_pass = 0
     apo1_km = None
     eps_after_1 = None
+    in_atm = False
     pass_min_alt = 1e30
     min_alt_ever = 1e30
-    prev_vr = None
     steps = 0
     outcome = "timeout"
     track = [] if want_track else None
@@ -151,8 +160,12 @@ def fly(s0, cfg, t0=0.0, max_days=200.0, want_track=False):
                 break
         vr = (x * vx + y * vy + z * vz) / r
         eps = 0.5 * v2 - MU_E / r
-        # --- pass bookkeeping (perigee = vr - -> +) ---
-        if prev_vr is not None and prev_vr < 0.0 <= vr:
+        # --- pass bookkeeping (one excursion below the interface = one pass) ---
+        if not in_atm and alt < ENTRY_ALT:
+            in_atm = True
+            pass_min_alt = alt
+        elif in_atm and alt >= ENTRY_ALT and vr > 0.0:
+            in_atm = False
             n_pass += 1
             if pass_min_alt < TERRAIN_ALT:
                 n_low_pass += 1
@@ -166,7 +179,6 @@ def fly(s0, cfg, t0=0.0, max_days=200.0, want_track=False):
                 apo1_km = (a * (1.0 + math.sqrt(e2)) - RE_SPHERE) / 1e3
                 eps_after_1 = eps
             pass_min_alt = 1e30
-        prev_vr = vr
         # --- escape tests ---
         if eps > 0.0 and vr > 0.0 and r > 1e8:
             outcome = "escape"

@@ -113,7 +113,7 @@ def test_kepler_closure_3d():
     eps1 = 0.5 * v * v - P2.MU / r
     assert res["outcome"] == "timeout"                # still orbiting
     assert abs(eps1 - eps0) / abs(eps0) < 2e-5
-    assert res["n_pass"] >= 2
+    assert res["n_pass"] == 0                         # 300 km perigee: never in atmosphere
 
 
 def test_j2_secular_rates():
@@ -141,7 +141,7 @@ def test_corridor_limit_2d():
     """Spherical + no J2/Moon/Sun/rotation equatorial pass reproduces the 2D
     integrator's capture boundary at h_p=10 km (within bisection tol)."""
     b2 = P2.Body()
-    cfg = _cfg(k=b2.k)
+    cfg = _cfg(k=b2.k, sph_surface=True)      # full-legacy parity: sphere surface too
     u = (1.0, 0.0, 0.0)
 
     def outcome3d(v_inf):
@@ -166,15 +166,23 @@ def test_corridor_limit_2d():
 
 
 def test_oblate_switch_matters():
-    """Same polar pass: oblate ON must brake far less at fixed geocentric
-    periapsis radius over the pole (air is ~21 km lower there)."""
+    """Same polar skip pass at fixed geocentric periapsis: the oblate arm
+    sees geodetic-altitude air (~14 km higher over the pole for this radius)
+    so the per-pass energy loss must be several-fold smaller."""
     b2 = P2.Body()
+    v_inf = 2000.0
     rp = P2.RE + 30e3
-    s0, _ = sample.entry_state(1000.0, (0.0, 0.0, -1.0), 0.0, rp)   # polar arrival
-    r_sph = fly(list(s0), _cfg(k=b2.k, oblate=False), max_days=0.2)
-    r_obl = fly(list(s0), _cfg(k=b2.k, oblate=True), max_days=0.2)
-    # spherical: strong braking; oblate: pole is effectively much higher
-    assert r_obl["min_alt_km"] > r_sph["min_alt_km"] + 5.0
+    s0, _ = sample.entry_state(v_inf, (0.0, 0.0, -1.0), 0.0, rp)    # polar arrival
+    eps_in = 0.5 * v_inf * v_inf
+    de = {}
+    for arm, obl in (("sph", False), ("obl", True)):
+        res = fly(list(s0), _cfg(k=b2.k, oblate=obl), max_days=0.2)
+        st = res["state"]
+        v2 = sum(c * c for c in st[3:])
+        r = math.sqrt(sum(c * c for c in st[:3]))
+        de[arm] = eps_in - (0.5 * v2 - P2.MU / r)
+        assert res["outcome"] in ("escape", "timeout")               # clean skip
+    assert de["sph"] / de["obl"] > 3.0, de
 
 
 # ---------- terrain ----------
