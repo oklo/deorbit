@@ -115,7 +115,7 @@ def _alt_ref(x, y, z, r, cfg):
     return r - ellipsoid_radius(sl, cl)
 
 
-def fly(s0, cfg, t0=0.0, max_days=200.0, want_track=False):
+def fly(s0, cfg, t0=0.0, max_days=200.0, want_track=False, track_every=0):
     """Integrate from an inbound entry state to an outcome.
 
     Returns dict: outcome 'impact'|'escape'|'timeout', diagnostics, and the
@@ -138,6 +138,7 @@ def fly(s0, cfg, t0=0.0, max_days=200.0, want_track=False):
     steps = 0
     outcome = "timeout"
     track = [] if want_track else None
+    path = [] if track_every else None
     while t < tmax:
         x, y, z, vx, vy, vz = s
         r = math.sqrt(x * x + y * y + z * z)
@@ -193,6 +194,8 @@ def fly(s0, cfg, t0=0.0, max_days=200.0, want_track=False):
             dt = max(1.0, min(600.0, 0.02 * r / math.sqrt(v2)))
         if want_track and alt < TERRAIN_ALT + 5e3:
             track.append((t, x, y, z, alt))
+        if track_every and steps % track_every == 0:
+            path.append((t, x, y, z))
         s = _rk4(t, s, dt, cfg)
         t += dt
         steps += 1
@@ -214,4 +217,7 @@ def fly(s0, cfg, t0=0.0, max_days=200.0, want_track=False):
     }
     if want_track:
         res["track"] = track
+    if track_every:
+        path.append((t, s[0], s[1], s[2]))
+        res["path"] = path
     return res
