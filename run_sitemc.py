@@ -100,7 +100,8 @@ def main():
     n = int(sys.argv[sys.argv.index("--n") + 1]) if "--n" in sys.argv else 1000
     jobs = int(sys.argv[sys.argv.index("--jobs") + 1]) if "--jobs" in sys.argv else 1
     os.makedirs(STATE_DIR, exist_ok=True)
-    todo = [s for s in range(n) if s not in done_seeds()]
+    dk = done_seeds()                      # read the catalog ONCE (not per seed!)
+    todo = [s for s in range(n) if s not in dk]
     print(f"sitemc: {n} requested, {n - len(todo)} done, {len(todo)} to fly, jobs={jobs}",
           flush=True)
     if not todo:
