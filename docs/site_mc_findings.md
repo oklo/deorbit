@@ -85,3 +85,26 @@ TWO highland attractors — the Andes (wall geometry, low-lat channel) and
 Tibet (area, high-i grazing channel) — real order-3-4 range-scale elevation
 enhancement, and no summit-cone enhancement. Timeouts 2.6% (200-day cap) to
 revisit at full N.
+
+## Phase E (2026-07-03): arrival prior built — THE MAP IS PRIOR-ROBUST
+
+Machinery (src/deorbit/sitemc/arrival_prior.py, gated): empirical torus-MC
+encounter kinematics (no Opik closed forms to get wrong; every hit checks
+against Tisserand, median err 0.9%), pluggable population density (flat vs
+Granvik-shaped tilt), KDE over local (U_r,U_t,U_z), per-seed weights
+w ~ f(U)*U^3*db^2/drp with u_hat regenerated deterministically from the seed.
+
+RESULT: the realistic arrival prior BARELY MOVES the site statistics.
+ESS 84-89% (weights bulk within ~3x); weighted |lat| q50 = 14.3 (tilt) /
+14.6 (flat) vs 13.7 isotropic; elev>2km highland share Andes ~28-29% vs
+Tibet/Himalaya ~34-35% under BOTH densities — Tibet SURVIVES the realistic
+prior. Physics: Tisserand pins sqrt(p)cos(i)~1 for U<5 km/s but leaves the
+U-direction broad (radial/tangential/vertical branches all populated), so
+low-U radiants are NOT an ecliptic-thin cone and high-geocentric-inclination
+captures remain fully supported. Reweighted flashlight map (rejection,
+acceptance 32%): figures/sitemc_flashlight_rw.png — visually the isotropic
+beam. => The impact-site map is DYNAMICS-dominated, not prior-dominated;
+prior uncertainty (Granvik vs NEOMOD vs M-source conditioning) is a
+second-order systematic for the map shape (it matters for the RATE only).
+Caveats: analytic tilt is Granvik-shaped placeholder (NEOMOD grid ingestion
+open); KDE h=0.4 km/s coarse below v_inf~0.5; Earth eccentricity ignored.
