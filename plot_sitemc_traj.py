@@ -289,6 +289,17 @@ def plane_view(P, tdays, norm, geo, coasts, out, draw):
     print(f"apogee-direction spread {max(angs)-min(angs):.2f} deg; "
           f"cascade {tdays[-1]:.2f} d = {tdays[-1]*86400/86164.1:.2f} sidereal rev")
 
+    # tallest (first) loop in-plane extents: sheet = 1.1x its semi-axes,
+    # centered on the ELLIPSE (focus offset ~5 R_E along the apsidal axis)
+    i0l, i1l = iper[0], (iper[1] if len(iper) > 1 else len(P) - 1)
+    uu = P[i0l:i1l] @ e1
+    vv = P[i0l:i1l] @ e2
+    uc, vc = 0.5 * (uu.min() + uu.max()), 0.5 * (vv.min() + vv.max())
+    hu = 1.1 * 0.5 * (uu.max() - uu.min())
+    hv = 1.1 * 0.5 * (vv.max() - vv.min())
+    print(f"sheet: center ({uc:+.2f},{vc:+.2f}) R_E in-plane, half-extents "
+          f"{hu:.2f} x {hv:.2f} R_E (1.1x loop-1 semi-axes)")
+
     TILT = math.radians(45.0)
     EYE_DIST = 7.5
     n_hat = math.cos(TILT) * hhat - math.sin(TILT) * e1
@@ -362,24 +373,29 @@ def plane_view(P, tdays, norm, geo, coasts, out, draw):
     circ3 = np.outer(np.cos(th), e1) + np.outer(np.sin(th), e2)
     draw_sphere_lines(ax, cam, circ3, color="#aab4bd", lw=0.5, zorder=4)
 
-    # ---- orbital-plane sheet: 120x120 cell grid, half-size 1.5 R_E ----
-    g = np.linspace(-2.0, 2.0, 161)
-    GA, GB = np.meshgrid(g[:-1], g[:-1], indexing="ij")
-    da = g[1] - g[0]
+    # ---- orbital-plane sheet: rectangle 1.1x the tallest loop's semi-axes,
+    # centered on the ellipse (cell-tessellated, cell ~0.075 R_E) ----
+    nu = max(2, int(round(2 * hu / 0.075)))
+    nv = max(2, int(round(2 * hv / 0.075)))
+    gu = np.linspace(uc - hu, uc + hu, nu + 1)
+    gv = np.linspace(vc - hv, vc + hv, nv + 1)
+    GA, GB = np.meshgrid(gu[:-1], gv[:-1], indexing="ij")
+    dua, dvb = gu[1] - gu[0], gv[1] - gv[0]
     corners = []
-    for du, dv in ((0, 0), (da, 0), (da, da), (0, da)):
+    for du, dv in ((0, 0), (dua, 0), (dua, dvb), (0, dvb)):
         A = (GA + du).ravel()[:, None]
         B = (GB + dv).ravel()[:, None]
         corners.append(A * e1 + B * e2)
     sheet_quads = np.stack(corners, axis=1)
     fill_quads(sheet_quads, "#7d94aa", 0.10, 2)
-    # crisp square outline, LOS-culled
-    tsq = np.linspace(-2.0, 2.0, 61)
+    # crisp rectangle outline, LOS-culled
+    tu = np.linspace(uc - hu, uc + hu, 121)
+    tv = np.linspace(vc - hv, vc + hv, 61)
     per = np.concatenate([
-        np.column_stack([tsq, np.full_like(tsq, -2.0)]),
-        np.column_stack([np.full_like(tsq, 2.0), tsq]),
-        np.column_stack([tsq[::-1], np.full_like(tsq, 2.0)]),
-        np.column_stack([np.full_like(tsq, -2.0), tsq[::-1]])])
+        np.column_stack([tu, np.full_like(tu, vc - hv)]),
+        np.column_stack([np.full_like(tv, uc + hu), tv]),
+        np.column_stack([tu[::-1], np.full_like(tu, vc + hv)]),
+        np.column_stack([np.full_like(tv, uc - hu), tv[::-1]])])
     sq3 = per[:, :1] * e1 + per[:, 1:2] * e2
     occ_sq = cam.occluded(sq3)
     sqx, sqy, sqz = cam.project(sq3)
@@ -427,8 +443,8 @@ def plane_view(P, tdays, norm, geo, coasts, out, draw):
     # ---- apsidal lines (perigee through apogee), impact star ----
     cmap = plt.get_cmap("managua")
 
-    def plane_line(dirv, color, span=2.4):
-        ray = np.linspace(-span, span, 400)[:, None] * dirv[None, :]
+    def plane_line(dirv, color, t0, t1):
+        ray = np.linspace(t0, t1, 500)[:, None] * dirv[None, :]
         rocc = cam.occluded(ray)
         rin = np.linalg.norm(ray, axis=1) < 0.999
         rx, ry, rz = cam.project(ray)
@@ -436,9 +452,11 @@ def plane_view(P, tdays, norm, geo, coasts, out, draw):
         ax.plot(np.where(~rbad, rx, np.nan), np.where(~rbad, ry, np.nan),
                 ls="--", lw=0.7, color=color, alpha=0.85, zorder=5)
 
+    EXTRUDE = 0.8                              # beyond the sheet edges
     for i in (iapo[0], iapo[-1]):              # initial + final apsidal lines
-        plane_line(P[i] / r[i], cmap(norm(tdays[i])))
-    plane_line(e2, "#9aa2ab")                  # +/-90 deg (latus) grounding line
+        plane_line(P[i] / r[i], cmap(norm(tdays[i])),
+                   uc - hu - EXTRUDE, uc + hu + EXTRUDE)
+    plane_line(e2, "#9aa2ab", vc - hv - EXTRUDE, vc + hv + EXTRUDE)
     if cam.near_cap(P[-1])[0]:
         ix, iy, _ = cam.project(P[-1])
         ax.plot(ix, iy, marker="*", color="#d62728", ms=12, zorder=6)
@@ -470,11 +488,18 @@ def plane_view(P, tdays, norm, geo, coasts, out, draw):
     fill_head(Q[-1] + 0.20 * T[-1], Q[-1], M[-1], 0.10, "#3b6ea5", 0.35, 4.5)
 
     # ---- frame on the globe neighborhood ----
-    rh = 0.5 * (hx.max() - hx.min())
-    cxh, cyh = 0.5 * (hx.max() + hx.min()), 0.5 * (hy.max() + hy.min())
-    ax.set_xlim(cxh - 3.1 * rh, cxh + 3.1 * rh)          # width 6.2 rh
-    ax.set_ylim(cyh - 1.9 * rh, cyh + 10.5 * rh)         # height 12.4 rh = 2x
-    fig.subplots_adjust(left=0.01, right=0.99, top=0.995, bottom=0.005)
+    # frame: comfortably enclose everything drawn (loops, sheet, globe)
+    allx = np.concatenate([seg[:, :, 0].ravel(), sqx[~np.isnan(sqx)], hx])
+    ally = np.concatenate([seg[:, :, 1].ravel(), sqy[~np.isnan(sqy)], hy])
+    mx = 0.035 * max(allx.max() - allx.min(), ally.max() - ally.min())
+    x0, x1 = allx.min() - mx, allx.max() + mx
+    y0, y1 = ally.min() - mx, ally.max() + mx
+    ax.set_xlim(x0, x1)
+    ax.set_ylim(y0, y1)
+    asp = (y1 - y0) / (x1 - x0)
+    W = 12.5 if asp <= 1.0 else 12.5 / asp
+    fig.set_size_inches(W, W * asp)
+    fig.subplots_adjust(left=0.005, right=0.995, top=0.995, bottom=0.005)
     for ext in ("png", "pdf"):
         fig.savefig(os.path.join(HERE, "figures", f"{out}_plane.{ext}"), dpi=180,
                     facecolor="white", bbox_inches="tight")
