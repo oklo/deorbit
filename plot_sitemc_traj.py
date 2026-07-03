@@ -284,7 +284,7 @@ def plane_view(P, tdays, norm, geo, coasts, out):
 
     # --- 45-deg tilted vantage, close-in, with a translucent in-plane sheet ---
     TILT = math.radians(45.0)
-    EYE_DIST = 4.6                                   # R_E: Earth large on page
+    EYE_DIST = 7.5                                   # R_E
     # tilt toward the PERIGEE side: apogee recedes into the page at top,
     # the perigee bundle + impact stay on the near (visible) side, and the
     # whole cascade keeps positive camera depth at this eye distance
@@ -326,7 +326,7 @@ def plane_view(P, tdays, norm, geo, coasts, out):
     #    the r<1 disk removed (that part is inside the planet)
     from matplotlib.patches import PathPatch
     from matplotlib.path import Path as MplPath
-    tsq = np.linspace(-1.2, 1.2, 61)
+    tsq = np.linspace(-1.5, 1.5, 61)
     per = np.concatenate([
         np.column_stack([tsq, np.full_like(tsq, -1.2)]),
         np.column_stack([np.full_like(tsq, 1.2), tsq]),
@@ -391,26 +391,62 @@ def plane_view(P, tdays, norm, geo, coasts, out):
     # 6. apsidal rays + impact
     cmap = plt.get_cmap("managua")
     for k, i in enumerate(iapo):
-        ray = np.linspace(0.0, 1.04, 80)[:, None] * P[i][None, :]
+        dirk = P[i] / r[i]
+        # full apsidal LINE: perigee stub (-1.35 R_E) through apogee
+        ray = np.linspace(-1.35, 1.04 * r[i], 300)[:, None] * dirk[None, :]
         rocc = cam.occluded(ray)
+        rin = np.linalg.norm(ray, axis=1) < 0.999      # interior to the planet
         rx, ry, rz = cam.project(ray)
-        rbad = rocc | (rz <= 0.05)          # hide interior/behind-camera parts
+        rbad = rocc | rin | (rz <= 0.05)
         ax.plot(np.where(~rbad, rx, np.nan), np.where(~rbad, ry, np.nan),
                 ls="--", lw=0.7, color=cmap(norm(tdays[i])), alpha=0.85, zorder=5)
     if cam.near_cap(P[-1])[0]:
         ix, iy, _ = cam.project(P[-1])
         ax.plot(ix, iy, marker="*", color="#d62728", ms=12, zorder=6)
 
-    # frame on the sheet + globe (outer loops run off-frame by design)
-    allx = np.concatenate([sqx, hx])
-    ally = np.concatenate([sqy, hy])
-    mx = 0.10 * (allx.max() - allx.min())
-    ax.set_xlim(allx.min() - mx, allx.max() + mx)
-    ax.set_ylim(ally.min() - mx, ally.max() + mx)
+    # --- direction arrows (semi-transparent, in true 3D, LOS-culled) ---
+    def curved_arrow(pts, nrm, color, alpha, lw, hl, hw, label, lab_dxy):
+        occ_a = cam.occluded(pts)
+        axp, ayp, azp = cam.project(pts)
+        bad = occ_a | (azp <= 0.05)
+        ax.plot(np.where(~bad, axp, np.nan), np.where(~bad, ayp, np.nan),
+                color=color, alpha=alpha, lw=lw, zorder=5,
+                solid_capstyle="round")
+        t_hat = pts[-1] - pts[-2]
+        t_hat /= np.linalg.norm(t_hat)
+        s_hat = np.cross(nrm, t_hat)
+        s_hat /= np.linalg.norm(s_hat)
+        tri = np.array([pts[-1] + hl * t_hat,
+                        pts[-1] + hw * s_hat, pts[-1] - hw * s_hat])
+        tx, ty, _ = cam.project(tri)
+        ax.fill(tx, ty, color=color, alpha=alpha, lw=0, zorder=5)
+        mx_, my_, _ = cam.project(pts[len(pts) // 2])
+        ax.annotate(label, (mx_[0], my_[0]), textcoords="offset points",
+                    xytext=lab_dxy, color=color, fontsize=8.5, style="italic")
+
+    # orbital motion: in-plane arc at 1.35 R_E, tangent = h_hat x r_hat
+    tha = np.radians(np.linspace(200.0, 258.0, 60))
+    arc_o = 1.35 * (np.cos(tha)[:, None] * e1 + np.sin(tha)[:, None] * e2)
+    curved_arrow(arc_o, hhat, "#3b6ea5", 0.40, 3.5, 0.16, 0.07,
+                 "orbital motion", (10, -14))
+    # Earth rotation: equatorial arc at 1.16 R_E on the camera side, eastward
+    eq_dir = cam.E - cam.E[2] * np.array([0.0, 0.0, 1.0])
+    phi0 = math.atan2(eq_dir[1], eq_dir[0])
+    phe = phi0 + np.radians(np.linspace(-52.0, 40.0, 80))
+    arc_e = 1.16 * np.column_stack([np.cos(phe), np.sin(phe), np.zeros_like(phe)])
+    curved_arrow(arc_e, np.array([0.0, 0.0, 1.0]), "#c08a3e", 0.30, 6.0,
+                 0.22, 0.10, "Earth rotation (≈2.1 rev during cascade)", (18, 16))
+
+    # frame on the globe neighborhood: the sheet + outer loops run off-frame
+    rh = 0.5 * (hx.max() - hx.min())
+    cxh, cyh = 0.5 * (hx.max() + hx.min()), 0.5 * (hy.max() + hy.min())
+    ax.set_xlim(cxh - 3.1 * rh, cxh + 3.1 * rh)
+    ax.set_ylim(cyh - 1.85 * rh, cyh + 2.85 * rh)
     spread = max(angs) - min(angs)
-    ax.set_title("orbital plane tipped −45° (perigee side toward viewer) — translucent sheet = "
-                 f"capture-orbit plane (1.2 R_E square)\ndashed: per-pass apsidal "
-                 f"rays (apogee-direction spread {spread:.1f}°)",
+    ax.set_title("orbital plane tipped −45° (perigee side toward viewer); translucent sheet = "
+                 f"capture-orbit plane (1.5 R_E half-size square)\n"
+                 f"dashed: apsidal line, perigee through apogee (per-pass spread {spread:.1f}°) — "
+                 "inertial frame, continents drawn at impact epoch",
                  color=INK, fontsize=10)
     for ext in ("png", "pdf"):
         fig.savefig(os.path.join(HERE, "figures", f"{out}_plane.{ext}"), dpi=180,
