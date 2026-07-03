@@ -1,5 +1,29 @@
 # PICKUP — Euler Phase 3: AF + strength calibration to the depth–diameter curve
 
+> ## RESUME HERE (2026-07-03 ~midday, master==origin/master @ 8360397; all code+docs committed)
+> **TWO RUNS IN FLIGHT (both nohup+caffeinate detached; verify with `ps aux | grep hydro` FIRST):**
+>   1. **Clean vamb=0.27 recalibration sweep** (Greg-approved): 42 jobs, 10 parallel CPU workers,
+>      started ~10:00, ~1-2 h/job -> ETA late afternoon. Progress: `python3 sweep_crater.py --list`
+>      + `tail state/sweep_vamb.log`. Rows -> state/results.csv (legacy sweep archived as
+>      results_legacy_vamb0.csv / profiles_legacy_vamb0/ / dD_settled_legacy_vamb0.csv).
+>      **WHEN DONE:** `python3 analyze_crater.py state/profiles/*.txt --csv state/dD_settled.csv`
+>      then `python3 mars_dD_oracle.py state/dD_settled.csv` = the CLEAN Garvin comparison.
+>      EARLY READ (7 rows in): friction-only craters now BARELY COLLAPSE (off_yd1M depth==transient,
+>      12 km deep at a=3000) -> the complex branch needs REAL collapse physics = the AF (Tfrac,Efrac)
+>      sweep is now the load-bearing calibration step. Watch: af_yd1M a750 came out DEEPER than
+>      off (4.35 vs 3.30 km) = the known Tfrac=30 rebound-damping over-deepening; AF tuning likely
+>      needs LONGER decay times (late slump, not rebound damping).
+>   2. **E22 20 km/s cppr20 oblique rung** (state/pz45_rcfl100/, out_u20000_c20.txt empty = running):
+>      healthy but slow (dt pathology partially survives rcfl=100 at this corner; ~21-26% CPU duty,
+>      ~180k steps by 2026-07-03 10:00). Greg: DO NOT kill midday; decision point = 2026-07-04
+>      morning — if still running, kill + either stand on cppr16 (E22 already PASSES both velocities,
+>      slopes converged; see PICKUP-pierazzo.md verdict table) or spot-check rcfl=500 vs the
+>      cppr12/16 slope trend.
+> Context for both: the 2026-07-03 voidzero block below + PICKUP-pierazzo.md + memory
+> [[deorbit-euler-code]]. Gates all green (39-40 PASS) @ 8360397. After the Garvin comparison:
+> design the AF sweep grid (SETTINGS in sweep_crater.py; Tfrac ladder e.g. 60/100/200 x Efrac
+> 0.003/0.01/0.03 at Y_d0 5MPa on 3-4 anchor sizes) and grind it the same way.
+
 > ## SESSION UPDATE 2026-07-03 — VOIDZERO REFILL ARTIFACT CONFIRMED: the complex-branch
 > ## over-collapse was largely NUMERICAL. RECALIBRATION REQUIRED before trusting the d-D curve.
 > The 2026-07-02 prater work exposed that `void_cells` (CPU, hydro_cpu.cpp:230) / `voidzero` (GPU)
