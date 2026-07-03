@@ -47,11 +47,23 @@ for yd in (1.0e6, 5.0e6, 1.0e7):
     SETTINGS.append((f"off_yd{tag}", 0.0,  0.0,  yd))    # AF off, friction only
     SETTINGS.append((f"af_yd{tag}",  30.0, 0.01, yd))    # AF on (1x viscosity), + friction
 
+# --- Phase-3b: AF (Tfrac, Efrac) tuning ladder on the clean vamb base (2026-07-03) ---
+# Early vamb=0.27 read: friction-only barely collapses (complex branch 2-4x too deep vs Garvin) and
+# Tfrac=30 OVER-deepens (rebound damping) -> AF must supply the LATE SLUMP = longer decay times.
+# Ladder at Y_d0=5MPa on 3 complex anchors + the a=300 simple-branch guard (AF must not wreck it).
+# Efrac=0.03 at a=300 is the slow corner (viscous dt ~ a/(Efrac*cppr^2); ETA=7.3e7 = 3x the known-good
+# 2.4e7, still well under the pathological 2.4e8).
+AF_SIZES = [300, 1000, 2000, 3000]
+AF_SETTINGS = [(f"af5M_T{int(tf)}_E{int(ef*1000)}", tf, ef, 5.0e6)
+               for tf in (60.0, 100.0, 200.0) for ef in (0.003, 0.01, 0.03)]
+
 FIELDS = ["af_label", "a_m", "Tfrac", "Efrac", "Yd0_Pa", "TDEC_s", "ETA_Pas",
           "D_app_m", "depth_m", "transient_m", "dD", "profile", "vamb"]
 
 def jobs():
-    for (label, Tfrac, Efrac, Yd0), a in itertools.product(SETTINGS, SIZES):
+    for (label, Tfrac, Efrac, Yd0), a in itertools.chain(
+            itertools.product(SETTINGS, SIZES),
+            itertools.product(AF_SETTINGS, AF_SIZES)):
         TDEC = Tfrac * a / CS if Tfrac > 0 else 0.0
         ETA  = Efrac * RHO * CS * a if Efrac > 0 else 0.0
         yield label, a, Tfrac, Efrac, Yd0, TDEC, ETA
@@ -102,7 +114,7 @@ def pending():
 def main():
     os.makedirs(STATE, exist_ok=True)
     if "--list" in sys.argv:
-        p = pending(); tot = len(SETTINGS) * len(SIZES)
+        p = pending(); tot = len(SETTINGS) * len(SIZES) + len(AF_SETTINGS) * len(AF_SIZES)
         print(f"jobs: {tot} total, {tot-len(p)} done, {len(p)} pending"); return
     K = int(sys.argv[sys.argv.index("--jobs") + 1]) if "--jobs" in sys.argv else 1   # max concurrent runs
     inc = int(sys.argv[sys.argv.index("--increment") + 1]) if "--increment" in sys.argv else None
