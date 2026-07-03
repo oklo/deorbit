@@ -85,7 +85,7 @@ def main():
     fpa = np.clip(fpa, 0.3, 70.0)
     order = np.argsort(fpa)
     sc = ax.scatter(lo[order], la[order], s=2.25, c=fpa[order],
-                    cmap="viridis", norm=LogNorm(vmin=0.3, vmax=70.0),
+                    cmap="managua", norm=LogNorm(vmin=0.3, vmax=70.0),
                     alpha=0.85, lw=0, zorder=5)
     cax = fig.add_axes([0.055, 0.115, 0.20, 0.022])
     cb = fig.colorbar(sc, cax=cax, orientation="horizontal")
