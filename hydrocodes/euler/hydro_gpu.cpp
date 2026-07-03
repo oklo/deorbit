@@ -60,11 +60,12 @@ int main(int argc,char**argv){
     float etaaf=0.0f;   // AF Newtonian viscosity coefficient (Pa.s); 0 = AF viscosity off
     int axisym=0;   // cylindrical (r,z) axisymmetric geometry (x->r, axis at r=0); 0 = Cartesian
     // Phase-3 crater CLI (mirrors hydro_cpu crater): a U TDEC ETA g cppr tend Rfac Zfac profile rock Yd0
-    double cr_a=500,cr_U=12000,cr_TDEC=0,cr_ETA=0,cr_g=3.71,cr_cppr=5,cr_targ=-1,cr_Rfac=30,cr_Zfac=22,cr_Yd0=0; int cr_rock=1; double cr_zsurf=0; string cr_prof="crater_profile.txt";
+    double cr_a=500,cr_U=12000,cr_TDEC=0,cr_ETA=0,cr_g=3.71,cr_cppr=5,cr_targ=-1,cr_Rfac=30,cr_Zfac=22,cr_Yd0=0,cr_vamb=0; int cr_rock=1; double cr_zsurf=0; string cr_prof="crater_profile.txt";
     if(mode=="crater"){
         if(argc>2)cr_a=atof(argv[2]); if(argc>3)cr_U=atof(argv[3]); if(argc>4)cr_TDEC=atof(argv[4]); if(argc>5)cr_ETA=atof(argv[5]);
         if(argc>6)cr_g=atof(argv[6]); if(argc>7)cr_cppr=atof(argv[7]); if(argc>8)cr_targ=atof(argv[8]); if(argc>9)cr_Rfac=atof(argv[9]);
         if(argc>10)cr_Zfac=atof(argv[10]); if(argc>11)cr_prof=argv[11]; if(argc>12)cr_rock=atoi(argv[12]); if(argc>13)cr_Yd0=atof(argv[13]);
+        if(argc>14)cr_vamb=atof(argv[14]);   // arg14>0 (e.g. 0.27): void cells reset to AMBIENT, not the lithostatic reference (mirrors hydro_cpu VOID_AMB; the 2026-07-03 refill-artifact fix); 0 = legacy
     }
     // Phase-3 Pierazzo-2008 Al peak-pressure benchmark CLI (scale-up): cppr reach(r/a max depth) half(lateral halfwidth in a) U tend
     double pz_cppr=10,pz_reach=7,pz_half=4,pz_U=10000,pz_tend=-1,pz_rcfl=0;   // defaults reproduce the M5 gate grid (80x80x100, dx=0.1, zsurf=7); rcfl=0 -> M5 gate untouched
@@ -141,6 +142,7 @@ int main(int argc,char**argv){
     auto bD=buf(n*4),bdD=buf(n*4),bD1=buf(n*4);   // damage, rate, RK temp
     auto bPmax=buf(n*4);   // peak pressure each cell experiences (M5b Pierazzo decay)
     auto bRR0=buf(n*4),bRP0=buf(n*4);   // route 1: frozen hydrostatic reference (density, pressure)
+    auto bVR0=buf(n*4);   // VOID-reset reference for voidzero: = RR0, except crater vamb>0 turns below-surface (solid) entries into AMBIENT (the 2026-07-03 refill-artifact fix; RR0 itself must stay lithostatic for WB/pin/sponge)
     auto brc=buf(n*4),brc1=buf(n*4),bdrc=buf(n*4);   // M-tag: passive material tracer rc=rho*c (+ RK temp, derivative)
     auto bvib=buf(n*4),baf=buf(n*4);   // AF: vibrational velocity + fluidization fraction (bPmax reused as the shock-arrival detector)
     auto bvib1=buf(n*4),bdvib=buf(n*4);   // AF: vib RK predictor temp + advection rate (item 6)
@@ -188,6 +190,7 @@ int main(int argc,char**argv){
     float*RR0=(float*)bRR0->contents(),*RP0=(float*)bRP0->contents();
     if(wb){ for(uint32_t c=0;c<n;c++){ RR0[c]=r[c]; float p=tillP(r[c],0.0f,MG); RP0[c]=p<0?0:p; } }   // route 1: freeze IC as the hydrostatic reference
     if(mode=="prater"||((mode=="pierazzo"||mode=="pierazzo2d")&&rcfl>0)){ for(uint32_t c=0;c<n;c++){ RR0[c]=0.27f; RP0[c]=0.0f; } }   // void reference = AMBIENT everywhere: an IC reference would REFILL evacuated below-surface cells with rho0=2700 (tested: crater floor creeps back up); rho=0 (unset RR0) NaNs FP32 in ~20-600 steps
+    { float*VR0=(float*)bVR0->contents(); for(uint32_t c=0;c<n;c++) VR0[c]=(mode=="crater"&&cr_vamb>0&&RR0[c]>1350.0f)?(float)cr_vamb:RR0[c]; }   // voidzero reads VR0 (identity copy unless crater vamb>0)
     if(mode=="crater"){ double zc=cr_zsurf+cr_a;   // impactor sphere on the axis, tangent to the surface, moving down (added after the WB reference so the reference is impactor-free)
         for(int i=0;i<nx;i++)for(int k=0;k<nz;k++){ double rr=(i+0.5)*dx, z=(k+0.5)*dx; uint32_t c=i*nz+k;
             if(sqrt(rr*rr+(z-zc)*(z-zc))<cr_a){ r[c]=(float)rho0; mw[c]=(float)(-rho0*cr_U); E[c]=(float)(0.5*rho0*cr_U*cr_U); } } }
@@ -304,7 +307,7 @@ int main(int argc,char**argv){
         if(strn){ run(Prk1c,n,{bvib,bdvib,bvib1},dtA);   // vib predictor: vib1 = vib + dt*dvib (reuses the generic scalar-RK kernel)
                   run(Prk1s,n,{bxx,byy,bzz,bxy,bxz,byz,dxx,dyy,dzz,dxy,dxz,dyz,sxx1,syy1,szz1,sxy1,sxz1,syz1,bD,bdD,bD1},dtA);
                   run(Pvm,n,{sxx1,syy1,szz1,sxy1,sxz1,syz1,bD1,baf,br1,bmu1,bmv1,bmw1,bE1},vmA); }   // predictor state for ROCK pressure
-        if(rcfl>0) run(Pvoid,n,{bmu1,bmv1,bmw1,br1,bE1,sxx1,syy1,szz1,sxy1,sxz1,syz1,bRR0},{{&rcfl,4},{&n,4}});   // clean predictor void cells before strength reads near-vacuum velocity/stress
+        if(rcfl>0) run(Pvoid,n,{bmu1,bmv1,bmw1,br1,bE1,sxx1,syy1,szz1,sxy1,sxz1,syz1,bVR0},{{&rcfl,4},{&n,4}});   // clean predictor void cells before strength reads near-vacuum velocity/stress
         run(Plop,n,{br1,bmu1,bmv1,bmw1,bE1,bdr,bdmu,bdmv,bdmw,bdE,bRR0,bRP0,brc1,bdrc},lopA);   // predictor reads rc1
         if(strn) run(Pstr,n,{br1,bmu1,bmv1,bmw1,bE1,sxx1,syy1,szz1,sxy1,sxz1,syz1,bdmu,bdmv,bdmw,bdE,dxx,dyy,dzz,dxy,dxz,dyz,bD1,bdD,baf,bvib1,bdvib},strA);   // corrector reads predictor state (vib1; af held through the step)
         run(Prk2,n,{br,bmu,bmv,bmw,bE,br1,bmu1,bmv1,bmw1,bE1,bdr,bdmu,bdmv,bdmw,bdE},dtA);
@@ -315,7 +318,7 @@ int main(int argc,char**argv){
                   run(Pvm,n,{bxx,byy,bzz,bxy,bxz,byz,bD,baf,br,bmu,bmv,bmw,bE},vmA); }   // corrector state for ROCK pressure
         if(mode=="pierazzo"||mode=="pierazzo2d") run(Ppm,n,{br,bmu,bmv,bmw,bE,bPmax},{{&MG,sizeof(GMat)},{&n,4}});
         if(dampf<1.0f) run(Pdamp,n,{bmu,bmv,bmw},{{&dampf,4},{&n,4}});   // route 1: quench FP32-noise velocities
-        if(rcfl>0) run(Pvoid,n,{bmu,bmv,bmw,br,bE,bxx,byy,bzz,bxy,bxz,byz,bRR0},{{&rcfl,4},{&n,4}});   // route 1: void cells = passive vacuum (reset to reference)
+        if(rcfl>0) run(Pvoid,n,{bmu,bmv,bmw,br,bE,bxx,byy,bzz,bxy,bxz,byz,bVR0},{{&rcfl,4},{&n,4}});   // route 1: void cells = passive vacuum (reset to the VOID reference: = RR0 unless crater vamb>0)
         if(mode=="substrate"||mode=="crater"){ for(int i=0;i<nx;i++)for(int kk=0;kk<2;kk++){int c=i*nz+kk;r[c]=RR0[c];mu[c]=mv[c]=mw[c]=0;E[c]=0;} }  // pin deep far-field floor to reference
         if(mode=="crater"){ int isp=(int)(0.85*nx);   // far-field radial SPONGE (mirrors CPU): relax the outer 15% toward the WB reference -> absorbs the boundary-edge sink + outgoing waves
             for(int i=isp;i<nx;i++){ float xi=(float)(i-isp)/max(1,nx-1-isp), sp=xi*xi;
