@@ -26,8 +26,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, "src"))
 CATALOG = os.path.join(HERE, "state", "sitemc", "catalog.csv")
 
-INK = "#e8e4d8"
-BG = "#101418"
+INK = "#1a1d21"
+BG = "#ffffff"
 
 
 def load_impacts():
@@ -70,11 +70,11 @@ def main():
     fig = plt.figure(figsize=(13.5, 6.4), facecolor=BG)
     ax = fig.add_axes([0.02, 0.05, 0.76, 0.88], projection="hammer", facecolor=BG)
     ax.set_xticklabels([]); ax.set_yticklabels([])
-    ax.grid(alpha=0.12, color=INK, lw=0.4)
+    ax.grid(alpha=0.35, color="#9aa2ab", lw=0.4)
     land = np.ma.masked_less(sub, 0.0)
-    ax.pcolormesh(LO, LA, land, cmap="Greys_r", vmin=-4000, vmax=9000,
-                  rasterized=True, alpha=0.55, shading="auto")
-    ax.contour(LO, LA, sub, levels=[0.0], colors="#4a5560", linewidths=0.35)
+    ax.pcolormesh(LO, LA, land, cmap="Greys", vmin=-1500, vmax=6500,
+                  rasterized=True, alpha=0.95, shading="auto")
+    ax.contour(LO, LA, sub, levels=[0.0], colors="#8a939c", linewidths=0.35)
 
     # dots colored by impact obliquity |fpa| (log scale: 0.3-70 deg spans the
     # grazing cluster and the Moon-pumped steep tail); steepest drawn on top
@@ -84,7 +84,7 @@ def main():
     fpa = np.abs([float(r["fpa_deg"]) for r in de])
     fpa = np.clip(fpa, 0.3, 70.0)
     order = np.argsort(fpa)
-    sc = ax.scatter(lo[order], la[order], s=9, c=fpa[order],
+    sc = ax.scatter(lo[order], la[order], s=2.25, c=fpa[order],
                     cmap="viridis", norm=LogNorm(vmin=0.3, vmax=70.0),
                     alpha=0.85, lw=0, zorder=5)
     cax = fig.add_axes([0.055, 0.115, 0.20, 0.022])
@@ -93,11 +93,11 @@ def main():
     cb.set_ticks([0.3, 1, 3, 10, 30, 70])
     cb.set_ticklabels(["0.3", "1", "3", "10", "30", "70"])
     cb.ax.tick_params(colors=INK, labelsize=7)
-    cb.outline.set_edgecolor("#3a4148")
+    cb.outline.set_edgecolor("#c3c9cf")
 
     from deorbit.site_selection import PEAKS
     plo = np.radians([p[2] for p in PEAKS]); pla = np.radians([p[1] for p in PEAKS])
-    ax.scatter(plo, pla, marker="^", s=26, c="#5ad7ff", lw=0.4,
+    ax.scatter(plo, pla, marker="^", s=26, c="#d62728", lw=0.4,
                edgecolors=BG, label="named summits", zorder=6)
 
     ax.legend(loc="lower right", fontsize=8, facecolor=BG, edgecolor="none",
@@ -109,16 +109,16 @@ def main():
     axh = fig.add_axes([0.82, 0.13, 0.15, 0.72], facecolor=BG)
     la_all = [float(r["lat_deg"]) for r in de]
     bins = np.arange(-90, 91, 5)
-    axh.hist(la_all, bins=bins, orientation="horizontal", color="#ffd76a", alpha=0.85)
+    axh.hist(la_all, bins=bins, orientation="horizontal", color="#d4a017", alpha=0.9)
     null = np.cos(np.radians((bins[:-1] + bins[1:]) / 2.0))
     null *= len(la_all) * 5.0 / np.degrees(2.0)   # cos-lat area null, same norm
-    axh.plot(null, (bins[:-1] + bins[1:]) / 2.0, color="#5ad7ff", lw=1.0,
+    axh.plot(null, (bins[:-1] + bins[1:]) / 2.0, color="#0b7285", lw=1.2,
              label="area null")
     axh.set_ylim(-90, 90)
     axh.set_yticks([-60, -30, 0, 30, 60])
     axh.tick_params(colors=INK, labelsize=7)
     for s in axh.spines.values():
-        s.set_color("#3a4148")
+        s.set_color("#c3c9cf")
     axh.set_title("impact latitude", color=INK, fontsize=9)
     axh.legend(fontsize=7, facecolor=BG, edgecolor="none", labelcolor=INK)
 
