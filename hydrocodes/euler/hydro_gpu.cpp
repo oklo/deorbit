@@ -102,7 +102,8 @@ int main(int argc,char**argv){
         if(pz_ang>0){ if(pz_hdn<0)pz_hdn=pz_reach; nx=(int)((pz_hup+pz_hdn)/dxp+0.5); ny=(int)(2*pz_half/dxp+0.5); }   // oblique: asymmetric x (impact point at x=hup), half = y-halfwidth only
         else { nx=ny=(int)(2*pz_half/dxp+0.5); }
         nz=(int)((pz_reach+3.0)/dxp+0.5); Ldom=nx*dxp;
-        tend=(pz_tend>0?pz_tend:pz_reach/5833.0*(pz_reach>8?1.35:1.0)); CFL=0.3; emode=1; rcfl=(float)pz_rcfl; }   // auto tend: front ~5.8km/s + 35% margin for the decelerating deep front (default reach=7 -> 1.2e-3, = M5 gate)
+        tend=(pz_tend>0?pz_tend:pz_reach/5833.0*(pz_reach>8?1.35:1.0)); CFL=0.3; emode=1; rcfl=(float)pz_rcfl;   // auto tend: front ~5.8km/s + 35% margin for the decelerating deep front (default reach=7 -> 1.2e-3, = M5 gate)
+        if(pz_rcfl>0) rvac=100.0f; }   // rcfl>0 = the prater-validated free-surface treatment (vacuum flux + voidzero-to-AMBIENT): kills the ambient tiny-dt pathology + the 20 km/s cppr>=16 FP32 NaN. The old "rcfl destabilizes pierazzo" note predates the RR0-ambient fix (voidzero was resetting to rho=0).
     else if(mode=="pierazzo2d"){ double dxp=1.0/p2_cppr; nx=(int)(p2_reach/dxp+0.5); ny=1; nz=(int)((p2_reach+3.0)/dxp+0.5); Ldom=nx*dxp;   // Pierazzo-2008 Al benchmark, axisym (r,z): radial halfwidth = reach (half>=reach by construction)
         double c0al=sqrt(7.52e10/2700.0); tend=(p2_tend>0?p2_tend:1.3*p2_reach/c0al); CFL=0.3; emode=1; axisym=1; }   // front >= Al bulk speed c0 -> 1.3x covers the decelerating tail (mirrors hydro_cpu)
     else if(mode=="prater"){ double dxp=pr_a/pr_cppr; nx=(int)(pr_Rfac*pr_a/dxp+0.5); ny=1; nz=(int)((pr_Rfac+3.0)*pr_a/dxp+0.5); Ldom=nx*dxp;   // Prater-1970 Al-on-Al crater growth (validation #2), axisym; mirrors hydro_cpu prater
@@ -186,7 +187,7 @@ int main(int argc,char**argv){
     int NX=nx,NY=ny,NZ=nz;
     float*RR0=(float*)bRR0->contents(),*RP0=(float*)bRP0->contents();
     if(wb){ for(uint32_t c=0;c<n;c++){ RR0[c]=r[c]; float p=tillP(r[c],0.0f,MG); RP0[c]=p<0?0:p; } }   // route 1: freeze IC as the hydrostatic reference
-    if(mode=="prater"){ for(uint32_t c=0;c<n;c++){ RR0[c]=0.27f; RP0[c]=0.0f; } }   // prater void reference = AMBIENT everywhere: an IC reference would REFILL evacuated below-surface cells with rho0=2700 (tested: crater floor creeps back up); rho=0 reference NaNs FP32
+    if(mode=="prater"||((mode=="pierazzo"||mode=="pierazzo2d")&&rcfl>0)){ for(uint32_t c=0;c<n;c++){ RR0[c]=0.27f; RP0[c]=0.0f; } }   // void reference = AMBIENT everywhere: an IC reference would REFILL evacuated below-surface cells with rho0=2700 (tested: crater floor creeps back up); rho=0 (unset RR0) NaNs FP32 in ~20-600 steps
     if(mode=="crater"){ double zc=cr_zsurf+cr_a;   // impactor sphere on the axis, tangent to the surface, moving down (added after the WB reference so the reference is impactor-free)
         for(int i=0;i<nx;i++)for(int k=0;k<nz;k++){ double rr=(i+0.5)*dx, z=(k+0.5)*dx; uint32_t c=i*nz+k;
             if(sqrt(rr*rr+(z-zc)*(z-zc))<cr_a){ r[c]=(float)rho0; mw[c]=(float)(-rho0*cr_U); E[c]=(float)(0.5*rho0*cr_U*cr_U); } } }

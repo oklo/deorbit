@@ -20,19 +20,31 @@
 > 3. Crater R/D measurement: use the CONTIGUOUS-from-bottom surface profile (flying ejecta/jet
 >    debris ignored); radius = profile recovers to within 0.15a of the original surface plane,
 >    scanning OUT FROM THE FLOOR. Single-row density scans are fragile (surface dip flicker).
-> **E22 45-deg oblique**: mode + verified oracle committed (c83cf54); production ladder
-> (cppr 12/16/20 x 5/20 km/s) detached -> state/pz45/ladder45.log. cppr8+12 scouting: 20 km/s
-> already IN the published envelope; 5 km/s slightly above, converging down (cppr12: n0 1.167
-> vs [0.90,1.226], n45 1.276 vs [0.87,1.318] — both IN at cppr12 already).
+> **E22 45-deg oblique VERDICT (rcfl ladder, state/pz45_rcfl100/): BOTH velocities PASS the
+> published envelope, converged onto the means.**
+> | n | c12 | c16 | c20 | paper mean | range |
+> |---|---|---|---|---|---|
+> | 5 km/s 0° | 1.116 | 1.051 | 1.018 | 1.1±0.1 | [0.90,1.226] |
+> | 5 km/s 45° | 1.244 | 1.207 | 1.182 | 1.1±0.1 | [0.87,1.318] |
+> | 20 km/s 0° | 1.631 | 1.645 | (in flight) | 1.5±0.3 | [1.06,1.95] |
+> | 20 km/s 45° | 2.222 | 2.264 | (in flight) | 2.1±0.6 | [1.11,2.57] |
+> Qualitative: row-max 0.7-1.7 R_pr downrange (paper ~1); 20 km/s ordering n0 < n45 < n_vertical ✓.
+> Legacy ambient-live rungs (state/pz45/) agree ≲4% = two-treatment robustness check.
+> **THE rcfl FIX (this session, hydro_gpu.cpp): pierazzo rcfl>0 now = prater-style treatment
+> (voidzero-to-AMBIENT + vacuum flux). The old "rcfl destabilizes pierazzo" note was the RR0=0
+> bug. ~200x fewer steps (oblique c12 20km/s: 262k -> 1.1k); REQUIRED at 20 km/s cppr>=16 (legacy
+> NaNs at step ~600). M5 default (rcfl=0) bit-identical; M5 grid w/ rcfl: 92.8% core, n 1.257 vs
+> 1.262. CAVEAT: at 20 km/s cppr20 the dt pathology PARTIALLY survives rcfl=100 (run started
+> 17:49, still grinding at 23:00, ~14h est) — cells in rho [100,1350] still throttle; if the
+> overnight run hasn't finished by midday, kill it and either stand on cppr16 (slopes converged)
+> or test rcfl=500 (validate against the c12/c16 slope trend before trusting).**
 
 > ## RESUME HERE (2026-07-02 ~15:00, master==origin/master @ 2a6ea95; all work committed+pushed)
 > **The head-to-head is DONE and PASSED** — read the SESSION UPDATE block below for the verdict table.
 > TWO RUNS STILL IN FLIGHT (both nohup+caffeinate detached, survive session/clear):
->   1. **Batch-3 half24** (3D boundary confirm, ETA ~17:30): `tail -5 state/pierazzo/ladder.log`.
->      Expected: n_far == 1.537 (same as half10/half16). If so: one-line confirm in this file + in
->      [[deorbit-euler-code]]; the 3D 10 km/s study is then fully closed (internal study, not the benchmark).
->      If it DIFFERS: the deep slope is half-sensitive after all -> re-open the boundary question (unlikely;
->      pierazzo2d reach 12 vs 16 was bit-identical).
+>   1. **Batch-3 half24: DONE + CONFIRMED (19:25).** n_far=1.537, n_near=1.262, core 92.8% —
+>      IDENTICAL across half 10/16/24. The 3D deep-slope flattening is domain-INDEPENDENT;
+>      the 3D 10 km/s internal study is fully CLOSED (E17 row in validation_matrix.md).
 >   2. **GPU 20 km/s cross-check: DONE + PASS (14:59).** GPU P_cc=380.5 GPa n=2.2796 == CPU cppr20
 >      (380.5 / 2.280) to 4 sig figs. E16 GPU claim complete at BOTH velocities.
 > **THEN the next Methods anchor (Greg-approved ladder): the 45° OBLIQUE Al benchmark** — 3D, U=5+20 km/s,
