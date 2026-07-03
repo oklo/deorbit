@@ -1,5 +1,30 @@
 # PICKUP — Euler Phase 3: AF + strength calibration to the depth–diameter curve
 
+> ## SESSION UPDATE 2026-07-03 — VOIDZERO REFILL ARTIFACT CONFIRMED: the complex-branch
+> ## over-collapse was largely NUMERICAL. RECALIBRATION REQUIRED before trusting the d-D curve.
+> The 2026-07-02 prater work exposed that `void_cells` (CPU, hydro_cpu.cpp:230) / `voidzero` (GPU)
+> reset evacuated (rho<100) cells to REF_R0 = the LITHOSTATIC reference — i.e. a below-surface void
+> cell gets REFILLED with solid rock. Instrumented (VZ_N/VZ_DM counters) + added crater arg14
+> `vamb` (VOID_AMB: >0 = reset voids to that AMBIENT density instead; default 0 = legacy).
+> **A/B (off_yd5M config: U=12, g=3.71, cppr5, ROCK, Y_d0=5MPa, AF off; analyze_crater.py numbers,
+> same analyzer as the sweep — legacy arms REPRODUCE the sweep exactly):**
+> | run | d/D legacy | d/D ambient(0.27) | depth L->A (km) | legacy refills |
+> |---|---|---|---|---|
+> | a=300 | 0.186 (==sweep) | 0.222 | 1.08 -> 1.32 | 437 |
+> | a=3000 | 0.018 (==sweep) | 0.165 | 0.80 -> 11.40 | 627 |
+> MECHANISM at a=3000: transient depth ~12 km in BOTH arms; under legacy the floor comes back UP
+> to 0.8 km — the 627 refill events inject rock of the same ORDER as the whole crater bowl mass
+> (each event converts a near-empty 600 m cell at r~10-20 km to rho 2700; bowl ~1.6e16 kg) exactly
+> at the floor/walls during collapse. Ambient arms also SETTLE (legacy arms hit the cap) — the
+> refill was fighting the settling detector too. Simple branch mildly affected (+19% depth at a=300).
+> **CONSEQUENCES:** (1) the published-quality claim "complex branch falls too steeply" was the
+> artifact, not physics; (2) with ambient voids the complex branch now UNDER-collapses vs Garvin
+> (11.4 km deep at D_app~69 km vs Garvin ~2.9 km) -> Y_d0/AF recalibration needed (expected — the
+> old calibration was tuned ON TOP of the artifact); (3) the GPU `voidzero` needs the mirrored
+> vamb option before any GPU crater runs (CPU-only switch so far).
+> **NEXT (supersedes step 1 below):** re-run the sweep with vamb=0.27 (edit sweep_crater.py to pass
+> arg14) -> re-do the Garvin comparison -> THEN the AF (Tfrac,Efrac) sweep on the clean base.
+
 > ## RESUME HERE (as of 2026-07-01, master==origin/master @ 6bea00e)
 > The AF crux is FIXED and the d-D pipeline WORKS end-to-end. We have the FIRST COMPLETE simple+complex
 > d/D-vs-D curve (sweep 42/42, sponge fix) vs the Garvin-2003 Mars oracle. Read the two "SESSION UPDATE"

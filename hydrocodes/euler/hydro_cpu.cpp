@@ -227,8 +227,12 @@ static void set_ref(const Grid&g){ int n=g.nx*g.ny*g.nz; REF_R0.assign(n,0); REF
     for(int c=0;c<n;c++){ REF_R0[c]=g.r[c]; REF_P0[c]=Pcell(g,c); } }
 // route 1: void cells = passive vacuum (reset to reference). Also kills the near-vacuum velocity (mu/rho_tiny) that
 // would otherwise feed spurious deviatoric stress into the strength solver at the free surface.
+static double VOID_AMB = 0.0;  // >0: void cells reset to this AMBIENT density instead of REF_R0 (a lithostatic reference REFILLS evacuated below-surface cells with solid rock -- the 2026-07-02 prater finding); 0 = legacy
+static long VZ_N=0; static double VZ_DM=0;  // instrumentation: count of SOLID-reference void resets (REF_R0>half-density = below-surface refill under legacy) + the rho they inject(ed)
 static void void_cells(Grid&g){ if(RHO_CFL<=0)return; bool wb=!REF_R0.empty(); int N=g.r.size();
-    for(int c=0;c<N;c++) if(g.r[c]<RHO_CFL){ g.mu[c]=g.mv[c]=g.mw[c]=0; if(wb){g.r[c]=REF_R0[c];g.E[c]=0;g.Sxx[c]=g.Syy[c]=g.Szz[c]=g.Sxy[c]=g.Sxz[c]=g.Syz[c]=0;g.rc[c]=0;} } }
+    for(int c=0;c<N;c++) if(g.r[c]<RHO_CFL){ g.mu[c]=g.mv[c]=g.mw[c]=0; if(wb){
+        if(REF_R0[c]>1350.0){VZ_N++;VZ_DM+=REF_R0[c]-g.r[c];}   // a below-surface (solid-reference) void: legacy refills it with rock
+        g.r[c]=(VOID_AMB>0?VOID_AMB:REF_R0[c]);g.E[c]=0;g.Sxx[c]=g.Syy[c]=g.Szz[c]=g.Sxy[c]=g.Sxz[c]=g.Syz[c]=0;g.rc[c]=0;} } }
 static double maxspeed(const Grid&g){ double s=1e-30; int n=g.r.size(); double G=MAT.G;
     for(int c=0;c<n;c++){ if(g.r[c]<RHO_CFL) continue; double p,cs; eos_pc(g.r[c],eint(g,c),p,cs); double cel=sqrt(cs*cs+ (G>0?(4.0/3.0)*G/g.r[c]:0.0));
         double v=sqrt(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c]; s=max(s,v+cel);} return s; }
@@ -410,6 +414,7 @@ int main(int argc,char**argv){
         C_ACT=(TDEC>0?0.5:0.0); P_COH=1.0e6; P_ACT=(TDEC>0?1.0e8:0.0);   // shock-gate AF activation (>100 MPa jump): the impact shock fluidizes, slow collapse flow does NOT re-fluidize Eulerian wall cells
         ROCK=(argc>12?atoi(argv[12]):1);   // pressure-dependent friction yield (default on); arg 0 = old cohesion-only von Mises for A/B
         if(argc>13) Y_D0=atof(argv[13]);   // damaged residual cohesion (Pa); the key knob to arrest small-crater creep
+        if(argc>14) VOID_AMB=atof(argv[14]);   // arg14>0 (e.g. 0.27): void cells reset to AMBIENT, not the lithostatic reference (A/B test of the below-surface refill artifact); default 0 = legacy
         int Nr=(int)(Rfac*a/dx+0.5), Nz=(int)(Zfac*a/dx+0.5);
         double Zdom=Nz*dx, above=5.0*a, zsurf=Zdom-above;   // free surface; 'above' = room for impactor + ejecta
         Grid g(Nr,1,Nz,dx);
@@ -458,6 +463,9 @@ int main(int argc,char**argv){
         printf("  settling: %s at t=%.1fs (t_auto=%.1fs cap=%.1fs tolM=%.1f%% Wwin=%.1fs final max|v|=%.1f m/s)\n",(t_settled>0?"SETTLED":(fixed?"FIXED-RUN":"NOT-SETTLED@cap")),(t_settled>0?t_settled:t),t_auto,tend,tolM*100,Wwin,vmx);
         printf("  D_app=%.2f km  depth(below datum)=%.2f km  transient depth=%.2f km  rim uplift=%.2f km @ r=%.2f km  d/D=%.3f\n",Dapp/1e3,dapp/1e3,dmaxT/1e3,(zrim-z0)/1e3,rrim/1e3,dD);
         printf("  stability: max|v|=%.1f m/s  maxP=%.2e Pa  %s\n",vmx,pmx,finite?"FINITE":"NONFINITE-BLOWUP");
+        { double mcell=VZ_DM*2*3.14159265358979*0.5*dx*dx*dx;   // injected mass (kg, full 2pi; r~0.5dx underestimates outer cells -- order-of-magnitude only)
+          double mtr=2700.0*4.18879*a*a*a;   // impactor mass scale for context
+          printf("  voidzero: below-surface refills=%ld  injected rho-sum=%.3e (order ~%.2e kg vs impactor %.2e kg)  mode=%s\n",VZ_N,VZ_DM,mcell,mtr,VOID_AMB>0?"AMBIENT":"LEGACY-REF"); }
         printf("RESULT %.1f %.4f %.4f %.4f %.4f\n",a,Dapp,dapp,dmaxT,dD);   // machine-readable (preliminary, in-loop): a D_app depth transient d/D (metres)
         const char*prof=argc>11?argv[11]:"crater_profile.txt";   // dump the final surface profile z_s(r)-z0 for ROBUST offline depth-diameter measurement
         FILE*pf=fopen(prof,"w"); if(pf){ fprintf(pf,"# r_m  zsurf-z0_m   (a=%.0f U=%.0f g=%.2f TDEC=%.3g ETA=%.3g dx=%.0f z0=%.1f)\n",a,U,GZ,TDEC,ETA_AF,dx,z0);

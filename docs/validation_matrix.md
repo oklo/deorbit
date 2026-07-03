@@ -42,10 +42,15 @@ All gates currently PASS on both codes, GPU==CPU.
 
 **Calibration (separate from validation):** Mars d/D-vs-D curve vs Garvin et al. 2003 MOLA fits
 (`mars_dD_oracle.py`): first complete simple+complex curve done (42-run settled sweep, sponge fix);
-Y_d0=5-10 MPa brackets the level; d/D decrease with D reproduced. Caveats to close before quoting:
-big-a not settled at cap (complex branch least trusted); ~20% single-run chaotic scatter (needs
-repeat-run averaging); cppr 8/12 convergence pending. W&I-2003 comparison = the intended
-calibration narrative for AF params (Tfrac, Efrac).
+Y_d0=5-10 MPa brackets the level; d/D decrease with D reproduced. **INVALIDATED IN PART 2026-07-03:
+the voidzero below-surface refill artifact (void cells reset to the lithostatic reference) was
+driving the complex-branch over-collapse — A/B at a=3000 (off_yd5M): d/D 0.018 (legacy, ==sweep)
+vs 0.165 (ambient voids), the refills injecting ~a bowl's worth of rock at the floor during
+collapse. Simple branch mildly affected (a=300: 0.186 vs 0.222). The sweep must be re-run with
+`vamb=0.27` (crater arg14) and Y_d0/AF recalibrated on the clean base (details:
+hydrocodes/euler/PICKUP-phase3.md 2026-07-03 block).** Other caveats stand: ~20% single-run
+chaotic scatter (needs repeat-run averaging); cppr 8/12 convergence pending. W&I-2003 comparison
+= the intended calibration narrative for AF params (Tfrac, Efrac).
 
 **Known Euler gaps (state in the paper):** Eulerian tracer advection is diffusive (partition yes,
 fine fragmentation no — that stays SPH's job); no ANEOS (Tillotson only: basalt/Al proxies, no
