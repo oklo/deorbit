@@ -2,6 +2,22 @@
 
 Paste the block below into a fresh Claude Code session in this directory to resume.
 
+> ## RESUME HERE (2026-07-03 evening — site-selection MC in production)
+> **IN FLIGHT (verify with `ps aux | grep -E 'run_sitemc|hydro_cpu|sweep_crater'` FIRST):**
+> 1. **Site-MC production**: `run_sitemc.py --n 1000000 --jobs 7` (nohup+caffeinate,
+>    ~37 seeds/s, ETA ~8 h from 13:30). Progress: `tail state/sitemc/run.log`;
+>    catalog: `state/sitemc/catalog.csv`. **WHEN DONE:**
+>    `python3 analyze_sitemc.py --json results/sitemc_summary.json` = the
+>    eta(elevation) verdict on whether summits get elevated cross-sections
+>    (Greg's hypothesis: no, eta~1; docs/site_mc_plan.md + docs/site_mc_findings.md
+>    have Phase B: equatorward steering is J2-orbit-shape + oblate-air, median 2
+>    window passes, all impacts grazing). Then write up + figures + commit.
+> 2. **Euler vamb sweep** (10 workers, hydrocodes/euler) draining; a monitor
+>    auto-launches the AF (Tfrac,Efrac) sweep with **--jobs 7** when it exits
+>    (7/7 split with the site MC per Greg). Harvest per
+>    hydrocodes/euler/PICKUP-phase3.md RESUME banner.
+> 3. **E22 cppr20** rung: decision 2026-07-04 morning (see PICKUP-pierazzo.md).
+
 ---
 
 Continue the **deorbit** investigation in this directory (read `CLAUDE.md` and
