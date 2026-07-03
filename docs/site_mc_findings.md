@@ -65,3 +65,23 @@ escape 273 / direct impact 20 / deorbit impact 4 / timeout 3 (200-day cap).
 Deorbit-impact rate ~1.3% of arrivals in the (v_inf<=5 km/s, rp<=60 km,
 isotropic) box; all 4 grazing; 3/4 with apo1 < 130,000 km. Throughput ~65
 seeds/s on 7 workers (pure Python) -> 1e6 seeds ~ 4-5 h.
+
+## Early-catalog scorecard (2026-07-03 ~14:15, 42.9k seeds, 1,353 deorbit impacts)
+
+Pre-registered predictions (conversation, before peeking) vs data:
+
+| prediction | verdict |
+|---|---|
+| Latitude law dominates | DIRECTION YES (med abs(lat) 13.7 deg vs 30 isotropic-null) but SOFTER than predicted (predicted 50%@10/90%@25-30; got 13.7/34.4). Cause: Phase B sampled only low-v_inf deep captures at i<=65; the isotropic prior's high-i captures widen the belt. |
+| Longitude ~uniform; Pacific plurality; land ~ area share | YES: 30-deg bins 94-146 (flat); Pacific-ish 42%; land 28.1% (pred 25-30); eta(ocean)=0.97, eta(0-1km)=1.00. |
+| eta rises with elevation; 3-5km ~2-6; >5km CI wide but >1 | YES: 1.00 / 1.14 / 3.12 [2.08-4.04] / 4.19 [1.40-9.07]. Range-scale enhancement is REAL (>5km CI excludes 1). 1-3km came in LOW (1.14 vs pred 1.5-2.5). |
+| Andes dominate highlands; Himalaya excluded by latitude; New Guinea sleeper | HALF-WRONG, interestingly: elev>2km hits split Andes 16-18 vs Tibet/Himalaya 16-17 — and the Tibetan hits are GRAZING-channel (16/17), delivered by high-inclination captures reaching 28-35N. TIBET IS THE SECOND HIGHLAND ATTRACTOR (huge 4-5 km AREA beats wall geometry at ensemble level). New Guinea: only 2 (flop so far). Isolated cones (E Africa 1) underperform as predicted. |
+| Trophy summits: no summit-cone enhancement (Greg) | HOLDING: 0 impacts near Chimborazo/Cayambe in 1,353; named-peak <150 km proximity total 7 (~0.5%), led by Huascaran 3 (closest 36.6 km at 5,126 m elev — the latitude-sweet-spot call). |
+| ~100% grazing; apo1<130k ~75% | 90.5% grazing (over-claimed); the 9.5% steep have apo1>130k in 130/130 cases — an EXACT, independent reproduction of the hi-fi lunar-pumping boundary by the stdlib engine. apo1<130k = 72%. |
+| Slight retrograde excess (co-rotation) | +1.8 pp (51.6 vs 49.8% in escapes), right direction, ~1.4 sigma — pending full N. |
+
+Emerging map narrative: an equatorial-belt-dominant, ocean-plurality map with
+TWO highland attractors — the Andes (wall geometry, low-lat channel) and
+Tibet (area, high-i grazing channel) — real order-3-4 range-scale elevation
+enhancement, and no summit-cone enhancement. Timeouts 2.6% (200-day cap) to
+revisit at full N.
