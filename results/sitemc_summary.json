@@ -1,0 +1,74 @@
+{
+ "n_seeds": 1000000,
+ "outcomes": {
+  "escape": 897958,
+  "impact_direct": 43330,
+  "impact_deorbit": 32734,
+  "timeout": 25978
+ },
+ "n_deorbit": 32734,
+ "abs_lat_quartiles": [
+  7.47,
+  15.24,
+  25.1,
+  36.02
+ ],
+ "impact_frac": [
+  0.7145,
+  0.2045,
+  0.0627,
+  0.0151,
+  0.0032
+ ],
+ "null_frac_latctrl": [
+  0.7417,
+  0.207,
+  0.0431,
+  0.007,
+  0.0012
+ ],
+ "eta": {
+  "ocean": [
+   0.963,
+   0.958,
+   0.97
+  ],
+  "0-1km": [
+   0.988,
+   0.968,
+   1.008
+  ],
+  "1-3km": [
+   1.454,
+   1.377,
+   1.52
+  ],
+  "3-5km": [
+   2.152,
+   1.969,
+   2.334
+  ],
+  ">5km": [
+   2.748,
+   2.246,
+   3.277
+  ]
+ },
+ "impacts_within_150km_of_peak": {
+  "Huascaran Sur": 14,
+  "Cotopaxi": 12,
+  "Cerro Bonete": 17,
+  "Everest": 17,
+  "Pico Bolivar": 15,
+  "Yerupaja": 14,
+  "Cayambe": 26,
+  "Mount Kenya": 9,
+  "Aconcagua": 7,
+  "Kilimanjaro": 13,
+  "Chimborazo": 7,
+  "Denali": 1
+ },
+ "grazing_frac": 0.917,
+ "apo1_below_130k_frac": 0.753,
+ "land_frac": 0.285
+}

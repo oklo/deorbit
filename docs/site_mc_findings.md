@@ -108,3 +108,47 @@ prior uncertainty (Granvik vs NEOMOD vs M-source conditioning) is a
 second-order systematic for the map shape (it matters for the RATE only).
 Caveats: analytic tilt is Granvik-shaped placeholder (NEOMOD grid ingestion
 open); KDE h=0.4 km/s coarse below v_inf~0.5; Earth eccentricity ignored.
+
+## FULL-CATALOG HARVEST (2026-07-03 evening; 1e6 seeds, 32,734 deorbit impacts)
+
+Outcomes: escape 898.0k / direct impact 43.3k / deorbit impact 32.7k /
+timeout 26.0k (200-day cap; censoring caveat, 2.6%).
+
+**Final eta ladder (latitude-controlled, bootstrap 95% CI):**
+| class | P_impact | P_area(lat) | eta | CI |
+|---|---|---|---|---|
+| ocean | 0.7145 | 0.7417 | 0.96 | [0.96, 0.97] |
+| 0-1 km | 0.2045 | 0.2070 | 0.99 | [0.97, 1.01] |
+| 1-3 km | 0.0627 | 0.0431 | 1.45 | [1.38, 1.52] |
+| 3-5 km | 0.0151 | 0.0070 | 2.15 | [1.97, 2.33] |
+| >5 km | 0.0032 | 0.0012 | 2.75 | [2.25, 3.28] |
+
+|lat| quartiles 7.5 / 15.2 / 25.1 / 36.0 deg. Grazing 91.7%; apo1<130k
+75.3%; land fraction 28.5% (vs 25.8% area null -> overall land
+enhancement only ~1.11x). Weighted (realistic prior, ESS 88.7%):
+quartiles 7.2/14.8/24.3/35.0 — unchanged; elev>2km share Andes 34.3%
+vs Tibet/Himalaya 29.2% (isotropic ~even) — the two-attractor structure
+holds under the realistic prior with a mild Andes lead.
+
+**Named-summit census (impacts within 150 km): CAYAMBE LEADS with 26**,
+then Cerro Bonete 17, Everest 17, Pico Bolivar 15, Huascaran 14,
+Yerupaja 14, Kilimanjaro 13, Cotopaxi 12, Mt Kenya 9, Chimborazo 7,
+Aconcagua 7, Denali 1. Cayambe's lead is LATITUDE-density driven (it
+sits at 0.03 deg N, the peak of the impact-latitude distribution), not
+height-driven — Chimborazo (taller, 1.5 deg S) draws 4x fewer.
+P(within 150 km of Cayambe) = 8e-4 per deorbit impact.
+
+**Pre-registered hypothesis verdict:** split, leaning Greg. At the
+summit-cone scale there is NO enhancement beyond the range-scale
+factor (trophy peaks collect ~area x eta(elev-class) x latitude-density
+— no extra cross-section). The range-scale elevation steering is REAL
+but MODEST: eta rises monotonically to 2.15 (3-5 km) and 2.75 (>5 km),
+at the LOW end of the counter-prediction's 3-4x. Ocean is significantly
+but barely suppressed (0.96). The dominant selection remains LATITUDE
+(bulge, via J2 orbit-shape + oblate air), not elevation.
+
+Showcase mechanism case (seed 402938, figures/sitemc_traj*): Pacific
+death-run -> caught by the west-facing Cordillera Occidental rampart at
+3,159 m (0.53 N, 78.48 W, Pinan paramo NW of Cotacachi), where terrain
+rose ~2,000 m under the final 30 km of a -0.84 deg glide (~4 deg wall
+vs ~1 deg glider) — the wall does the catching, not the trajectory.
