@@ -11,9 +11,8 @@ Target journal: Planetary Science Journal (AAS). First draft 2026-07-03.
   must be verified against ADS before submission.
 - Figures resolve from `../figures/` (committed): `sitemc_traj`,
   `sitemc_traj_plane`, `sitemc_flashlight_rw`, `bounce_off_phase_diagram`.
-- Compile: needs the `aastex631.cls` from the AAS (not in the default
-  TeX Live tree); drop it in this directory and run
-  `pdflatex ms && bibtex ms && pdflatex ms && pdflatex ms`.
+- Compile: `tectonic ms.tex` (class + bst included here from CTAN; tectonic
+  fetches everything else on demand). Output ms.pdf is untracked (24 MB).
 
 All quantitative statements trace to committed artifacts:
 `docs/capture_feasibility.md` (Sec 2), `docs/highfidelity_findings.md`

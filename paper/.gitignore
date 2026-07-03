@@ -1,0 +1,7 @@
+ms.pdf
+aastex/
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
