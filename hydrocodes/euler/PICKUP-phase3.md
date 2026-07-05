@@ -1,3 +1,20 @@
+> ## AF LADDER VERDICT (2026-07-04 morning; 36/36 done, harvested to state/dD_af.csv)
+> **The (Tfrac,Efrac) grid is FLAT and the late slump NEVER APPEARS.** Depths are
+> essentially identical across the whole ladder (a300: 1.80-1.86 km; a1000: 5.40;
+> a2000: 10.0-10.4; a3000: 14.4-15.0), depth ~= 94% of transient everywhere, and
+> every rung is WORSE vs Garvin than friction-only (ratios 1.9-2.0 simple,
+> 4.5-5.8 at a=3000, vs off_yd5M 1.5/4.0). Efrac has NO effect at any size.
+> DIAGNOSIS: TDEC = Tfrac*a/c_s spans 6-200 s across the grid, but the slump
+> timescale is ~2*pi*sqrt(D/g) ~ 700+ s for the big craters -- the fluidization
+> decays before collapse begins at EVERY grid point; all AF can do in this
+> parameterization is damp the rebound (deepening the transient, in proportion
+> to TDEC). The impactor-acoustic scaling cannot reach the slump regime.
+> PROPOSED NEXT (cheap, decisive; awaiting Greg): one pair at a=3000 with TDEC
+> ~1000-2000 s (i.e., keyed to the crater gravitational timescale, not the
+> impactor), Efrac 0.01 -> if slump appears, re-key TDEC to the transient-crater
+> scale and re-ladder; if not, the AF block model itself needs revisiting.
+> E22 cppr20: ~38 h wall, output file still empty, duty ~26% (decision today).
+
 > ## RESUME HERE (2026-07-03 evening — vamb sweep HARVESTED; AF ladder RUNNING)
 > **CLEAN (vamb=0.27) GARVIN VERDICT (42/42 settled, analyze_crater -> mars_dD_oracle):**
 > the artifact-free baseline UNDER-COLLAPSES EVERYWHERE, and the deficit GROWS with size:
