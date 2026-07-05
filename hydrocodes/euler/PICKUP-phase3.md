@@ -1,3 +1,22 @@
+> ## AF TIMESCALE TEST VERDICT (2026-07-04 runs, harvested 2026-07-05): the middle
+> regime DOES NOT EXIST in this AF implementation. TDEC=1000/2000 s at a=3000
+> (Efrac 0.01) produced RUNAWAY EXCAVATION, not late slump: transient ~42 km deep
+> (vs 15.9 at TDEC<=200), final depth 38 km, D_app ~110 km (crater FILLED the
+> Rfac=30 domain -> numbers qualitative), d/D 0.34-0.36, ratio vs Garvin ~10x,
+> still max|v|~80 m/s at cutoff. MECHANISM: while vib is active the (1-af)
+> strength cut is ~total and Efrac=0.01 viscosity is far too low to arrest the
+> flow -> the excavation cavity keeps growing quasi-hydrodynamically for ~TDEC;
+> when vib decays, pressure-dependent friction (Y_d ~ 0.6*rho*g*z ~ 2e8 Pa at
+> 38 km) locks ANY cavity instantly. Short TDEC freezes a too-deep transient;
+> long TDEC digs a monster. The W&I-intended behavior (normal transient, then
+> gentle viscosity-limited slump) requires the fluidized state to carry a
+> SUBSTANTIAL effective resistance during flow. SURGERY OPTIONS (Greg to pick):
+>   (A) cap af (Y_eff=(1-af)Y with af<=~0.8) — one-line, keeps 20% strength while
+>       fluidized; (B) Bingham floor: Y_eff=max(Y_B,(1-af)Y), Y_B~1-5 MPa;
+>   (C) raise ETA 10-30x with viscous substepping (closest to W&I block model,
+>       biggest change). (A)/(B) are cheap and can be laddered same-day.
+> Test artifacts: state/aftest/ (profiles, logs with af-state stream, dD.csv).
+
 > ## AF LADDER VERDICT (2026-07-04 morning; 36/36 done, harvested to state/dD_af.csv)
 > **The (Tfrac,Efrac) grid is FLAT and the late slump NEVER APPEARS.** Depths are
 > essentially identical across the whole ladder (a300: 1.80-1.86 km; a1000: 5.40;
