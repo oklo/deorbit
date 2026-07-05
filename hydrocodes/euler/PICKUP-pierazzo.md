@@ -1,3 +1,9 @@
+> ## E22 CLOSED (2026-07-04): cppr20 rung KILLED after ~38 h (output never written;
+> the dt pathology survives rcfl=100 at the 20 km/s / cppr20 corner). Greg's call:
+> STAND ON cppr12/16 — E22 45-deg oblique PASSES both velocities at both
+> resolutions with converged decay slopes (verdict table below). The oblique
+> Pierazzo benchmark is DONE at that standing.
+
 # PICKUP — Pierazzo-2008 aluminum peak-pressure benchmark scale-up
 
 > ## SESSION UPDATE 2026-07-02 evening — E22 built+running, E23 (Prater) BUILT+GATED
