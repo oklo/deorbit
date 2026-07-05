@@ -31,6 +31,7 @@ static double MU_I = 1.2;    // intact coefficient of internal friction
 static double MU_D = 0.6;    // damaged (comminuted) friction coefficient
 static double Y_D0 = 0.0;    // damaged residual cohesion (Pa); 0 = cohesionless friction (iSALE breccia ~ a few MPa)
 static double Y_M  = 2.5e9;  // limiting (von Mises) strength at high pressure (Pa)
+static double Y_BINGHAM = 0.0; // AF Bingham floor (Pa): fluidized cells keep this flow resistance (option B, 2026-07-05); 0 = legacy (1-af) cut
 static vector<double> REF_R0, REF_P0; // route 1 (Audusse): frozen hydrostatic reference (density,pressure) per cell; empty => WB off
 static inline void eos_pc(double rho,double e,double&p,double&cs){ p=MAT.pressure(rho,e); if(p<0)p=0; cs=MAT.sound_speed(rho,e); }
 struct F5 { double r, mn, mt1, mt2, E; };
@@ -212,7 +213,12 @@ static void vonmises(Grid&g){ double Y0=MAT.Y; if(Y0<=0&&!ROCK)return; int n=g.n
         if(ROCK){ double P=max(Pcell(g,c),0.0);   // pressure-dependent yield (friction only under compression)
             double Yi=Y_I0 + MU_I*P/(1.0 + MU_I*P/max(Y_M-Y_I0,1.0));   // intact (Lundborg): cohesion + saturating friction
             double Yd=min(Y_D0 + MU_D*P, Y_M);                           // damaged: residual cohesion + friction, capped at the limit
-            Y=((1.0-g.D[c])*Yi + g.D[c]*Yd)*(1.0-g.af[c]); }             // damage blends intact->friction; AF fluidizes
+            double Yb=(1.0-g.D[c])*Yi + g.D[c]*Yd;                       // unfluidized (base) strength
+            Y=Yb*(1.0-g.af[c]);                                          // damage blends intact->friction; AF fluidizes
+            // Bingham floor (AF surgery option B): a fluidized cell retains a finite flow
+            // resistance Y_BINGHAM -- never exceeding its unfluidized strength -- so that
+            // long-TDEC fluidization slumps instead of digging without limit. 0 = legacy.
+            if(Y_BINGHAM>0 && g.af[c]>1e-3){ double Yf=min(Y_BINGHAM,Yb); if(Y<Yf) Y=Yf; } }
         else Y=(1.0-g.D[c])*(1.0-g.af[c])*Y0;                            // cohesion-only von Mises (back-compat)
         double sxx=g.Sxx[c],syy=g.Syy[c],szz=g.Szz[c],sxy=g.Sxy[c],sxz=g.Sxz[c],syz=g.Syz[c];
         double J2=0.5*(sxx*sxx+syy*syy+szz*szz)+sxy*sxy+sxz*sxz+syz*syz; double vm=sqrt(3.0*J2);
@@ -415,6 +421,7 @@ int main(int argc,char**argv){
         ROCK=(argc>12?atoi(argv[12]):1);   // pressure-dependent friction yield (default on); arg 0 = old cohesion-only von Mises for A/B
         if(argc>13) Y_D0=atof(argv[13]);   // damaged residual cohesion (Pa); the key knob to arrest small-crater creep
         if(argc>14) VOID_AMB=atof(argv[14]);   // arg14>0 (e.g. 0.27): void cells reset to AMBIENT, not the lithostatic reference (A/B test of the below-surface refill artifact); default 0 = legacy
+        if(argc>15) Y_BINGHAM=atof(argv[15]);  // arg15>0 (Pa): AF Bingham floor -- fluidized cells retain this flow resistance; default 0 = legacy
         int Nr=(int)(Rfac*a/dx+0.5), Nz=(int)(Zfac*a/dx+0.5);
         double Zdom=Nz*dx, above=5.0*a, zsurf=Zdom-above;   // free surface; 'above' = room for impactor + ejecta
         Grid g(Nr,1,Nz,dx);
