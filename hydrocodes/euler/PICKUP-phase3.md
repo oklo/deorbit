@@ -1,3 +1,27 @@
+> ## BINGHAM LADDER VERDICT (2026-07-05; 10/10 done, state/bingham/, harvested dD.csv)
+> **Mid sizes: the FIRST genuine slump.** a=1000: d/D 0.146 (ratio 2.45-2.48 vs
+> friction 2.85, flat-ladder 3.3); a=2000: 0.123-0.143 (ratio 3.1-3.3 vs 4.0/4.3+).
+> Mechanism visible in traces: depth holds ~transient while D_app WIDENS ~70%
+> (21->34 km at a=1000) -- outward slump, truncated when vib decays. Y_B 1->10 MPa
+> is nearly IRRELEVANT (outcomes identical) => the arrest is still TDEC-limited.
+> a=300 guard: ratio 1.48->1.66, D widened into the 'complex' band (mild cost).
+> **a=3000 REINTERPRETED: there was never runaway excavation.** Traces (both the
+> Bingham rungs AND yesterday's no-floor TDEC=1000/2000 runs) show depth PINNED at
+> 15.90 km for ~4000 s, then an ABRUPT jump to 40.5-41.7 km at t~4000-4200 s.
+> Signature of a late BREAKTHROUGH artifact, not physics: af_max stays ~0.97-1.0
+> the whole run (immortal fully-fluidized pocket) while af_mean decays; Vexc grows
+> monotonically (1.2e7->2.4e7, 'crater volume' doubling with no depth change);
+> voidzero refills ~5.3e8 events (~1600 cells/step = a standing evacuated region
+> churning below the floor). HYPOTHESIS: cavitation<->shock-gate feedback -- void
+> cells cycling (reset to ambient, recompressed) spike dP > P_ACT each cycle,
+> perpetually re-seeding vib -> an immortal fluidized subsurface pocket that
+> churns until it connects to the surface datum (depth jumps to the void column).
+> The short-TDEC flat ladder never saw it only because its windows ended at 1869 s.
+> LIKELY FIX: refractory seeding gate (no vib re-seed in cells that were void
+> within N steps, or require rho near reference at seed time). DISCUSS WITH GREG
+> before surgery. Pre-breakthrough state (15.9 km held with floor active) is
+> arguably the physical answer at a=3000 (ratio ~4.3, matching the a=2000 trend).
+
 > ## AF TIMESCALE TEST VERDICT (2026-07-04 runs, harvested 2026-07-05): the middle
 > regime DOES NOT EXIST in this AF implementation. TDEC=1000/2000 s at a=3000
 > (Efrac 0.01) produced RUNAWAY EXCAVATION, not late slump: transient ~42 km deep
