@@ -32,6 +32,7 @@ static double MU_D = 0.6;    // damaged (comminuted) friction coefficient
 static double Y_D0 = 0.0;    // damaged residual cohesion (Pa); 0 = cohesionless friction (iSALE breccia ~ a few MPa)
 static double Y_M  = 2.5e9;  // limiting (von Mises) strength at high pressure (Pa)
 static double Y_BINGHAM = 0.0; // AF Bingham floor (Pa): fluidized cells keep this flow resistance (option B, 2026-07-05); 0 = legacy (1-af) cut
+static bool VISC_IMP = false;  // Option C (2026-07-07): implicit AF viscous update -- eta_eff unbounded by the explicit dt limit; replaces the explicit term in Lop when on
 static vector<double> REF_R0, REF_P0; // route 1 (Audusse): frozen hydrostatic reference (density,pressure) per cell; empty => WB off
 static inline void eos_pc(double rho,double e,double&p,double&cs){ p=MAT.pressure(rho,e); if(p<0)p=0; cs=MAT.sound_speed(rho,e); }
 struct F5 { double r, mn, mt1, mt2, E; };
@@ -193,7 +194,7 @@ static void Lop(const Grid&g, DU&d){
         if(AXISYM){   // geometric stress-divergence sources (curvilinear basis): (div S)_r += (S_rr-S_thth)/r, (div S)_z += S_rz/r
             d.mu[c]+=(g.Sxx[c]-g.Syy[c])/rcyl;   // radial: the -S_thth/r curvature term plus the +S_rr/r from (1/r)d(r S_rr)/dr
             d.mw[c]+=g.Sxz[c]/rcyl; }            // axial: the +S_rz/r from (1/r)d(r S_rz)/dr
-        if(g.af[c]>0&&ETA_AF>0){ double eta=g.af[c]*ETA_AF, id2=1.0/(g.dx*g.dx);   // AF Newtonian viscosity (damps fluidized flow); Cartesian vector Laplacian
+        if(g.af[c]>0&&ETA_AF>0&&!VISC_IMP){ double eta=g.af[c]*ETA_AF, id2=1.0/(g.dx*g.dx);   // AF Newtonian viscosity (damps fluidized flow); Cartesian vector Laplacian. VISC_IMP -> handled implicitly in implicit_visc (no double counting)
             d.mu[c]+=eta*(vx(xp)+vx(xm)+vx(yp)+vx(ym)+vx(zp)+vx(zm)-6*vx(c))*id2;
             d.mv[c]+=eta*(vy(xp)+vy(xm)+vy(yp)+vy(ym)+vy(zp)+vy(zm)-6*vy(c))*id2;
             d.mw[c]+=eta*(vz(xp)+vz(xm)+vz(yp)+vz(ym)+vz(zp)+vz(zm)-6*vz(c))*id2;
@@ -241,6 +242,96 @@ static void void_cells(Grid&g){ if(RHO_CFL<=0)return; bool wb=!REF_R0.empty(); i
     for(int c=0;c<N;c++) if(g.r[c]<RHO_CFL){ g.mu[c]=g.mv[c]=g.mw[c]=0; if(wb){
         if(REF_R0[c]>1350.0){VZ_N++;VZ_DM+=REF_R0[c]-g.r[c];}   // a below-surface (solid-reference) void: legacy refills it with rock
         g.r[c]=(VOID_AMB>0?VOID_AMB:REF_R0[c]);g.E[c]=0;g.Sxx[c]=g.Syy[c]=g.Szz[c]=g.Sxy[c]=g.Sxz[c]=g.Syz[c]=0;g.rc[c]=0;} } }
+// ---- Option C (2026-07-07): implicit AF viscous update (operator-split, backward Euler) ----
+// Fluidized cells obey d(rho v)/dt = div(eta grad v), eta = af*ETA_AF, solved IMPLICITLY so
+// eta is NOT capped by the explicit viscous dt limit (~2.4e8 Pa s at crater scales, found
+// 2026-06-28); the block-model physics needs 1e9-1e10 Pa s (Wuennemann & Ivanov 2003).
+// Finite-volume, variable coefficient, face-HARMONIC eta: a zero-eta side (void, or
+// unfluidized af<=1e-3) gives zero face flux, so those cells reduce to the identity and stay
+// in the system -- no masking special cases. AXISYM: fluxes are face-area weighted (radial
+// face area ~ r_face; the r=0 axis face has zero area = the regularity BC) and the r/hoop
+// components carry the -v/r^2 curvature term as a POSITIVE diagonal, so v_r = A*r is an
+// exact discrete null mode (gate visc_diff B). The volume-weighted system is SPD;
+// Jacobi-preconditioned CG to 1e-8 relative. ENERGY: the KE removed by the smoothing is
+// returned as heat, deposited per cell proportional to the local face dissipation
+// eta*(dv)^2 (positive definite) and rescaled so total energy is conserved EXACTLY
+// (the explicit Lop term never heated; this path does -- gate visc_energy).
+static long VISC_IT=0;   // instrumentation: cumulative CG iterations
+static void implicit_visc(Grid&g,double dt){
+    if(!VISC_IMP||ETA_AF<=0) return;
+    const int nx=g.nx,ny=g.ny,nz=g.nz,n=nx*ny*nz; const double dx=g.dx;
+    static vector<double> eta,Vc,cfx,cfy,cfz,dsum,dax,bb,rr,zz,pp,qq,hr,u1,v1,w1;
+    eta.assign(n,0.0); bool any=false; double rmin=max(RHO_CFL,1e-12);
+    for(int c=0;c<n;c++) if(g.r[c]>rmin&&g.af[c]>1e-3){ eta[c]=g.af[c]*ETA_AF; any=true; }
+    if(!any) return;
+    Vc.assign(n,0);cfx.assign(n,0);cfy.assign(n,0);cfz.assign(n,0);dsum.assign(n,0);dax.assign(n,0);
+    auto harm=[](double a,double b){ return (a>0&&b>0)?2.0*a*b/(a+b):0.0; };
+    for(int i=0;i<nx;i++)for(int j=0;j<ny;j++)for(int k=0;k<nz;k++){ int c=g.idx(i,j,k);
+        double rc=(i+0.5)*dx, wV=(AXISYM?rc:dx); Vc[c]=wV*dx*dx; dsum[c]=g.r[c]*Vc[c];
+        if(i<nx-1)      cfx[c]=dt*((AXISYM?(i+1)*dx:dx))*harm(eta[c],eta[g.idx(i+1,j,k)]);   // dt*A_f*eta_f/dx, radial face at r=(i+1)dx
+        if(ny>1&&j<ny-1)cfy[c]=dt*dx*harm(eta[c],eta[g.idx(i,j+1,k)]);
+        if(k<nz-1)      cfz[c]=dt*wV*harm(eta[c],eta[g.idx(i,j,k+1)]);
+        if(AXISYM)      dax[c]=dt*eta[c]*Vc[c]/(rc*rc);   // -v/r^2 curvature term (r and hoop components)
+    }
+    for(int i=0;i<nx;i++)for(int j=0;j<ny;j++)for(int k=0;k<nz;k++){ int c=g.idx(i,j,k);
+        if(i<nx-1){ dsum[c]+=cfx[c]; dsum[g.idx(i+1,j,k)]+=cfx[c]; }
+        if(ny>1&&j<ny-1){ dsum[c]+=cfy[c]; dsum[g.idx(i,j+1,k)]+=cfy[c]; }
+        if(k<nz-1){ dsum[c]+=cfz[c]; dsum[g.idx(i,j,k+1)]+=cfz[c]; }
+    }
+    auto Amul=[&](const vector<double>&x,vector<double>&y,bool wdax){
+        for(int i=0;i<nx;i++)for(int j=0;j<ny;j++)for(int k=0;k<nz;k++){ int c=g.idx(i,j,k);
+            double s=(dsum[c]+(wdax?dax[c]:0.0))*x[c];
+            if(i<nx-1) s-=cfx[c]*x[g.idx(i+1,j,k)];
+            if(i>0){ int cl=g.idx(i-1,j,k); s-=cfx[cl]*x[cl]; }
+            if(ny>1){ if(j<ny-1) s-=cfy[c]*x[g.idx(i,j+1,k)];
+                      if(j>0){ int cl=g.idx(i,j-1,k); s-=cfy[cl]*x[cl]; } }
+            if(k<nz-1) s-=cfz[c]*x[g.idx(i,j,k+1)];
+            if(k>0){ int cl=g.idx(i,j,k-1); s-=cfz[cl]*x[cl]; }
+            y[c]=s; } };
+    auto cg=[&](vector<double>&x,const vector<double>&b,bool wdax){
+        rr.assign(n,0);zz.assign(n,0);pp.assign(n,0);qq.assign(n,0);
+        double bn=0; for(int c=0;c<n;c++) bn+=b[c]*b[c];
+        if(bn<=0){ for(int c=0;c<n;c++) x[c]=0; return; }
+        Amul(x,qq,wdax);
+        double rn=0; for(int c=0;c<n;c++){ rr[c]=b[c]-qq[c]; rn+=rr[c]*rr[c]; }
+        double tol2=1e-16*bn, rz=0;
+        for(int c=0;c<n;c++){ zz[c]=rr[c]/(dsum[c]+(wdax?dax[c]:0.0)); pp[c]=zz[c]; rz+=rr[c]*zz[c]; }
+        for(int it=0; it<800&&rn>tol2; it++){
+            Amul(pp,qq,wdax);
+            double pq=0; for(int c=0;c<n;c++) pq+=pp[c]*qq[c];
+            if(pq<=0) break;
+            double al=rz/pq; rn=0;
+            for(int c=0;c<n;c++){ x[c]+=al*pp[c]; rr[c]-=al*qq[c]; rn+=rr[c]*rr[c]; }
+            VISC_IT++;
+            if(rn<=tol2) break;
+            double rz2=0; for(int c=0;c<n;c++){ zz[c]=rr[c]/(dsum[c]+(wdax?dax[c]:0.0)); rz2+=rr[c]*zz[c]; }
+            double be=rz2/rz; rz=rz2;
+            for(int c=0;c<n;c++) pp[c]=zz[c]+be*pp[c];
+        } };
+    u1.assign(n,0);v1.assign(n,0);w1.assign(n,0);bb.assign(n,0);
+    for(int c=0;c<n;c++){ u1[c]=g.mu[c]/g.r[c]; bb[c]=Vc[c]*g.mu[c]; } cg(u1,bb,AXISYM);
+    for(int c=0;c<n;c++){ v1[c]=g.mv[c]/g.r[c]; bb[c]=Vc[c]*g.mv[c]; } cg(v1,bb,AXISYM);   // hoop component carries the same -v/r^2
+    for(int c=0;c<n;c++){ w1[c]=g.mw[c]/g.r[c]; bb[c]=Vc[c]*g.mw[c]; } cg(w1,bb,false);
+    hr.assign(n,0); double totold=0,totnew=0,htot=0;
+    for(int i=0;i<nx;i++)for(int j=0;j<ny;j++)for(int k=0;k<nz;k++){ int c=g.idx(i,j,k);
+        double keo=0.5*(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c];
+        double ken=0.5*g.r[c]*(u1[c]*u1[c]+v1[c]*v1[c]+w1[c]*w1[c]);
+        totold+=keo*Vc[c]; totnew+=ken*Vc[c];
+        auto fh=[&](int cn,double cf){ double du=u1[c]-u1[cn],dv=v1[c]-v1[cn],dw=w1[c]-w1[cn];
+            double h=cf*(du*du+dv*dv+dw*dw); hr[c]+=0.5*h; hr[cn]+=0.5*h; htot+=h; };
+        if(i<nx-1&&cfx[c]>0) fh(g.idx(i+1,j,k),cfx[c]);
+        if(ny>1&&j<ny-1&&cfy[c]>0) fh(g.idx(i,j+1,k),cfy[c]);
+        if(k<nz-1&&cfz[c]>0) fh(g.idx(i,j,k+1),cfz[c]);
+        if(AXISYM&&dax[c]>0){ double h=dax[c]*(u1[c]*u1[c]+v1[c]*v1[c]); hr[c]+=h; htot+=h; }
+    }
+    double loss=totold-totnew, sc=(loss>0&&htot>0)?loss/htot:0.0;
+    for(int c=0;c<n;c++){
+        double keo=0.5*(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c];
+        g.mu[c]=g.r[c]*u1[c]; g.mv[c]=g.r[c]*v1[c]; g.mw[c]=g.r[c]*w1[c];
+        double ken=0.5*(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c];
+        g.E[c]+=(ken-keo)+sc*hr[c]/Vc[c];   // internal energy rises only by the (rescaled, positive) local dissipation
+    }
+}
 static double maxspeed(const Grid&g){ double s=1e-30; int n=g.r.size(); double G=MAT.G;
     for(int c=0;c<n;c++){ if(g.r[c]<RHO_CFL) continue; double p,cs; eos_pc(g.r[c],eint(g,c),p,cs); double cel=sqrt(cs*cs+ (G>0?(4.0/3.0)*G/g.r[c]:0.0));
         double v=sqrt(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c]; s=max(s,v+cel);} return s; }
@@ -272,6 +363,7 @@ static void step_rk2(Grid&g,double dt){ int n=g.r.size(); DU d(n);
     void_cells(g1); vonmises(g1); Lop(g1,d);   // clean the predictor's void cells so strength sees no near-vacuum velocity
     for(int c=0;c<n;c++){g.r[c]=0.5*(g.r[c]+g1.r[c]+dt*d.r[c]);g.mu[c]=0.5*(g.mu[c]+g1.mu[c]+dt*d.mu[c]);g.mv[c]=0.5*(g.mv[c]+g1.mv[c]+dt*d.mv[c]);g.mw[c]=0.5*(g.mw[c]+g1.mw[c]+dt*d.mw[c]);g.E[c]=0.5*(g.E[c]+g1.E[c]+dt*d.E[c]);
         g.Sxx[c]=0.5*(g.Sxx[c]+g1.Sxx[c]+dt*d.Sxx[c]);g.Syy[c]=0.5*(g.Syy[c]+g1.Syy[c]+dt*d.Syy[c]);g.Szz[c]=0.5*(g.Szz[c]+g1.Szz[c]+dt*d.Szz[c]);g.Sxy[c]=0.5*(g.Sxy[c]+g1.Sxy[c]+dt*d.Sxy[c]);g.Sxz[c]=0.5*(g.Sxz[c]+g1.Sxz[c]+dt*d.Sxz[c]);g.Syz[c]=0.5*(g.Syz[c]+g1.Syz[c]+dt*d.Syz[c]);g.D[c]=0.5*(g.D[c]+g1.D[c]+dt*d.D[c]);g.rc[c]=0.5*(g.rc[c]+g1.rc[c]+dt*d.rc[c]);g.vib[c]=0.5*(g.vib[c]+g1.vib[c]+dt*d.vib[c]);}
+    implicit_visc(g,dt);   // Option C: operator-split implicit AF viscosity (no-op unless VISC_IMP)
     grow_damage(g,dt); vonmises(g);
     // (AF vibration update moved to update_af() at the start of the step; af is now derived from vib, not decayed here)
     if(DAMP<1.0){ int N=g.r.size(); for(int c=0;c<N;c++){ g.mu[c]*=DAMP; g.mv[c]*=DAMP; g.mw[c]*=DAMP; } }   // relaxation damping
@@ -424,6 +516,7 @@ int main(int argc,char**argv){
         if(argc>13) Y_D0=atof(argv[13]);   // damaged residual cohesion (Pa); the key knob to arrest small-crater creep
         if(argc>14) VOID_AMB=atof(argv[14]);   // arg14>0 (e.g. 0.27): void cells reset to AMBIENT, not the lithostatic reference (A/B test of the below-surface refill artifact); default 0 = legacy
         if(argc>15) Y_BINGHAM=atof(argv[15]);  // arg15>0 (Pa): AF Bingham floor -- fluidized cells retain this flow resistance; default 0 = legacy
+        if(argc>16) VISC_IMP=atoi(argv[16])!=0;   // arg16=1: Option C implicit viscous update (eta unbounded by the explicit dt limit)
         int Nr=(int)(Rfac*a/dx+0.5), Nz=(int)(Zfac*a/dx+0.5);
         double Zdom=Nz*dx, above=5.0*a, zsurf=Zdom-above;   // free surface; 'above' = room for impactor + ejecta
         Grid g(Nr,1,Nz,dx);
@@ -438,10 +531,14 @@ int main(int argc,char**argv){
         bool fixed=(targ>0); double tend=fixed?targ:6.0*t_auto;   // settling cap = 6x t_auto (depth ~converged by ~5x; keeps run-to-settling affordable)
         double tolM=0.02;                         // settled when consecutive Vexc WINDOW-MEANS agree within 2% (robust to residual sloshing + density-threshold jitter)
         double Wwin=2.0*t_auto;                    // averaging window >= one oscillation period (2pi*sqrt(D/g)) so fast jitter/sloshing averages out
-        auto surf=[&](int i){ for(int k=Nz-1;k>=0;k--){ if(g.r[g.idx(i,0,k)]>1350.0) return (k+0.5)*dx; } return 0.0; };
+        // Column-mass surface metric (Option C hygiene, 2026-07-07): depth = per-column MASS DEFICIT vs the frozen
+        // pre-impact reference, / rho0. Threshold-free: a smoothly dilating sub-floor column reads as gradually
+        // increasing depth, never a jump -- the a=3000 "40 km breakthrough" was the old first-rho>1350 surface
+        // crossing such a column (2026-07-06 diagnostic). Negative = uplift (rim) / mass overhead (ejecta).
+        auto dcol=[&](int i){ double m=0; for(int k=0;k<Nz;k++){ int c=g.idx(i,0,k); m+=REF_R0[c]-g.r[c]; } return m*dx/rho0; };
         auto vmax_dense=[&](){ double v=0; for(uint32_t c=0;c<g.r.size();c++) if(g.r[c]>1350.0){ double vv=sqrt(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c]; v=max(v,vv);} return v; };
-        auto vexc=[&](){ double V=0; for(int i=0;i<Nr;i++){ double d=zsurf-surf(i); if(d>0) V+=d*(i+0.5); } return V; };   // r-weighted excavated cross-section ~ crater volume (logged for info)
-        auto dfloor=[&](){ double V=0; for(int i=0;i<Nr;i++){ double d=zsurf-surf(i); if(d>V)V=d; } return V; };   // max excavation depth (bowl floor near the axis): the SETTLING signal -- insensitive to peripheral lateral spreading + far-field/boundary substrate sag (which corrupt Vexc & the datum over long runs)
+        auto vexc=[&](){ double V=0; for(int i=0;i<Nr;i++){ double d=dcol(i); if(d>0) V+=d*(i+0.5); } return V; };   // r-weighted excavated cross-section ~ crater volume (logged for info)
+        auto dfloor=[&](){ double V=0; for(int i=0;i<Nr;i++){ double d=dcol(i); if(d>V)V=d; } return V; };   // max excavation depth (bowl floor near the axis): the SETTLING signal -- insensitive to peripheral lateral spreading + far-field/boundary substrate sag (which corrupt Vexc & the datum over long runs)
         auto afstat=[&](double&amax){ double s=0;long c2=0;amax=0; for(uint32_t c=0;c<g.r.size();c++) if(g.r[c]>1350.0){ s+=g.af[c]; amax=max(amax,(double)g.af[c]); c2++; } return c2?s/c2:0.0; };   // AF diagnostic: is the rock still fluidized late in the run?
         auto Dstat=[&](double&dfrac){ double s=0;long c2=0,nhi=0; for(uint32_t c=0;c<g.r.size();c++) if(g.r[c]>1350.0){ s+=g.D[c]; if(g.D[c]>0.95)nhi++; c2++; } dfrac=c2?(double)nhi/c2:0.0; return c2?s/c2:0.0; };   // damage diagnostic: mean D + fraction fully-damaged (D>0.95) -> does fluidized collapse drive D->1?
         { const char*sd=getenv("CRATER_SNAP_DT"); if(sd){ SNAP_DT=atof(sd); SNAP_DIR=getenv("CRATER_SNAP_DIR"); } }
@@ -469,7 +566,7 @@ int main(int argc,char**argv){
             { int isp=(int)(0.85*Nr);   // far-field radial SPONGE: relax the outer ~15% toward the WB reference each step -> absorbs the slow boundary-edge sink + outgoing waves (the crater sits in the flat interior, r<~0.5 r_max)
               for(int i=isp;i<Nr;i++){ double xi=(double)(i-isp)/max(1,Nr-1-isp), sp=xi*xi;   // ramp 0 (inner edge of sponge) -> 1 (domain edge)
                 for(int k=0;k<Nz;k++){ int c=g.idx(i,0,k); g.r[c]=(1-sp)*g.r[c]+sp*REF_R0[c]; g.mu[c]*=(1-sp); g.mv[c]*=(1-sp); g.mw[c]*=(1-sp); g.E[c]*=(1-sp); } } }
-            if(s%20==0){double dnow=0;for(int i=0;i<Nr;i++)dnow=max(dnow,zsurf-surf(i));dmaxT=max(dmaxT,dnow);}   // track transient excavation
+            if(s%20==0){double dnow=dfloor();dmaxT=max(dmaxT,dnow);}   // track transient excavation
             if(TRACE){ for(size_t j=0;j<tx.size();j++){
                     int cj=g.idx(min((int)(tx[j]/dx),Nr-1),0,min((int)(tz[j]/dx),Nz-1));
                     if(g.r[cj]>300.0){ tvr[j]=interp(g.mu,true,tx[j],tz[j]); tvz[j]=interp(g.mw,true,tx[j],tz[j]); }
@@ -482,7 +579,7 @@ int main(int argc,char**argv){
                     double Pt=Pcell(g,g.idx(min(ci,Nr-1),0,min(ck,Nz-1)));
                     if(Pt>tpm[j]) tpm[j]=Pt; } }
             t+=dt;s++;
-            if(t>=next_log){double vn=vmax_dense(),dn=0,amax,dfrac;for(int i=0;i<Nr;i++)dn=max(dn,zsurf-surf(i));double amean=afstat(amax),Dmean=Dstat(dfrac);   // progress to stderr (sweep DEVNULLs stderr); watch settling + AF + damage state
+            if(t>=next_log){double vn=vmax_dense(),dn=dfloor(),amax,dfrac;double amean=afstat(amax),Dmean=Dstat(dfrac);   // progress to stderr (sweep DEVNULLs stderr); watch settling + AF + damage state
                 fprintf(stderr,"  [crater a=%.0f] t=%.1f/%.0fs steps=%d max|v|=%.2f Vexc=%.4e depth=%.2fkm af=%.3f/%.3f D(mean,frac>.95)=%.3f,%.2f seeds=%ld voidrst=%ld\n",a,t,tend,s,vn,vexc(),dn/1e3,amean,amax,Dmean,dfrac,SEED_N,VZ_N); next_log+=20.0; }
             if(SNAP_DT>0 && SNAP_DIR && t>=snap_next){   // diagnostic field snapshot (axisym r-z slice)
                 char fn[512]; snprintf(fn,sizeof fn,"%s/snap_%07d.txt",SNAP_DIR,(int)(t+0.5));
@@ -504,23 +601,23 @@ int main(int argc,char**argv){
                     meanPrev=meanNow; sumV=0; cntV=0; winStart=t; } }
         }
         double vmx=0,pmx=0; for(uint32_t c=0;c<g.r.size();c++){if(g.r[c]>1350){double v=sqrt(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c];vmx=max(vmx,v);pmx=max(pmx,Pcell(g,c));}}
-        double z0=zsurf-0.5*dx;   // datum = the FIXED original pre-impact surface (topmost undisturbed basalt-cell center); robust vs surf(Nr-1) which the spreading rim can contaminate
-        double zfloor=z0; int ifloor=0; for(int i=0;i<Nr;i++){double zs=surf(i); if(zs<zfloor){zfloor=zs;ifloor=i;}}   // deepest point
-        int iD=Nr-1; for(int i=ifloor;i<Nr;i++){ if(surf(i)>=z0-0.25*dx){ iD=i; break; } }   // apparent crater radius: surface back to the datum, scanning out from the floor
-        double rD=(iD+0.5)*dx, Dapp=2.0*rD, dapp=z0-zfloor, dD=(Dapp>0?dapp/Dapp:0.0);
-        double zrim=z0,rrim=0; for(int i=0;i<Nr;i++){double zs=surf(i); if(zs>zrim){zrim=zs;rrim=(i+0.5)*dx;}}   // rim crest (ejecta uplift above datum)
+        // final geometry from the column-mass metric (datum = mass deficit 0, exact for undisturbed columns)
+        double dapp=0; int ifloor=0; for(int i=0;i<Nr;i++){double d=dcol(i); if(d>dapp){dapp=d;ifloor=i;}}   // deepest point
+        int iD=Nr-1; for(int i=ifloor;i<Nr;i++){ if(dcol(i)<=0.25*dx){ iD=i; break; } }   // apparent crater radius: mass surface back to the datum, scanning out from the floor
+        double rD=(iD+0.5)*dx, Dapp=2.0*rD, dD=(Dapp>0?dapp/Dapp:0.0);
+        double zrim=0,rrim=0; for(int i=0;i<Nr;i++){double u=-dcol(i); if(u>zrim){zrim=u;rrim=(i+0.5)*dx;}}   // rim crest (mass uplift above datum)
         bool finite=isfinite(vmx)&&isfinite(pmx)&&isfinite(dapp);
-        printf("CRATER a=%.0fm U=%.0f g=%.2f TDEC=%.3g ETA=%.3g | grid %dx%d dx=%.0f zsurf=%.1fkm tend=%.1fs steps=%d\n",a,U,GZ,TDEC,ETA_AF,Nr,Nz,dx,zsurf/1e3,tend,s);
+        printf("CRATER a=%.0fm U=%.0f g=%.2f TDEC=%.3g ETA=%.3g%s | grid %dx%d dx=%.0f zsurf=%.1fkm tend=%.1fs steps=%d\n",a,U,GZ,TDEC,ETA_AF,VISC_IMP?" IMPLICIT":"",Nr,Nz,dx,zsurf/1e3,tend,s);
         printf("  settling: %s at t=%.1fs (t_auto=%.1fs cap=%.1fs tolM=%.1f%% Wwin=%.1fs final max|v|=%.1f m/s)\n",(t_settled>0?"SETTLED":(fixed?"FIXED-RUN":"NOT-SETTLED@cap")),(t_settled>0?t_settled:t),t_auto,tend,tolM*100,Wwin,vmx);
-        printf("  D_app=%.2f km  depth(below datum)=%.2f km  transient depth=%.2f km  rim uplift=%.2f km @ r=%.2f km  d/D=%.3f\n",Dapp/1e3,dapp/1e3,dmaxT/1e3,(zrim-z0)/1e3,rrim/1e3,dD);
+        printf("  D_app=%.2f km  depth(below datum)=%.2f km  transient depth=%.2f km  rim uplift=%.2f km @ r=%.2f km  d/D=%.3f  (column-mass metric)\n",Dapp/1e3,dapp/1e3,dmaxT/1e3,zrim/1e3,rrim/1e3,dD);
         printf("  stability: max|v|=%.1f m/s  maxP=%.2e Pa  %s\n",vmx,pmx,finite?"FINITE":"NONFINITE-BLOWUP");
         { double mcell=VZ_DM*2*3.14159265358979*0.5*dx*dx*dx;   // injected mass (kg, full 2pi; r~0.5dx underestimates outer cells -- order-of-magnitude only)
           double mtr=2700.0*4.18879*a*a*a;   // impactor mass scale for context
           printf("  voidzero: below-surface refills=%ld  injected rho-sum=%.3e (order ~%.2e kg vs impactor %.2e kg)  mode=%s\n",VZ_N,VZ_DM,mcell,mtr,VOID_AMB>0?"AMBIENT":"LEGACY-REF"); }
         printf("RESULT %.1f %.4f %.4f %.4f %.4f\n",a,Dapp,dapp,dmaxT,dD);   // machine-readable (preliminary, in-loop): a D_app depth transient d/D (metres)
         const char*prof=argc>11?argv[11]:"crater_profile.txt";   // dump the final surface profile z_s(r)-z0 for ROBUST offline depth-diameter measurement
-        FILE*pf=fopen(prof,"w"); if(pf){ fprintf(pf,"# r_m  zsurf-z0_m   (a=%.0f U=%.0f g=%.2f TDEC=%.3g ETA=%.3g dx=%.0f z0=%.1f)\n",a,U,GZ,TDEC,ETA_AF,dx,z0);
-            for(int i=0;i<Nr;i++) fprintf(pf,"%.1f %.3f\n",(i+0.5)*dx, surf(i)-z0); fclose(pf); }
+        FILE*pf=fopen(prof,"w"); if(pf){ fprintf(pf,"# r_m  -dcol_m (column-mass surface vs datum)   (a=%.0f U=%.0f g=%.2f TDEC=%.3g ETA=%.3g%s dx=%.0f zsurf=%.1f)\n",a,U,GZ,TDEC,ETA_AF,VISC_IMP?" IMP":"",dx,zsurf);
+            for(int i=0;i<Nr;i++) fprintf(pf,"%.1f %.3f\n",(i+0.5)*dx, -dcol(i)); fclose(pf); }
     } else if(mode=="shear"){
         // small-amplitude elastic shear pulse v_y(x); must propagate at c_s=sqrt(G/rho0)
         MAT=Material::basalt(); int N=800;double L=400e3,dx=L/N,CFL=0.3; double rho0=2700,G=MAT.G,cs=sqrt(G/rho0);
@@ -746,8 +843,141 @@ int main(int argc,char**argv){
         double t=0;int s=0;while(t<tend){double dt=CFL*dx/maxspeed(g);if(t+dt>tend)dt=tend-t;step_rk2(g,dt);t+=dt;s++;}
         double vmax=0;for(int k=0;k<N;k++){int c=g.idx(0,0,k);vmax=max(vmax,fabs(g.mw[c]/g.r[c]));}
         printf("Free surface max|v|=%.3f m/s  GATE: %s\n",vmax,vmax<5.0?"PASS":"CHECK");
+    } else if(mode=="visc_diff"){ // Option C gate 3.4b: the implicit viscous solve is a correct diffusion operator at dt >> the explicit stability limit.
+        // (A) Cartesian: transverse cosine modes v_y,v_z on a fluidized 1D slab. cos(k(i+.5)dx), k=m*pi/L is the
+        //     discrete Neumann eigenmode: each backward-Euler step must scale it by exactly f=1/(1+nu*lam*dt),
+        //     lam=(2-2cos(k dx))/dx^2. The implied nu_eff=(1/f-1)/(lam*dt) must equal nu to 1e-6 (solver exact),
+        //     and the cumulative decay must track exp(-nu k^2 t) within 10% (k dx small; BE time bias ~x^2/2).
+        // (B) axisym: v_r=A*r is an exact DISCRETE null mode of the cylindrical operator (the area-weighted flux
+        //     divergence cancels the -v/r^2 curvature diagonal) -> near-axis cells untouched; v_z=const invariant.
+        MAT=Material::ideal(1.4); VISC_IMP=true; bool okA;
+        double worstnu,ampA,exact,zerr;
+        { int N=256; double dx=1.0,rho0=1.0,nu=1.0; ETA_AF=nu*rho0; AXISYM=false;
+          int m=4; double L=N*dx,kk=m*M_PI/L,lam=(2.0-2.0*cos(kk*dx))/(dx*dx);
+          double dtv=20.0*dx*dx/(2.0*nu);   // 20x the 1D explicit stability limit
+          Grid g(N,1,1,dx); double A0=1.0; int NS=12;
+          for(int i=0;i<N;i++){int c=g.idx(i,0,0); g.r[c]=rho0; g.af[c]=1.0; double vy=A0*cos(kk*(i+0.5)*dx);
+              g.mv[c]=rho0*vy; g.mw[c]=0.5*rho0*vy; g.E[c]=1e5+0.5*(g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/rho0; }
+          double fex=1.0/(1.0+nu*lam*dtv), amp=A0; worstnu=0;
+          for(int s2=0;s2<NS;s2++){ implicit_visc(g,dtv);
+              double num=0,den=0; for(int i=0;i<N;i++){int c=g.idx(i,0,0); double ph=cos(kk*(i+0.5)*dx); num+=(g.mv[c]/g.r[c])*ph; den+=ph*ph; }
+              double a1=num/den, f=a1/amp; amp=a1;
+              worstnu=max(worstnu,fabs((1.0/f-1.0)/(lam*dtv)-nu)/nu); }
+          double numz=0,den=0; for(int i=0;i<N;i++){int c=g.idx(i,0,0); double ph=cos(kk*(i+0.5)*dx); numz+=(g.mw[c]/g.r[c])*ph; den+=ph*ph; }
+          double ampz=numz/den, expz=0.5*A0*pow(fex,NS);
+          ampA=amp; exact=A0*exp(-nu*kk*kk*NS*dtv); zerr=fabs(ampz-expz)/expz;
+          okA=(worstnu<1e-6 && fabs(amp-exact)/exact<0.10 && zerr<1e-6);
+          printf("visc_diff A: nu_eff err(max)=%.2e; vy amp %.4e vs exp(-nu k2 t) %.4e (%+.1f%%); vz BE-factor err=%.2e\n",
+              worstnu,ampA,exact,100*(ampA-exact)/exact,zerr); }
+        bool okB;
+        { int Nr=64,Nz=8; double dx=1.0,rho0=1.0,nu=1.0; ETA_AF=nu*rho0; AXISYM=true;
+          Grid g(Nr,1,Nz,dx); double A0=1e-2,W0=3.0;
+          for(int i=0;i<Nr;i++)for(int k=0;k<Nz;k++){int c=g.idx(i,0,k); g.r[c]=rho0; g.af[c]=1.0; double r=(i+0.5)*dx;
+              g.mu[c]=rho0*A0*r; g.mw[c]=rho0*W0; g.E[c]=1e5+0.5*(g.mu[c]*g.mu[c]+g.mw[c]*g.mw[c])/rho0; }
+          double dtv=10.0*dx*dx/nu;   // ~40x the 2D explicit limit; outer-wall Neumann defect decays e^(-di/3.2)
+          implicit_visc(g,dtv);
+          double eru=0,erw=0;
+          for(int i=0;i<20;i++)for(int k=0;k<Nz;k++){int c=g.idx(i,0,k); double r=(i+0.5)*dx;
+              eru=max(eru,fabs(g.mu[c]/g.r[c]-A0*r)/(A0*Nr*dx)); erw=max(erw,fabs(g.mw[c]/g.r[c]-W0)/W0); }
+          okB=(eru<1e-5&&erw<1e-10);
+          printf("visc_diff B (axisym): null-mode v_r=A*r residual=%.2e (tol 1e-5, i<20); v_z=const err=%.2e\n",eru,erw); }
+        AXISYM=false; VISC_IMP=false; ETA_AF=0;
+        printf("GATE (implicit viscous solve: exact BE diffusion at 20-40x explicit dt & cylindrical null mode): %s\n",(okA&&okB)?"PASS":"CHECK");
+    } else if(mode=="visc_agree"){ // Option C gate 3.4c: explicit and implicit viscous paths agree at small eta (both stable), full step_rk2.
+        // Fluidized basalt slab (af=1 -> Y=0: strength inert), transverse cosine mode: hydro is inert (no normal flow,
+        // uniform P), so the two runs differ ONLY in the viscous scheme (explicit-in-RK2 vs backward Euler). At
+        // nu*lam*dt ~ 6e-4 the schemes differ by O(x^2/2) per step -> fields must agree to ~1e-4, gate at 1e-3.
+        MAT=Material::basalt(); double dx=500.0,CFL=0.4; int N=256; double rho0=MAT.rho0;
+        double eta=1e8; int m=24; double L=N*dx,kk=m*M_PI/L; double A0=1.0,T=25.0;
+        vector<double> vy1(N),vy2(N); double amp1=0,amp2=0;
+        for(int run=0;run<2;run++){
+            VISC_IMP=(run==1); ETA_AF=eta; TDEC=0;C_ACT=0;
+            Grid g(N,1,1,dx);
+            for(int i=0;i<N;i++){int c=g.idx(i,0,0); g.r[c]=rho0; g.af[c]=1.0; double vy=A0*cos(kk*(i+0.5)*dx);
+                g.mv[c]=rho0*vy; g.E[c]=0.5*rho0*vy*vy; }
+            double t=0; while(t<T){ double dt=CFL*dx/maxspeed(g); if(t+dt>T)dt=T-t; step_rk2(g,dt); t+=dt; }
+            double num=0,den=0; for(int i=0;i<N;i++){int c=g.idx(i,0,0); double vv=g.mv[c]/g.r[c];
+                (run?vy2:vy1)[i]=vv; double ph=cos(kk*(i+0.5)*dx); num+=vv*ph; den+=ph*ph; }
+            if(run)amp2=num/den; else amp1=num/den; }
+        VISC_IMP=false; ETA_AF=0;
+        double dmax=0; for(int i=0;i<N;i++) dmax=max(dmax,fabs(vy1[i]-vy2[i]));
+        double dec=1.0-amp1/A0;
+        printf("visc_agree: explicit amp=%.6f implicit amp=%.6f (decay %.1f%%), max field diff=%.3e (A0=%g)\n",amp1,amp2,100*dec,dmax,A0);
+        printf("GATE (explicit vs implicit at small eta: fields agree <1e-3*A0 & decay >1%%): %s\n",(dmax<1e-3*A0&&dec>0.01)?"PASS":"CHECK");
+    } else if(mode=="visc_energy"){ // Option C gate 3.4e: viscous-dominated window -- total energy conserved, dissipation heats.
+        // nu*dt/dx^2 ~ 30 (impossible explicitly): the mode's KE is wiped out in ~10 steps; ALL of it must reappear
+        // as internal energy (the explicit path silently deleted it). Gate: |dE_total| < 1e-4*KE0 and IE gain
+        // matches KE loss to 1e-4, with >50% of KE0 actually dissipated in the window.
+        MAT=Material::basalt(); double dx=500.0,CFL=0.4; int N=256; double rho0=MAT.rho0;
+        VISC_IMP=true; ETA_AF=5e11; TDEC=0;C_ACT=0;
+        int m=24; double L=N*dx,kk=m*M_PI/L; double A0=2.0,T=5.0;
+        Grid g(N,1,1,dx);
+        for(int i=0;i<N;i++){int c=g.idx(i,0,0); g.r[c]=rho0; g.af[c]=1.0; double vy=A0*cos(kk*(i+0.5)*dx);
+            g.mv[c]=rho0*vy; g.E[c]=0.5*rho0*vy*vy; }
+        double E0=0,KE0=0; for(int i=0;i<N;i++){int c=g.idx(i,0,0); E0+=g.E[c]; KE0+=0.5*(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c]; }
+        double t=0; while(t<T){ double dt=CFL*dx/maxspeed(g); if(t+dt>T)dt=T-t; step_rk2(g,dt); t+=dt; }
+        double E1=0,KE1=0,IE1=0; for(int i=0;i<N;i++){int c=g.idx(i,0,0); E1+=g.E[c];
+            double ke=0.5*(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c]; KE1+=ke; IE1+=g.E[c]-ke; }
+        VISC_IMP=false; ETA_AF=0;
+        double drift=fabs(E1-E0)/KE0, keloss=(KE0-KE1)/KE0, heat=IE1/KE0;   // IE0=0 by construction
+        printf("visc_energy: total E drift=%.2e of KE0; KE lost %.4f -> IE gained %.4f (of KE0); CG iters=%ld\n",drift,keloss,heat,VISC_IT);
+        printf("GATE (viscous energy: |dE_tot|<1e-4*KE0 & heating==KE loss to 1e-4 & >50%% dissipated): %s\n",(drift<1e-4&&fabs(heat-keloss)<1e-4&&keloss>0.5)?"PASS":"CHECK");
+    } else if(mode=="bingham_slope"){ // Option C gate 3.4d: Bingham arrest. A fluidized triangular HEAP on an intact flat
+        // substrate (2D x-z). Driving basal shear tau ~ rho*g*h*|dh/dx|; the von Mises cap Y_B yields in shear at
+        // Y_B/sqrt(3). Analytic arrest: a Bingham heap spreads until rho*g*h*|dh/dx| <= tau_y everywhere (parabolic
+        // final flank h^2 = 2*(tau_y/rho g)*d).
+        // Three-way rate contrast (robust to the two known numerical floors: free-surface cell churn ~0.5 m/s and
+        // slow vacuum-face sloughing; NB the heap is NOT shallow (H/W~0.3) so 2D stress redistribution legitimately
+        // arrests it a factor of a few above the naive infinite-slope envelope -- the envelope ratio is only bounded,
+        // not pinned to 1):
+        //   (A) tau_y = 2.5*tau_max -> STATIC: peak holds (>=92% of H), only the sloughing floor moves.
+        //   (B) tau_y ~ 0.2*tau_max -> FLOWS (peak drops >25%) then SELF-ARRESTS: late-window peak-decay rate <15%
+        //       of the early rate, af still 1 throughout -- TDEC=0, so arrest is by STRESS BALANCE alone (Option C
+        //       acceptance signature), and the flank stays within a resolution-tolerant band of the yield envelope.
+        //   (C) Y_B=0 (Newtonian control, same eta) -> must KEEP collapsing: proves B's arrest is the yield floor,
+        //       not viscosity or numerics.
+        MAT=Material::basalt(); GZ=3.71; ROCK=true; RHO_CFL=100.0; RHO_VAC=100.0; VISC_IMP=true; ETA_AF=5e7; TDEC=0;C_ACT=0;
+        VOID_AMB=0.27;   // void resets go to AMBIENT -- a lithostatic reference would REFILL evacuated cells as the heap subsides (the 2026-07-02 voidzero finding)
+        double rho0=MAT.rho0,Ab=MAT.A; int NX=112,NZc=20; double dx=250.0,CFL=0.4;
+        double z0=1500.0, H=2000.0, W=6000.0, xc=0.5*NX*dx;
+        double taumax=rho0*GZ*H*(H/W);   // ~ rho g h dh/dx at the peak flank
+        double res[3][4]; // per case: hmax/H at end, early peak-decay (m), late peak-decay (m), flank stress ratio
+        vector<double> hsamp;
+        for(int cs=0;cs<3;cs++){
+            Y_BINGHAM=(cs==0? 2.5*sqrt(3.0)*taumax : (cs==1? 0.2*sqrt(3.0)*taumax : 0.0));
+            double tauy=(Y_BINGHAM>0?Y_BINGHAM/sqrt(3.0):1e30);
+            Grid g(NX,1,NZc,dx);
+            auto hs0=[&](int i){ double xx=fabs((i+0.5)*dx-xc); return xx<W? H*(1.0-xx/W):0.0; };
+            for(int i=0;i<NX;i++)for(int k=0;k<NZc;k++){ double z=(k+0.5)*dx; int c=g.idx(i,0,k);
+                double zs=z0+hs0(i);
+                if(z<zs){ g.r[c]=rho0*(1.0+rho0*GZ*(zs-z)/Ab); } else g.r[c]=0.27; g.E[c]=0;
+                g.af[c]=(z>z0)?1.0:0.0; }   // heap + everything above the substrate plane is fluidized; substrate intact
+            set_ref(g);
+            auto surfM=[&](int i){ double m2=0; for(int k=0;k<NZc;k++){ double r=g.r[g.idx(i,0,k)]; if(r>100.0) m2+=r; } return m2*dx/rho0; };   // column-mass surface (threshold-robust)
+            vector<double> h0(NX); for(int i=0;i<NX;i++) h0[i]=surfM(i);
+            double Tc=(cs==0?400.0:(cs==1?1200.0:600.0)), t=0, nlog=100.0;
+            hsamp.assign(1,H);   // hmax samples every 100 s
+            while(t<Tc){ double dt=CFL*dx/maxspeed(g); if(t+dt>Tc)dt=Tc-t; step_rk2(g,dt);
+                for(int i=0;i<NX;i++)for(int k=0;k<2;k++){int c=g.idx(i,0,k); g.r[c]=REF_R0[c]; g.mu[c]=g.mv[c]=g.mw[c]=0; g.E[c]=0;}  // pinned bedrock floor
+                t+=dt;
+                if(t>=nlog){ double hm=0; for(int i=2;i<NX-2;i++) hm=max(hm,surfM(i)-z0); hsamp.push_back(hm); nlog+=100.0; } }
+            double hmax=0,ratio=0;
+            for(int i=2;i<NX-2;i++){ double h=surfM(i)-z0; hmax=max(hmax,h);
+                double hp=surfM(i+1)-z0, hm2=surfM(i-1)-z0;
+                if(h>500.0) ratio=max(ratio, rho0*GZ*h*fabs(hp-hm2)/(2*dx) / tauy); }   // steepest-flank stress vs yield envelope
+            int ns=hsamp.size();
+            double early=hsamp[0]-hsamp[min(4,ns-1)];                    // peak decay over the first 400 s
+            double late =hsamp[max(0,ns-5)]-hsamp[ns-1];                 // ... and the last 400 s
+            res[cs][0]=hmax/H; res[cs][1]=early; res[cs][2]=late; res[cs][3]=ratio;
+            printf("bingham_slope %s: Y_B=%.3e  hmax/H=%.3f  peak decay early/late=%.0f/%.0f m  flank tau/tau_y=%.2f\n",
+                cs==0?"A(static) ":(cs==1?"B(arrest) ":"C(control)"),Y_BINGHAM,res[cs][0],early,late,ratio); }
+        VISC_IMP=false; ETA_AF=0; Y_BINGHAM=0; ROCK=false; GZ=0; VOID_AMB=0;
+        bool A=(res[0][0]>0.92);                                            // sub-yield: peak holds (sloughing floor only)
+        bool B=(res[1][0]<0.75 && res[1][2]<0.15*res[1][1] && res[1][3]<8.0);// flowed, then late rate <15% of early = ARREST, flank bounded
+        bool C=(res[2][2]>3.0*res[1][2] && res[2][0]<res[1][0]);             // Newtonian control keeps collapsing
+        printf("GATE (Bingham arrest: static below yield; flow-then-self-arrest above it; Y_B=0 control keeps flowing): %s\n",(A&&B&&C)?"PASS":"CHECK");
     } else {
-        fprintf(stderr,"unknown mode '%s' (modes: sod sedov shear yield vacuum bshock freefall atmos tensile alimpact pierazzo2d prater substrate collapse surface tracer af_activate sedov_axi lame af_visc vib_advect friction crater)\n",mode.c_str());
+        fprintf(stderr,"unknown mode '%s' (modes: sod sedov shear yield vacuum bshock freefall atmos tensile alimpact pierazzo2d prater substrate collapse surface tracer af_activate sedov_axi lame af_visc vib_advect friction crater visc_diff visc_agree visc_energy bingham_slope)\n",mode.c_str());
         return 2;   // fatal: never silently validate the wrong physics
     }
     return 0;
