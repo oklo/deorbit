@@ -1,5 +1,15 @@
 # PICKUP — Option C: implicit Bingham viscosity for acoustic-fluidization collapse
 
+> ## STATUS (2026-07-07 pm, commit e54f12f)
+> Sections 3.1-3.4 DONE: implicit_visc() in hydro_cpu.cpp (backward-Euler CG solve,
+> axisym-correct, energy-exact heating; crater arg16=1), explicit Lop term disabled
+> when active, all four gates written and green (43/43 total; feature-off = 39
+> pre-existing unchanged), column-mass depth metric in (the 3.4 hygiene item).
+> Section 3.5 calibration IN FLIGHT: stage-1 validation runs a=1000/eta=1e9 and
+> a=3000/eta=3e9 (Y_B=3e6, TDEC=900/1400, traced) via run_optc.sh -> state/optc/.
+> Then: TDEC doubling check, full eta x Y_B grid, harvest analyze_crater.py ->
+> mars_dD_oracle.py. GPU port after calibration converges (definition of done 4).
+
 Self-contained handoff for a fresh session. **This is the entry point for the
 next major effort on the euler code.** Repo: github.com/oklo/deorbit, code in
 `hydrocodes/euler/` (CPU oracle `hydro_cpu.cpp` = FP64 calibration engine;

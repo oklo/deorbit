@@ -1,3 +1,18 @@
+> ## OPTION C IMPLEMENTED (2026-07-07 pm; commit e54f12f; entry point = PICKUP-optionC.md)
+> **Implicit Bingham viscosity is in and fully gated (43/43 PASS, 39 pre-existing
+> unchanged = feature-off bit-identity).** hydro_cpu.cpp implicit_visc(): operator-split
+> backward-Euler div(eta grad v), face-harmonic variable eta, axisym-correct (area-weighted
+> faces + -v/r^2 curvature diagonal; v_r=A*r an exact discrete null mode), Jacobi-CG 1e-8,
+> energy-exact viscous heating (the explicit term never heated). eta_eff now UNBOUNDED
+> (old explicit ceiling 2.4e8 Pa s gone). Crater arg16=1 enables. New gates: visc_diff
+> (BE diffusion exact 8e-14 at 20-40x explicit dt), visc_agree (=explicit at small eta),
+> visc_energy (drift 1e-8), bingham_slope (heap: static below yield / flow-then-SELF-ARREST
+> above / Y_B=0 control keeps flowing -- arrest by stress balance with af=1 frozen).
+> Crater depth/D_app switched to the COLUMN-MASS (mass-deficit) surface -- item (ii) below
+> done, the a=3000 threshold jump cannot recur. run_optc.sh = calibration launcher.
+> Stage-1 validation in flight: a=1000 eta=1e9 + a=3000 eta=3e9 (Y_B=3e6, TDEC=2x crater
+> timescale, traced, state/optc/). Next: TDEC doubling check + full eta x Y_B grid.
+
 > ## DEEP DIAGNOSTIC VERDICT (2026-07-07; instrumented reruns, state/diag/, snapshots+counters)
 > **Both prior hypotheses are refuted as drivers; the 'breakthrough' is a metric artifact
 > riding a slow real evolution.** Direct observations:
