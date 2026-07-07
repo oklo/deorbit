@@ -235,6 +235,8 @@ static void set_ref(const Grid&g){ int n=g.nx*g.ny*g.nz; REF_R0.assign(n,0); REF
 // would otherwise feed spurious deviatoric stress into the strength solver at the free surface.
 static double VOID_AMB = 0.0;  // >0: void cells reset to this AMBIENT density instead of REF_R0 (a lithostatic reference REFILLS evacuated below-surface cells with solid rock -- the 2026-07-02 prater finding); 0 = legacy
 static long VZ_N=0; static double VZ_DM=0;  // instrumentation: count of SOLID-reference void resets (REF_R0>half-density = below-surface refill under legacy) + the rho they inject(ed)
+static long SEED_N=0;          // diagnostic (2026-07-06): cumulative vib seeding events -- discriminates cavitation-reseed (ongoing seeds) from af-ratio persistence (seeds stop after excavation)
+static double SNAP_DT=0.0; static const char*SNAP_DIR=0;   // env CRATER_SNAP_DT/CRATER_SNAP_DIR: periodic full-field snapshots (diagnostic only)
 static void void_cells(Grid&g){ if(RHO_CFL<=0)return; bool wb=!REF_R0.empty(); int N=g.r.size();
     for(int c=0;c<N;c++) if(g.r[c]<RHO_CFL){ g.mu[c]=g.mv[c]=g.mw[c]=0; if(wb){
         if(REF_R0[c]>1350.0){VZ_N++;VZ_DM+=REF_R0[c]-g.r[c];}   // a below-surface (solid-reference) void: legacy refills it with rock
@@ -255,7 +257,7 @@ static void update_af(Grid&g,double dt){
         if(P>g.Pmax[c]){                     // new pressure peak: track it; seed vib only if the rise is SHOCK-sized (> P_ACT)
             double dP=P-g.Pmax[c]; g.Pmax[c]=P;
             if(dP>P_ACT){ double sp=sqrt(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/max(g.r[c],1e-30);
-                g.vib[c]=max(g.vib[c],C_ACT*sp); } }
+                g.vib[c]=max(g.vib[c],C_ACT*sp); SEED_N++; } }
         g.vib[c]*=dec;                        // acoustic vibrations decay
         double cs=MAT.sound_speed(g.r[c],eint(g,c)), pvib=g.r[c]*cs*g.vib[c], pov=max(P,P_COH);
         g.af[c]=pvib/(pvib+pov);              // fluidization ratio in [0,1)
@@ -442,7 +444,8 @@ int main(int argc,char**argv){
         auto dfloor=[&](){ double V=0; for(int i=0;i<Nr;i++){ double d=zsurf-surf(i); if(d>V)V=d; } return V; };   // max excavation depth (bowl floor near the axis): the SETTLING signal -- insensitive to peripheral lateral spreading + far-field/boundary substrate sag (which corrupt Vexc & the datum over long runs)
         auto afstat=[&](double&amax){ double s=0;long c2=0;amax=0; for(uint32_t c=0;c<g.r.size();c++) if(g.r[c]>1350.0){ s+=g.af[c]; amax=max(amax,(double)g.af[c]); c2++; } return c2?s/c2:0.0; };   // AF diagnostic: is the rock still fluidized late in the run?
         auto Dstat=[&](double&dfrac){ double s=0;long c2=0,nhi=0; for(uint32_t c=0;c<g.r.size();c++) if(g.r[c]>1350.0){ s+=g.D[c]; if(g.D[c]>0.95)nhi++; c2++; } dfrac=c2?(double)nhi/c2:0.0; return c2?s/c2:0.0; };   // damage diagnostic: mean D + fraction fully-damaged (D>0.95) -> does fluidized collapse drive D->1?
-        double dmaxT=0; double t=0;int s=0; double t_settled=-1.0,next_log=t_auto;
+        { const char*sd=getenv("CRATER_SNAP_DT"); if(sd){ SNAP_DT=atof(sd); SNAP_DIR=getenv("CRATER_SNAP_DIR"); } }
+        double dmaxT=0; double t=0;int s=0; double t_settled=-1.0,next_log=t_auto; double snap_next=SNAP_DT;
         double sumV=0.0,meanPrev=-1.0,winStart=-1.0; long cntV=0;   // non-overlapping window-mean drift detector
         while(t<tend){double dt=CFL*dx/maxspeed(g);if(t+dt>tend)dt=tend-t;step_rk2(g,dt);
             for(int i=0;i<Nr;i++)for(int k=0;k<2;k++){int c=g.idx(i,0,k);g.r[c]=REF_R0[c];g.mu[c]=g.mv[c]=g.mw[c]=0;g.E[c]=0;}  // pin deep far-field floor
@@ -452,7 +455,15 @@ int main(int argc,char**argv){
             if(s%20==0){double dnow=0;for(int i=0;i<Nr;i++)dnow=max(dnow,zsurf-surf(i));dmaxT=max(dmaxT,dnow);}   // track transient excavation
             t+=dt;s++;
             if(t>=next_log){double vn=vmax_dense(),dn=0,amax,dfrac;for(int i=0;i<Nr;i++)dn=max(dn,zsurf-surf(i));double amean=afstat(amax),Dmean=Dstat(dfrac);   // progress to stderr (sweep DEVNULLs stderr); watch settling + AF + damage state
-                fprintf(stderr,"  [crater a=%.0f] t=%.1f/%.0fs steps=%d max|v|=%.2f Vexc=%.4e depth=%.2fkm af=%.3f/%.3f D(mean,frac>.95)=%.3f,%.2f\n",a,t,tend,s,vn,vexc(),dn/1e3,amean,amax,Dmean,dfrac); next_log+=20.0; }
+                fprintf(stderr,"  [crater a=%.0f] t=%.1f/%.0fs steps=%d max|v|=%.2f Vexc=%.4e depth=%.2fkm af=%.3f/%.3f D(mean,frac>.95)=%.3f,%.2f seeds=%ld voidrst=%ld\n",a,t,tend,s,vn,vexc(),dn/1e3,amean,amax,Dmean,dfrac,SEED_N,VZ_N); next_log+=20.0; }
+            if(SNAP_DT>0 && SNAP_DIR && t>=snap_next){   // diagnostic field snapshot (axisym r-z slice)
+                char fn[512]; snprintf(fn,sizeof fn,"%s/snap_%07d.txt",SNAP_DIR,(int)(t+0.5));
+                FILE*fs=fopen(fn,"w");
+                if(fs){ fprintf(fs,"# t=%.2f nx=%d nz=%d dx=%.1f cols: i k rho P vib af D Pmax\n",t,Nr,Nz,dx);
+                    for(int i=0;i<Nr;i++)for(int k=0;k<Nz;k++){ int c=g.idx(i,0,k);
+                        fprintf(fs,"%d %d %.4e %.4e %.4e %.4e %.3f %.4e\n",i,k,g.r[c],Pcell(g,c),g.vib[c],g.af[c],g.D[c],g.Pmax[c]); }
+                    fclose(fs); }
+                snap_next+=SNAP_DT; }
             if(!fixed && t>t_auto && s%5==0){double V=dfloor();   // run-to-settling: compare successive window-means of the BOWL FLOOR DEPTH (settles fast ~t_auto; stops before substrate sag accrues)
                 if(winStart<0)winStart=t; sumV+=V; cntV++;
                 if(t-winStart>=Wwin){ double meanNow=sumV/cntV;
