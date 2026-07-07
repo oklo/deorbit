@@ -445,6 +445,22 @@ int main(int argc,char**argv){
         auto afstat=[&](double&amax){ double s=0;long c2=0;amax=0; for(uint32_t c=0;c<g.r.size();c++) if(g.r[c]>1350.0){ s+=g.af[c]; amax=max(amax,(double)g.af[c]); c2++; } return c2?s/c2:0.0; };   // AF diagnostic: is the rock still fluidized late in the run?
         auto Dstat=[&](double&dfrac){ double s=0;long c2=0,nhi=0; for(uint32_t c=0;c<g.r.size();c++) if(g.r[c]>1350.0){ s+=g.D[c]; if(g.D[c]>0.95)nhi++; c2++; } dfrac=c2?(double)nhi/c2:0.0; return c2?s/c2:0.0; };   // damage diagnostic: mean D + fraction fully-damaged (D>0.95) -> does fluidized collapse drive D->1?
         { const char*sd=getenv("CRATER_SNAP_DT"); if(sd){ SNAP_DT=atof(sd); SNAP_DIR=getenv("CRATER_SNAP_DIR"); } }
+        // Lagrangian tracer lattice (env CRATER_TRACE=1; diagnostic, Collins et al. 2020 Fig.2 style):
+        // one tracer per cell in the pre-impact target, advected by the bilinearly interpolated
+        // velocity, each recording its own peak pressure. Written as tracers_XXXXXXX.txt next to
+        // the field snapshots (cols: id i0 k0 r_m z_m Pmax).
+        bool TRACE = getenv("CRATER_TRACE") && SNAP_DT>0 && SNAP_DIR;
+        vector<double> tx,tz,tpm; vector<int> ti0,tk0;
+        int ksurf=(int)(zsurf/dx);
+        if(TRACE){ for(int i=0;i<Nr;i++)for(int k=0;k<ksurf;k++){
+                tx.push_back((i+0.5)*dx); tz.push_back((k+0.5)*dx); tpm.push_back(0.0);
+                ti0.push_back(i); tk0.push_back(k); } }
+        auto interp=[&](const vector<double>&F,bool byrho,double x,double z)->double{   // bilinear at (x,z), cell-centered
+            double fi=x/dx-0.5, fk=z/dx-0.5;
+            int i0=(int)floor(fi), k0=(int)floor(fk); double ai=fi-i0, ak=fk-k0;
+            i0=max(0,min(Nr-2,i0)); k0=max(0,min(Nz-2,k0));
+            auto val=[&](int i,int k){ int c=g.idx(i,0,k); return byrho? F[c]/max(g.r[c],1e-30) : F[c]; };
+            return (1-ai)*(1-ak)*val(i0,k0)+ai*(1-ak)*val(i0+1,k0)+(1-ai)*ak*val(i0,k0+1)+ai*ak*val(i0+1,k0+1); };
         double dmaxT=0; double t=0;int s=0; double t_settled=-1.0,next_log=t_auto; double snap_next=SNAP_DT;
         double sumV=0.0,meanPrev=-1.0,winStart=-1.0; long cntV=0;   // non-overlapping window-mean drift detector
         while(t<tend){double dt=CFL*dx/maxspeed(g);if(t+dt>tend)dt=tend-t;step_rk2(g,dt);
@@ -453,6 +469,14 @@ int main(int argc,char**argv){
               for(int i=isp;i<Nr;i++){ double xi=(double)(i-isp)/max(1,Nr-1-isp), sp=xi*xi;   // ramp 0 (inner edge of sponge) -> 1 (domain edge)
                 for(int k=0;k<Nz;k++){ int c=g.idx(i,0,k); g.r[c]=(1-sp)*g.r[c]+sp*REF_R0[c]; g.mu[c]*=(1-sp); g.mv[c]*=(1-sp); g.mw[c]*=(1-sp); g.E[c]*=(1-sp); } } }
             if(s%20==0){double dnow=0;for(int i=0;i<Nr;i++)dnow=max(dnow,zsurf-surf(i));dmaxT=max(dmaxT,dnow);}   // track transient excavation
+            if(TRACE){ for(size_t j=0;j<tx.size();j++){
+                    double vr=interp(g.mu,true,tx[j],tz[j]), vz=interp(g.mw,true,tx[j],tz[j]);
+                    tx[j]+=vr*dt; tz[j]+=vz*dt;
+                    if(tx[j]<0) tx[j]=-tx[j];                               // axisym reflection
+                    tx[j]=min(tx[j],(Nr-0.51)*dx); tz[j]=max(0.51*dx,min(tz[j],(Nz-0.51)*dx));
+                    int ci=(int)(tx[j]/dx), ck=(int)(tz[j]/dx);
+                    double Pt=Pcell(g,g.idx(min(ci,Nr-1),0,min(ck,Nz-1)));
+                    if(Pt>tpm[j]) tpm[j]=Pt; } }
             t+=dt;s++;
             if(t>=next_log){double vn=vmax_dense(),dn=0,amax,dfrac;for(int i=0;i<Nr;i++)dn=max(dn,zsurf-surf(i));double amean=afstat(amax),Dmean=Dstat(dfrac);   // progress to stderr (sweep DEVNULLs stderr); watch settling + AF + damage state
                 fprintf(stderr,"  [crater a=%.0f] t=%.1f/%.0fs steps=%d max|v|=%.2f Vexc=%.4e depth=%.2fkm af=%.3f/%.3f D(mean,frac>.95)=%.3f,%.2f seeds=%ld voidrst=%ld\n",a,t,tend,s,vn,vexc(),dn/1e3,amean,amax,Dmean,dfrac,SEED_N,VZ_N); next_log+=20.0; }
@@ -463,6 +487,11 @@ int main(int argc,char**argv){
                     for(int i=0;i<Nr;i++)for(int k=0;k<Nz;k++){ int c=g.idx(i,0,k); double ir=1.0/max(g.r[c],1e-30);
                         fprintf(fs,"%d %d %.4e %.4e %.4e %.4e %.3f %.4e %.3e %.3e %.3e\n",i,k,g.r[c],Pcell(g,c),g.vib[c],g.af[c],g.D[c],g.Pmax[c],g.mu[c]*ir,g.mw[c]*ir,eint(g,c)); }
                     fclose(fs); }
+                if(TRACE){ char ft[512]; snprintf(ft,sizeof ft,"%s/tracers_%07d.txt",SNAP_DIR,(int)(t+0.5));
+                    FILE*f2=fopen(ft,"w");
+                    if(f2){ fprintf(f2,"# t=%.2f n=%zu dx=%.1f ksurf=%d cols: id i0 k0 r_m z_m Pmax\n",t,tx.size(),dx,ksurf);
+                        for(size_t j=0;j<tx.size();j++) fprintf(f2,"%zu %d %d %.2f %.2f %.4e\n",j,ti0[j],tk0[j],tx[j],tz[j],tpm[j]);
+                        fclose(f2); } }
                 snap_next+=SNAP_DT; }
             if(!fixed && t>t_auto && s%5==0){double V=dfloor();   // run-to-settling: compare successive window-means of the BOWL FLOOR DEPTH (settles fast ~t_auto; stops before substrate sag accrues)
                 if(winStart<0)winStart=t; sumV+=V; cntV++;
