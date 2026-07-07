@@ -459,9 +459,9 @@ int main(int argc,char**argv){
             if(SNAP_DT>0 && SNAP_DIR && t>=snap_next){   // diagnostic field snapshot (axisym r-z slice)
                 char fn[512]; snprintf(fn,sizeof fn,"%s/snap_%07d.txt",SNAP_DIR,(int)(t+0.5));
                 FILE*fs=fopen(fn,"w");
-                if(fs){ fprintf(fs,"# t=%.2f nx=%d nz=%d dx=%.1f cols: i k rho P vib af D Pmax\n",t,Nr,Nz,dx);
-                    for(int i=0;i<Nr;i++)for(int k=0;k<Nz;k++){ int c=g.idx(i,0,k);
-                        fprintf(fs,"%d %d %.4e %.4e %.4e %.4e %.3f %.4e\n",i,k,g.r[c],Pcell(g,c),g.vib[c],g.af[c],g.D[c],g.Pmax[c]); }
+                if(fs){ fprintf(fs,"# t=%.2f nx=%d nz=%d dx=%.1f cols: i k rho P vib af D Pmax vr vz eint\n",t,Nr,Nz,dx);
+                    for(int i=0;i<Nr;i++)for(int k=0;k<Nz;k++){ int c=g.idx(i,0,k); double ir=1.0/max(g.r[c],1e-30);
+                        fprintf(fs,"%d %d %.4e %.4e %.4e %.4e %.3f %.4e %.3e %.3e %.3e\n",i,k,g.r[c],Pcell(g,c),g.vib[c],g.af[c],g.D[c],g.Pmax[c],g.mu[c]*ir,g.mw[c]*ir,eint(g,c)); }
                     fclose(fs); }
                 snap_next+=SNAP_DT; }
             if(!fixed && t>t_auto && s%5==0){double V=dfloor();   // run-to-settling: compare successive window-means of the BOWL FLOOR DEPTH (settles fast ~t_auto; stops before substrate sag accrues)
