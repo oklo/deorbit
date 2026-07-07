@@ -1,3 +1,30 @@
+> ## DEEP DIAGNOSTIC VERDICT (2026-07-07; instrumented reruns, state/diag/, snapshots+counters)
+> **Both prior hypotheses are refuted as drivers; the 'breakthrough' is a metric artifact
+> riding a slow real evolution.** Direct observations:
+> 1. RESEED DEAD: seeds counter FROZEN at 37,118 from t<311 to t=4,700 (zero post-
+>    excavation seeding; Pmax monotonicity blocks the cavitation loop as read).
+> 2. AF-SKIN NEGLIGIBLE: af>0.9 population decays 750 -> 6 cells by t=3,700 (the
+>    persistent af_max~0.97 in logs was those 6 low-overburden cells); deep column af=0.
+> 3. DEPTH JUMP = surf() THRESHOLD ARTIFACT: surf scans top-down for rho>1350. The
+>    sub-crater column dilates SMOOTHLY (2662->1021 kg/m3 over 1,900 s at constant
+>    POSITIVE P~1.4e8, weakly shocked Pmax 1.3-2 GPa, NOT fluidized); when the slab
+>    remnant crosses 1350 at one radius the metric falls ~25 km in one step. No
+>    discrete event occurs at 'breakthrough' time.
+> 4. THE REAL EVOLUTION: slow resisted collapse/drain of the deep column beneath the
+>    15.9-km transient (bottom block thickens 9->20 cells against the floor-pin as a
+>    rarefaction eats upward; sustained 40-80 m/s churn), plus a steady MASS LEAK:
+>    2.6% of domain r-weighted mass (>> bowl mass) deleted by RHO_CFL<100 -> ambient
+>    resets at the cavity boundary (~1,500 cells/step). a=1000 CONTROL IS CLEAN (zero
+>    dilated cells, 0.9% drift) -> mid-size Bingham slump results UNAFFECTED.
+> 5. ROOT CAUSE: everything is downstream of the primary disease -- an ultra-deep
+>    transient that friction holds open for HOURS, unloading the deep column by
+>    ~1.4e8 Pa. Fix the slump and the stewing regime never exists.
+> IMPLICATIONS: (i) a=3000 Bingham pre-jump depth (15.9 km) is the meaningful number;
+> (ii) surf()/depth diagnostic should become threshold-robust (column-mass surface);
+> (iii) voidzero reset deletes mass -- consider conservative handling or monitoring
+> for long runs; (iv) slump physics (AF role) remains the one primary gap.
+> Velocity/eint-instrumented confirmation rerun in flight (state/diag/a3000v).
+
 > ## BINGHAM LADDER VERDICT (2026-07-05; 10/10 done, state/bingham/, harvested dD.csv)
 > **Mid sizes: the FIRST genuine slump.** a=1000: d/D 0.146 (ratio 2.45-2.48 vs
 > friction 2.85, flat-ladder 3.3); a=2000: 0.123-0.143 (ratio 3.1-3.3 vs 4.0/4.3+).
