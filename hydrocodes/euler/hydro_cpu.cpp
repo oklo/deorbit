@@ -450,10 +450,11 @@ int main(int argc,char**argv){
         // velocity, each recording its own peak pressure. Written as tracers_XXXXXXX.txt next to
         // the field snapshots (cols: id i0 k0 r_m z_m Pmax).
         bool TRACE = getenv("CRATER_TRACE") && SNAP_DT>0 && SNAP_DIR;
-        vector<double> tx,tz,tpm; vector<int> ti0,tk0;
+        vector<double> tx,tz,tpm,tvr,tvz; vector<int> ti0,tk0;
         int ksurf=(int)(zsurf/dx);
         if(TRACE){ for(int i=0;i<Nr;i++)for(int k=0;k<ksurf;k++){
                 tx.push_back((i+0.5)*dx); tz.push_back((k+0.5)*dx); tpm.push_back(0.0);
+                tvr.push_back(0.0); tvz.push_back(0.0);
                 ti0.push_back(i); tk0.push_back(k); } }
         auto interp=[&](const vector<double>&F,bool byrho,double x,double z)->double{   // bilinear at (x,z), cell-centered
             double fi=x/dx-0.5, fk=z/dx-0.5;
@@ -470,7 +471,10 @@ int main(int argc,char**argv){
                 for(int k=0;k<Nz;k++){ int c=g.idx(i,0,k); g.r[c]=(1-sp)*g.r[c]+sp*REF_R0[c]; g.mu[c]*=(1-sp); g.mv[c]*=(1-sp); g.mw[c]*=(1-sp); g.E[c]*=(1-sp); } } }
             if(s%20==0){double dnow=0;for(int i=0;i<Nr;i++)dnow=max(dnow,zsurf-surf(i));dmaxT=max(dmaxT,dnow);}   // track transient excavation
             if(TRACE){ for(size_t j=0;j<tx.size();j++){
-                    double vr=interp(g.mu,true,tx[j],tz[j]), vz=interp(g.mw,true,tx[j],tz[j]);
+                    int cj=g.idx(min((int)(tx[j]/dx),Nr-1),0,min((int)(tz[j]/dx),Nz-1));
+                    if(g.r[cj]>300.0){ tvr[j]=interp(g.mu,true,tx[j],tz[j]); tvz[j]=interp(g.mw,true,tx[j],tz[j]); }
+                    else tvz[j]-=GZ*dt;                                     // in void: ballistic flight
+                    double vr=tvr[j], vz=tvz[j];
                     tx[j]+=vr*dt; tz[j]+=vz*dt;
                     if(tx[j]<0) tx[j]=-tx[j];                               // axisym reflection
                     tx[j]=min(tx[j],(Nr-0.51)*dx); tz[j]=max(0.51*dx,min(tz[j],(Nz-0.51)*dx));

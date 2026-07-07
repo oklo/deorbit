@@ -59,6 +59,7 @@ def panel(ax, dirpath, t_req, melt_pa, sed_m, mesh_every, zsurf_m):
     ksurf, i0, k0, r, z, pm = load_tracers(tf)
 
     km = 1e-3
+    dx_km = dx * km
     zk = (z - zsurf_m) * km                     # depth-referenced z (0 = pre-impact surface)
     # classes by ORIGINAL position
     depth0 = zsurf_m - (k0 + 0.5) * dx
@@ -68,21 +69,28 @@ def panel(ax, dirpath, t_req, melt_pa, sed_m, mesh_every, zsurf_m):
 
     for sign in (1.0, -1.0):
         rr = sign * r * km
-        # deformed mesh: rows (constant k0) and columns (constant i0), every Nth
+        # deformed mesh: rows (constant k0) and columns (constant i0), every Nth;
+        # break the polyline where neighbors have separated (ejection/tearing)
+        def mesh_line(m, order_key):
+            if m.sum() <= 3:
+                return
+            o = np.argsort(order_key[m])
+            X, Y = rr[m][o], zk[m][o]
+            gap = np.hypot(np.diff(X), np.diff(Y)) > 4.5 * dx_km            # ~4.5 cells
+            Xp, Yp = [X[0]], [Y[0]]
+            for q in range(1, len(X)):
+                if gap[q - 1]:
+                    Xp.append(np.nan); Yp.append(np.nan)
+                Xp.append(X[q]); Yp.append(Y[q])
+            ax.plot(Xp, Yp, color="0.25", lw=0.3, zorder=3)
         for kk in range(0, k0.max() + 1, mesh_every):
-            m = (k0 == kk) & ~sed
-            if m.sum() > 3:
-                o = np.argsort(i0[m])
-                ax.plot(rr[m][o], zk[m][o], color="0.25", lw=0.3, zorder=3)
+            mesh_line((k0 == kk) & ~sed, i0)
         for ii in range(0, i0.max() + 1, mesh_every):
-            m = (i0 == ii) & ~sed
-            if m.sum() > 3:
-                o = np.argsort(k0[m])
-                ax.plot(rr[m][o], zk[m][o], color="0.25", lw=0.3, zorder=3)
-        # peak-shock shading (white->blue) for moderately shocked tracers
-        hot = shock_band & (pm > 1e9)
+            mesh_line((i0 == ii) & ~sed, k0)
+        # peak-shock shading (white->blue): the 10 GPa - melt collar only
+        hot = shock_band & (pm > 1e10)
         ax.scatter(rr[hot], zk[hot], s=0.9, c=pm[hot] / 1e9, cmap="Blues",
-                   norm=Normalize(0, melt_pa / 1e9), lw=0, zorder=4)
+                   norm=Normalize(0, melt_pa / 1e9), lw=0, alpha=0.7, zorder=4)
         # sediment-analog band and melt
         ax.scatter(rr[sed & ~melt], zk[sed & ~melt], s=0.9, color="#d8a35c", lw=0, zorder=5)
         ax.scatter(rr[melt], zk[melt], s=1.1, color="#c22a1e", lw=0, zorder=6)
