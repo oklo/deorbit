@@ -355,17 +355,23 @@ static double maxspeed(const Grid&g){ double s=1e-30; int n=g.r.size(); double G
 // TDEC; the rock is fluidized where the acoustic vibrational pressure p_vib=rho*c_s*vib exceeds the
 // overburden p_ov=max(P,P_COH). The resulting af in [0,1) degrades shear strength (vonmises) and
 // drives viscous flow (Lop). (Phase 1: per-cell activation/decay; advection of vib is Phase 2.)
+static bool AF_SEEDDP=false;   // diagnostic (2026-07-08, env AF_SEEDDP): seed vib from the ACOUSTIC particle velocity
+// dP/(rho*c_s) of the triggering pressure jump instead of the bulk flow speed |v|. The |v| seeding recorded
+// EXCAVATION-FLOW speeds (~2 km/s) in the cells ringing the transient cavity -> pvib ~ 8 GPa >> any overburden ->
+// af~1 down a 15-km column for several TDECs = the a=3000 drain engine (stage-1 vc snapshot, t=1000).
 static void update_af(Grid&g,double dt){
     if(C_ACT<=0||TDEC<=0) return;            // shock-activated AF off -> af stays at its IC value
     int n=g.nx*g.ny*g.nz; double dec=exp(-dt/TDEC);
     for(int c=0;c<n;c++){
         double P=Pcell(g,c);
+        double cs=MAT.sound_speed(g.r[c],eint(g,c));
         if(P>g.Pmax[c]){                     // new pressure peak: track it; seed vib only if the rise is SHOCK-sized (> P_ACT)
             double dP=P-g.Pmax[c]; g.Pmax[c]=P;
-            if(dP>P_ACT){ double sp=sqrt(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/max(g.r[c],1e-30);
+            if(dP>P_ACT){ double sp=AF_SEEDDP? dP/(max(g.r[c],1e-30)*max(cs,1e-30))
+                                             : sqrt(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/max(g.r[c],1e-30);
                 g.vib[c]=max(g.vib[c],C_ACT*sp); SEED_N++; } }
         g.vib[c]*=dec;                        // acoustic vibrations decay
-        double cs=MAT.sound_speed(g.r[c],eint(g,c)), pvib=g.r[c]*cs*g.vib[c], pov=max(P,P_COH);
+        double pvib=g.r[c]*cs*g.vib[c], pov=max(P,P_COH);
         g.af[c]=pvib/(pvib+pov);              // fluidization ratio in [0,1)
     }
 }
@@ -527,6 +533,8 @@ int main(int argc,char**argv){
         double Rfac= argc>9?atof(argv[9]):30.0, Zfac=argc>10?atof(argv[10]):22.0;   // domain size in impactor radii (Rfac 30: keep undisturbed far-field so the datum isn't contaminated by the spreading rim)
         double dx=a/cppr; AXISYM=true; RHO_CFL=100.0; RHO_VAC=100.0; double CFL=0.4;
         C_ACT=(TDEC>0?0.5:0.0); P_COH=1.0e6; P_ACT=(TDEC>0?1.0e8:0.0);   // shock-gate AF activation (>100 MPa jump): the impact shock fluidizes, slow collapse flow does NOT re-fluidize Eulerian wall cells
+        { const char*e=getenv("AF_CACT"); if(e&&TDEC>0) C_ACT=atof(e);   // AF-seeding diagnostics (2026-07-08): override c_vib; literature (W&I/iSALE) ~0.1 vs our 0.5
+          if(getenv("AF_SEEDDP")) AF_SEEDDP=true; }                       // seed from acoustic dP/(rho*cs) instead of flow |v|
         ROCK=(argc>12?atoi(argv[12]):1);   // pressure-dependent friction yield (default on); arg 0 = old cohesion-only von Mises for A/B
         if(argc>13) Y_D0=atof(argv[13]);   // damaged residual cohesion (Pa); the key knob to arrest small-crater creep
         if(argc>14) VOID_AMB=atof(argv[14]);   // arg14>0 (e.g. 0.27): void cells reset to AMBIENT, not the lithostatic reference (A/B test of the below-surface refill artifact); default 0 = legacy
