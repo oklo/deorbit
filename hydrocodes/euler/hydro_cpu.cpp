@@ -235,12 +235,27 @@ static void set_ref(const Grid&g){ int n=g.nx*g.ny*g.nz; REF_R0.assign(n,0); REF
 // route 1: void cells = passive vacuum (reset to reference). Also kills the near-vacuum velocity (mu/rho_tiny) that
 // would otherwise feed spurious deviatoric stress into the strength solver at the free surface.
 static double VOID_AMB = 0.0;  // >0: void cells reset to this AMBIENT density instead of REF_R0 (a lithostatic reference REFILLS evacuated below-surface cells with solid rock -- the 2026-07-02 prater finding); 0 = legacy
+static bool VOID_CONS = false; // Option C follow-on (2026-07-07): CONSERVATIVE void reset -- the voided cell's excess mass
+// (rho-amb, volume-weighted) is transferred to its densest dense face-neighbour instead of DELETED. The legacy delete
+// is a mass SINK at the cavity boundary (~2% of domain mass over a long complex-crater run) that keeps the sub-floor
+// column unloaded, so collapse never reaches stress balance -- the a=3000 funnel/drain engine (stage-1 finding).
 static long VZ_N=0; static double VZ_DM=0;  // instrumentation: count of SOLID-reference void resets (REF_R0>half-density = below-surface refill under legacy) + the rho they inject(ed)
+static double VZ_LOST=0;       // instrumentation: rho actually DELETED by void resets (VOID_CONS transfers instead; residual = wisps with no dense neighbour)
 static long SEED_N=0;          // diagnostic (2026-07-06): cumulative vib seeding events -- discriminates cavitation-reseed (ongoing seeds) from af-ratio persistence (seeds stop after excavation)
 static double SNAP_DT=0.0; static const char*SNAP_DIR=0;   // env CRATER_SNAP_DT/CRATER_SNAP_DIR: periodic full-field snapshots (diagnostic only)
 static void void_cells(Grid&g){ if(RHO_CFL<=0)return; bool wb=!REF_R0.empty(); int N=g.r.size();
     for(int c=0;c<N;c++) if(g.r[c]<RHO_CFL){ g.mu[c]=g.mv[c]=g.mw[c]=0; if(wb){
         if(REF_R0[c]>1350.0){VZ_N++;VZ_DM+=REF_R0[c]-g.r[c];}   // a below-surface (solid-reference) void: legacy refills it with rock
+        if(VOID_CONS){   // conservative reset: excess mass -> densest dense face-neighbour (volume-weighted); no sink
+            double amb=(VOID_AMB>0?VOID_AMB:0.27), exc=g.r[c]-amb;
+            if(exc>0){ int i=c/(g.ny*g.nz), j=(c/g.nz)%g.ny, k=c%g.nz, nb=-1; double rbest=RHO_CFL;
+                auto cand=[&](int ii,int jj,int kk){ if(ii<0||ii>=g.nx||jj<0||jj>=g.ny||kk<0||kk>=g.nz)return;
+                    int cc=g.idx(ii,jj,kk); if(g.r[cc]>rbest){rbest=g.r[cc];nb=cc;} };
+                cand(i-1,j,k);cand(i+1,j,k);cand(i,j,k-1);cand(i,j,k+1); if(g.ny>1){cand(i,j-1,k);cand(i,j+1,k);}
+                if(nb>=0){ double w=1.0; if(AXISYM){ int inb=nb/(g.ny*g.nz); w=(i+0.5)/(inb+0.5); }   // V_c/V_nb: radial neighbours differ in cell volume
+                    g.r[nb]+=exc*w; }   // mass moved, momentum/energy of the wisp still discarded (as before) -- mildly dissipative, never a sink
+                else VZ_LOST+=exc; } }  // isolated wisp with no dense neighbour: deleted (counted)
+        else VZ_LOST+=max(0.0,g.r[c]-(VOID_AMB>0?VOID_AMB:REF_R0[c]));   // legacy delete (negative-excess resets inject; not counted)
         g.r[c]=(VOID_AMB>0?VOID_AMB:REF_R0[c]);g.E[c]=0;g.Sxx[c]=g.Syy[c]=g.Szz[c]=g.Sxy[c]=g.Sxz[c]=g.Syz[c]=0;g.rc[c]=0;} } }
 // ---- Option C (2026-07-07): implicit AF viscous update (operator-split, backward Euler) ----
 // Fluidized cells obey d(rho v)/dt = div(eta grad v), eta = af*ETA_AF, solved IMPLICITLY so
@@ -517,6 +532,7 @@ int main(int argc,char**argv){
         if(argc>14) VOID_AMB=atof(argv[14]);   // arg14>0 (e.g. 0.27): void cells reset to AMBIENT, not the lithostatic reference (A/B test of the below-surface refill artifact); default 0 = legacy
         if(argc>15) Y_BINGHAM=atof(argv[15]);  // arg15>0 (Pa): AF Bingham floor -- fluidized cells retain this flow resistance; default 0 = legacy
         if(argc>16) VISC_IMP=atoi(argv[16])!=0;   // arg16=1: Option C implicit viscous update (eta unbounded by the explicit dt limit)
+        if(argc>17) VOID_CONS=atoi(argv[17])!=0;  // arg17=1: conservative void reset (mass -> densest neighbour, no cavity-boundary sink)
         int Nr=(int)(Rfac*a/dx+0.5), Nz=(int)(Zfac*a/dx+0.5);
         double Zdom=Nz*dx, above=5.0*a, zsurf=Zdom-above;   // free surface; 'above' = room for impactor + ejecta
         Grid g(Nr,1,Nz,dx);
@@ -613,7 +629,7 @@ int main(int argc,char**argv){
         printf("  stability: max|v|=%.1f m/s  maxP=%.2e Pa  %s\n",vmx,pmx,finite?"FINITE":"NONFINITE-BLOWUP");
         { double mcell=VZ_DM*2*3.14159265358979*0.5*dx*dx*dx;   // injected mass (kg, full 2pi; r~0.5dx underestimates outer cells -- order-of-magnitude only)
           double mtr=2700.0*4.18879*a*a*a;   // impactor mass scale for context
-          printf("  voidzero: below-surface refills=%ld  injected rho-sum=%.3e (order ~%.2e kg vs impactor %.2e kg)  mode=%s\n",VZ_N,VZ_DM,mcell,mtr,VOID_AMB>0?"AMBIENT":"LEGACY-REF"); }
+          printf("  voidzero: below-surface refills=%ld  injected rho-sum=%.3e (order ~%.2e kg vs impactor %.2e kg)  mode=%s%s  deleted rho-sum=%.3e\n",VZ_N,VZ_DM,mcell,mtr,VOID_AMB>0?"AMBIENT":"LEGACY-REF",VOID_CONS?"+CONSERVATIVE":"",VZ_LOST); }
         printf("RESULT %.1f %.4f %.4f %.4f %.4f\n",a,Dapp,dapp,dmaxT,dD);   // machine-readable (preliminary, in-loop): a D_app depth transient d/D (metres)
         const char*prof=argc>11?argv[11]:"crater_profile.txt";   // dump the final surface profile z_s(r)-z0 for ROBUST offline depth-diameter measurement
         FILE*pf=fopen(prof,"w"); if(pf){ fprintf(pf,"# r_m  -dcol_m (column-mass surface vs datum)   (a=%.0f U=%.0f g=%.2f TDEC=%.3g ETA=%.3g%s dx=%.0f zsurf=%.1f)\n",a,U,GZ,TDEC,ETA_AF,VISC_IMP?" IMP":"",dx,zsurf);

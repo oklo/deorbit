@@ -12,13 +12,15 @@ a=$1; eta=$2; yb=$3
 case $a in 300) td=550;; 1000) td=900;; 2000) td=1200;; 3000) td=1400;; *) td=900;; esac
 tdec=${4:-$td}
 tend=${5:-$(( 4 * tdec ))}
+vc=${VC:-1}   # conservative void reset (arg17) default ON since the 2026-07-07 stage-1 finding (mass sink drove the a=3000 funnel); VC=0 reproduces legacy
 tag="a${a}_e${eta}_yb${yb}_td${tdec}"
+[ "$vc" = 1 ] && tag="${tag}_vc"
 mkdir -p state/optc
 if [ "${6:-}" = "trace" ]; then
   mkdir -p "state/optc/trace_${tag}"
   export CRATER_TRACE=1 CRATER_SNAP_DT=200 CRATER_SNAP_DIR="state/optc/trace_${tag}"
 fi
-echo "[optc] $tag  TDEC=$tdec tend=$tend  trace=${6:-no}"
+echo "[optc] $tag  TDEC=$tdec tend=$tend  trace=${6:-no} VOID_CONS=$vc"
 exec ./hydro_cpu crater "$a" 12000 "$tdec" "$eta" 3.71 5 "$tend" 30 22 \
-  "state/optc/${tag}_prof.txt" 1 5e6 0.27 "$yb" 1 \
+  "state/optc/${tag}_prof.txt" 1 5e6 0.27 "$yb" 1 "$vc" \
   > "state/optc/${tag}.out" 2> "state/optc/${tag}.log"
