@@ -16,11 +16,23 @@
 >    pinned 12.3 km for 4000 s ~ 3 TDECs) but ZERO slump -- (1-af) cut at af~0.5
 >    leaves Y ~ 0.5*friction ~ driving stress. Over- vs under-fluidized seesaw.
 > 4. R3/R4 (env AF_PREL: W&I/Melosh overburden relief, friction at P_eff=P-pvib,
->    replaces (1-af)): the literature middle ground -- runs a=3000/1000 in flight.
-> DECISION PENDING (Greg): default AF model = acoustic seeding + overburden relief
-> (if R3/R4 confirm), then REDO the 3.5 calibration grid on that model. The eta/Y_B
-> ladder semantics survive; Y_B becomes near-vestigial under AF_PREL (Y_D0 takes
-> its role at pvib>=P). GPU port still after calibration converges.
+>    replaces (1-af)): BEST-BEHAVED variant -- a=1000 floor clean+flat 4.50 km all
+>    run; a=3000 pinned 12.1 km to t~4800 (3.4 TDECs; slow-stew jump delayed, not
+>    gone). But STILL ZERO FLOOR UPLIFT at both anchors.
+> 5. WHY (R4 snapshot, t=400): relief active only in a 2-3 km skin under the floor
+>    (pvib>P); at 8-14 km depth (the region that must flow for rebound) acoustic
+>    vib is 2-9 m/s = pvib 8-42 MPa vs P 50-160 MPa. One-shot seeding is either
+>    3 orders too strong (flow-speed) or 1 order too weak at depth (acoustic).
+>    The literature block model is a DYNAMIC vibration-energy balance: decay +
+>    REGENERATION from the deformation (self-sustained while collapse flows,
+>    self-arresting when it stops). Our P_ACT gate deliberately blocks
+>    re-excitation -- that amputated the essential feedback.
+> DECISION PENDING (Greg): (a) adopt acoustic seeding + overburden relief +
+> implicit viscosity as defaults (all env-gated today, all better-behaved);
+> (b) implement the block-model vibration-energy equation (decay + strain-rate
+> regeneration + pvib<~P saturation, vib advected as now) as the missing physics,
+> gate it, THEN redo the 3.5 calibration grid (+C_REG knob). Y_B near-vestigial
+> under AF_PREL (Y_D0 takes its role). GPU port after calibration converges.
 
 Self-contained handoff for a fresh session. **This is the entry point for the
 next major effort on the euler code.** Repo: github.com/oklo/deorbit, code in
