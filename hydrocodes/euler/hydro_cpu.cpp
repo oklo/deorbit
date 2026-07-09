@@ -209,13 +209,21 @@ static void Lop(const Grid&g, DU&d){
         if(AXISYM) d.E[c]+=Svx(c)/rcyl;   // cylindrical geometric term of div(S.v): + (S.v)_r/r
     }
 }
+static bool AF_PREL=false;   // diagnostic (2026-07-08, env AF_PREL): W&I/Melosh OVERBURDEN RELIEF constitutive --
+// friction evaluated at effective pressure P_eff = P - pvib (vibrations episodically unload the normal stress),
+// REPLACING the multiplicative (1-af) cut. pvib>=P -> cohesion-level strength (mobile, Bingham-viscous);
+// pvib<<P -> full friction. Fixes the R2 finding: with acoustic seeding, af~0.5 at depth and the (1-af) cut
+// leaves Y ~ 0.5*friction ~ driving stress = no slump (under-fluidized); (1-af) with flow-speed seeding gave
+// the af~1 strengthless pipe (over-fluidized). Relief is the literature middle ground.
 static void vonmises(Grid&g){ double Y0=MAT.Y; if(Y0<=0&&!ROCK)return; int n=g.nx*g.ny*g.nz;
     for(int c=0;c<n;c++){ double Y;
         if(ROCK){ double P=max(Pcell(g,c),0.0);   // pressure-dependent yield (friction only under compression)
-            double Yi=Y_I0 + MU_I*P/(1.0 + MU_I*P/max(Y_M-Y_I0,1.0));   // intact (Lundborg): cohesion + saturating friction
-            double Yd=min(Y_D0 + MU_D*P, Y_M);                           // damaged: residual cohesion + friction, capped at the limit
+            double Peff=P;
+            if(AF_PREL&&g.vib[c]>0){ double p2,cs2; eos_pc(g.r[c],eint(g,c),p2,cs2); Peff=max(P-g.r[c]*cs2*g.vib[c],0.0); }
+            double Yi=Y_I0 + MU_I*Peff/(1.0 + MU_I*Peff/max(Y_M-Y_I0,1.0));   // intact (Lundborg): cohesion + saturating friction
+            double Yd=min(Y_D0 + MU_D*Peff, Y_M);                           // damaged: residual cohesion + friction, capped at the limit
             double Yb=(1.0-g.D[c])*Yi + g.D[c]*Yd;                       // unfluidized (base) strength
-            Y=Yb*(1.0-g.af[c]);                                          // damage blends intact->friction; AF fluidizes
+            Y=AF_PREL? Yb : Yb*(1.0-g.af[c]);                            // relief mode: P_eff carries the fluidization; legacy: (1-af) cut
             // Bingham floor (AF surgery option B): a fluidized cell retains a finite flow
             // resistance Y_BINGHAM -- never exceeding its unfluidized strength -- so that
             // long-TDEC fluidization slumps instead of digging without limit. 0 = legacy.
@@ -534,7 +542,8 @@ int main(int argc,char**argv){
         double dx=a/cppr; AXISYM=true; RHO_CFL=100.0; RHO_VAC=100.0; double CFL=0.4;
         C_ACT=(TDEC>0?0.5:0.0); P_COH=1.0e6; P_ACT=(TDEC>0?1.0e8:0.0);   // shock-gate AF activation (>100 MPa jump): the impact shock fluidizes, slow collapse flow does NOT re-fluidize Eulerian wall cells
         { const char*e=getenv("AF_CACT"); if(e&&TDEC>0) C_ACT=atof(e);   // AF-seeding diagnostics (2026-07-08): override c_vib; literature (W&I/iSALE) ~0.1 vs our 0.5
-          if(getenv("AF_SEEDDP")) AF_SEEDDP=true; }                       // seed from acoustic dP/(rho*cs) instead of flow |v|
+          if(getenv("AF_SEEDDP")) AF_SEEDDP=true;                         // seed from acoustic dP/(rho*cs) instead of flow |v|
+          if(getenv("AF_PREL"))  AF_PREL=true; }                          // W&I overburden-relief yield (replaces the (1-af) cut)
         ROCK=(argc>12?atoi(argv[12]):1);   // pressure-dependent friction yield (default on); arg 0 = old cohesion-only von Mises for A/B
         if(argc>13) Y_D0=atof(argv[13]);   // damaged residual cohesion (Pa); the key knob to arrest small-crater creep
         if(argc>14) VOID_AMB=atof(argv[14]);   // arg14>0 (e.g. 0.27): void cells reset to AMBIENT, not the lithostatic reference (A/B test of the below-surface refill artifact); default 0 = legacy
