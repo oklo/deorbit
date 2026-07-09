@@ -1,14 +1,26 @@
 # PICKUP — Option C: implicit Bingham viscosity for acoustic-fluidization collapse
 
-> ## STATUS (2026-07-07 pm, commit e54f12f)
-> Sections 3.1-3.4 DONE: implicit_visc() in hydro_cpu.cpp (backward-Euler CG solve,
-> axisym-correct, energy-exact heating; crater arg16=1), explicit Lop term disabled
-> when active, all four gates written and green (43/43 total; feature-off = 39
-> pre-existing unchanged), column-mass depth metric in (the 3.4 hygiene item).
-> Section 3.5 calibration IN FLIGHT: stage-1 validation runs a=1000/eta=1e9 and
-> a=3000/eta=3e9 (Y_B=3e6, TDEC=900/1400, traced) via run_optc.sh -> state/optc/.
-> Then: TDEC doubling check, full eta x Y_B grid, harvest analyze_crater.py ->
-> mars_dD_oracle.py. GPU port after calibration converges (definition of done 4).
+> ## STATUS (2026-07-09 am; commits e54f12f..HEAD)
+> Sections 3.1-3.4 DONE (implicit solver + 4 gates green, 43/43; column-mass metric).
+> Section 3.5 calibration BLOCKED by an upstream AF-model finding; diagnostic arc
+> (R1-R4, state/optc/) run in its place -- full story + decision options in the
+> session consult (2026-07-09) and the banner in PICKUP-phase3.md. Short form:
+> 1. STAGE-1 (eta 2.4e8/1e9/3e9, Y_B 3e6): a=3000 sub-crater column DRAINS (axis
+>    floor 13->47 km), eta-insensitive; NOT the void-reset mass sink (closing it
+>    conservatively -- VOID_CONS, arg17 -- left the drain; naive mass-only transfer
+>    also adds a downward-pump blowout at a=1000: keep VOID_CONS OFF for now).
+> 2. ROOT CAUSE: vib seeded from 0.5*|flow speed| near the transient (~2 km/s)
+>    -> pvib ~ 8 GPa >> overburden -> af 0.96-0.98 down a 13-20 km column for
+>    several TDECs (snapshot evidence). R1 (c_vib=0.1) does NOT fix it.
+> 3. R2 (env AF_SEEDDP: vib = C_ACT*dP/(rho*cs), acoustic): drain GONE (floor
+>    pinned 12.3 km for 4000 s ~ 3 TDECs) but ZERO slump -- (1-af) cut at af~0.5
+>    leaves Y ~ 0.5*friction ~ driving stress. Over- vs under-fluidized seesaw.
+> 4. R3/R4 (env AF_PREL: W&I/Melosh overburden relief, friction at P_eff=P-pvib,
+>    replaces (1-af)): the literature middle ground -- runs a=3000/1000 in flight.
+> DECISION PENDING (Greg): default AF model = acoustic seeding + overburden relief
+> (if R3/R4 confirm), then REDO the 3.5 calibration grid on that model. The eta/Y_B
+> ladder semantics survive; Y_B becomes near-vestigial under AF_PREL (Y_D0 takes
+> its role at pvib>=P). GPU port still after calibration converges.
 
 Self-contained handoff for a fresh session. **This is the entry point for the
 next major effort on the euler code.** Repo: github.com/oklo/deorbit, code in
