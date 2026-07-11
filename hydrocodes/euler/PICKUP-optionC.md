@@ -27,12 +27,34 @@
 >    REGENERATION from the deformation (self-sustained while collapse flows,
 >    self-arresting when it stops). Our P_ACT gate deliberately blocks
 >    re-excitation -- that amputated the essential feedback.
-> DECISION PENDING (Greg): (a) adopt acoustic seeding + overburden relief +
-> implicit viscosity as defaults (all env-gated today, all better-behaved);
-> (b) implement the block-model vibration-energy equation (decay + strain-rate
-> regeneration + pvib<~P saturation, vib advected as now) as the missing physics,
-> gate it, THEN redo the 3.5 calibration grid (+C_REG knob). Y_B near-vestigial
-> under AF_PREL (Y_D0 takes its role). GPU port after calibration converges.
+> DECIDED 2026-07-10 (Greg): (a)+(b) adopted. REGENERATION IMPLEMENTED (AF_REG;
+> crater arg18=C_REG, arg19=AF_SAT; commit cc683bb): C_REG fraction of viscous +
+> plastic dissipation -> E_vib; decayed E_vib -> heat (fixes the pre-existing
+> silent deletion); pvib saturates at AF_SAT*pov. vib_regen gate: sustained 22x
+> control while shearing, re-locks after arrest, ledger exact; 44/44 PASS.
+> Crater defaults now AF_SEEDDP+AF_PREL (env AF_LEGACY_* for A/B).
+>
+> ## SWEEP-REDO LADDER (2026-07-10/11, state/optc/ *_cr*/_ca*)
+> - C_REG=0.1, C_ACT=0.5: FIRST-EVER structurally clean endpoints at BOTH anchors
+>   (a=3000 axis floor 14.90 km flat t=400..5600, af band pvib=P SUSTAINED by
+>   regen; a=1000 5.77 km flat). But ZERO floor uplift: ratio ~3.5-4x Garvin =
+>   friction-only depth, stable. Cause (radial af profile): the fluidized lens is
+>   ARCH-protected by an off-axis ring at full lithostatic P where pvib<<P.
+> - C_ACT ladder 1.0/1.5 (SAT=2, C_REG=0.3): arch does NOT yield -- floor pinned
+>   16.3 km whole run (deeper transient, more widening). AND the frames show the
+>   third failure mode: REGIONAL MELTDOWN -- at C_ACT=1.0 the whole near-field
+>   crust (r<70 km, z<10 km) fluidizes, spreads, drains into the sponge; domain
+>   surface sinks 8-10 km. Amplitude can NEVER work: relieving the deep ring
+>   relieves the shallow crust everywhere more (P grows with z; pvib decays with
+>   spherical r). The (seed-amplitude x relief) plane is EXHAUSTED.
+> - IN FLIGHT (last principled corners): (i) SHORT-TDEC + regen + strong seed
+>   (a=3000, TDEC=200 << crater time: TDEC as REGIONAL FILTER, regen carries the
+>   active zone, rebound in the dynamic window) -- a3000_td200_ca10; (ii)
+>   resolution discriminator cppr8 vs cppr5 at a=1000 (dynamic rebound exists but
+>   is 1 km at cppr5; is it resolution-starved?) -- a1000_cppr8_ca10 + cppr5dyn.
+> If both negative: the AF model family as implementable in this code does not
+> reach the Garvin complex branch -- negative-result report to Greg (evidence
+> matrix: pipe / under-fluidized lock / arch-lock / regional meltdown).
 
 Self-contained handoff for a fresh session. **This is the entry point for the
 next major effort on the euler code.** Repo: github.com/oklo/deorbit, code in
