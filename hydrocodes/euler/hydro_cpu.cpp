@@ -209,13 +209,23 @@ static void Lop(const Grid&g, DU&d){
         if(AXISYM) d.E[c]+=Svx(c)/rcyl;   // cylindrical geometric term of div(S.v): + (S.v)_r/r
     }
 }
+// Block-model vibration-energy REGENERATION (2026-07-10, Greg-approved): one-shot seeding cannot span
+// the fluidization the collapse needs (flow-speed seeding: pvib ~ 8 GPa pipe; acoustic seeding: 1 order
+// too weak at rebound depths -- R1-R4 diagnostics). The missing physics is the dynamic balance: the
+// deformation itself pumps vibrational energy (a fraction C_REG of the plastic + viscous dissipation
+// feeds E_vib = vib^2/2, the remainder heats), decay returns E_vib to internal energy (total energy
+// EXACT), and pvib saturates at AF_SAT*max(P,P_COH) (P_eff >= 0: fully mobile, never tensile -- the GPa
+// pipe is impossible by construction). Arrest is self-consistent: flow stops -> sources stop -> decay
+// wins -> strength returns; the collapse endpoint is stress balance, TDEC-insensitive (the Option C
+// acceptance criterion). AF_REG=false = all of this off (bit-identity).
+static bool AF_REG=false; static double C_REG=0.1, AF_SAT=1.0;
 static bool AF_PREL=false;   // diagnostic (2026-07-08, env AF_PREL): W&I/Melosh OVERBURDEN RELIEF constitutive --
 // friction evaluated at effective pressure P_eff = P - pvib (vibrations episodically unload the normal stress),
 // REPLACING the multiplicative (1-af) cut. pvib>=P -> cohesion-level strength (mobile, Bingham-viscous);
 // pvib<<P -> full friction. Fixes the R2 finding: with acoustic seeding, af~0.5 at depth and the (1-af) cut
 // leaves Y ~ 0.5*friction ~ driving stress = no slump (under-fluidized); (1-af) with flow-speed seeding gave
 // the af~1 strengthless pipe (over-fluidized). Relief is the literature middle ground.
-static void vonmises(Grid&g){ double Y0=MAT.Y; if(Y0<=0&&!ROCK)return; int n=g.nx*g.ny*g.nz;
+static void vonmises(Grid&g,bool reg=true){ double Y0=MAT.Y; if(Y0<=0&&!ROCK)return; int n=g.nx*g.ny*g.nz;
     for(int c=0;c<n;c++){ double Y;
         if(ROCK){ double P=max(Pcell(g,c),0.0);   // pressure-dependent yield (friction only under compression)
             double Peff=P;
@@ -231,7 +241,14 @@ static void vonmises(Grid&g){ double Y0=MAT.Y; if(Y0<=0&&!ROCK)return; int n=g.n
         else Y=(1.0-g.D[c])*(1.0-g.af[c])*Y0;                            // cohesion-only von Mises (back-compat)
         double sxx=g.Sxx[c],syy=g.Syy[c],szz=g.Szz[c],sxy=g.Sxy[c],sxz=g.Sxz[c],syz=g.Syz[c];
         double J2=0.5*(sxx*sxx+syy*syy+szz*szz)+sxy*sxy+sxz*sxz+syz*syz; double vm=sqrt(3.0*J2);
-        if(vm>Y){double f=(vm>0?Y/vm:0.0); g.Sxx[c]*=f;g.Syy[c]*=f;g.Szz[c]*=f;g.Sxy[c]*=f;g.Sxz[c]*=f;g.Syz[c]*=f;} } }
+        if(vm>Y){double f=(vm>0?Y/vm:0.0); g.Sxx[c]*=f;g.Syy[c]*=f;g.Szz[c]*=f;g.Sxy[c]*=f;g.Sxz[c]*=f;g.Syz[c]*=f;
+            if(AF_REG&&reg&&MAT.G>0&&(RHO_CFL<=0||g.r[c]>RHO_CFL)){   // plastic radial-return work: in this scheme the stress power div(S.v) already
+                // deposited this energy in E (the return only makes it irrecoverable), so heating is AUTOMATIC -- we only
+                // CONVERT a C_REG fraction of it into vibrational energy (debit E, credit E_vib; total exact).
+                // reg=false on the RK2 predictor (no double count).
+                double dW=(vm*vm-Y*Y)/(6.0*MAT.G);                    // energy per volume
+                g.vib[c]=sqrt(g.vib[c]*g.vib[c]+2.0*C_REG*dW/g.r[c]);
+                g.E[c]-=C_REG*dW; } } } }
 static void grow_damage(Grid&g,double dt){ double Em=MAT.Emod,wk=MAT.wk,wm=MAT.wm; if(Em<=0||wk<=0)return;
     double dx=g.dx,eps_act=pow(1.0/(wk*dx*dx*dx),1.0/wm); int n=g.nx*g.ny*g.nz;   // weakest-flaw activation strain
     for(int c=0;c<n;c++){ if(g.D[c]>=1.0)continue; double P=Pcell(g,c);
@@ -352,7 +369,9 @@ static void implicit_visc(Grid&g,double dt){
         double keo=0.5*(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c];
         g.mu[c]=g.r[c]*u1[c]; g.mv[c]=g.r[c]*v1[c]; g.mw[c]=g.r[c]*w1[c];
         double ken=0.5*(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c];
-        g.E[c]+=(ken-keo)+sc*hr[c]/Vc[c];   // internal energy rises only by the (rescaled, positive) local dissipation
+        double q=sc*hr[c]/Vc[c];   // (rescaled, positive) local viscous dissipation
+        if(AF_REG&&q>0){ g.vib[c]=sqrt(g.vib[c]*g.vib[c]+2.0*C_REG*q/g.r[c]); q*=(1.0-C_REG); }   // block model: C_REG of the dissipation regenerates vibrations
+        g.E[c]+=(ken-keo)+q;
     }
 }
 static double maxspeed(const Grid&g){ double s=1e-30; int n=g.r.size(); double G=MAT.G;
@@ -378,8 +397,13 @@ static void update_af(Grid&g,double dt){
             if(dP>P_ACT){ double sp=AF_SEEDDP? dP/(max(g.r[c],1e-30)*max(cs,1e-30))
                                              : sqrt(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/max(g.r[c],1e-30);
                 g.vib[c]=max(g.vib[c],C_ACT*sp); SEED_N++; } }
-        g.vib[c]*=dec;                        // acoustic vibrations decay
-        double pvib=g.r[c]*cs*g.vib[c], pov=max(P,P_COH);
+        double v0=g.vib[c]; g.vib[c]*=dec;    // acoustic vibrations decay
+        double pov=max(P,P_COH);
+        if(AF_REG){
+            if(g.r[c]>max(RHO_CFL,1e-12)) g.E[c]+=0.5*g.r[c]*(v0*v0-g.vib[c]*g.vib[c]);   // decayed vibration energy -> heat (total energy exact)
+            double vcap=AF_SAT*pov/(max(g.r[c],1e-30)*max(cs,1e-30));                      // saturation pvib <= AF_SAT*pov: P_eff >= 0, never tensile
+            if(g.vib[c]>vcap) g.vib[c]=vcap; }
+        double pvib=g.r[c]*cs*g.vib[c];
         g.af[c]=pvib/(pvib+pov);              // fluidization ratio in [0,1)
     }
 }
@@ -389,7 +413,7 @@ static void step_rk2(Grid&g,double dt){ int n=g.r.size(); DU d(n);
     Lop(g,d);
     for(int c=0;c<n;c++){g1.r[c]=g.r[c]+dt*d.r[c];g1.mu[c]=g.mu[c]+dt*d.mu[c];g1.mv[c]=g.mv[c]+dt*d.mv[c];g1.mw[c]=g.mw[c]+dt*d.mw[c];g1.E[c]=g.E[c]+dt*d.E[c];
         g1.Sxx[c]=g.Sxx[c]+dt*d.Sxx[c];g1.Syy[c]=g.Syy[c]+dt*d.Syy[c];g1.Szz[c]=g.Szz[c]+dt*d.Szz[c];g1.Sxy[c]=g.Sxy[c]+dt*d.Sxy[c];g1.Sxz[c]=g.Sxz[c]+dt*d.Sxz[c];g1.Syz[c]=g.Syz[c]+dt*d.Syz[c];g1.D[c]=g.D[c]+dt*d.D[c];g1.rc[c]=g.rc[c]+dt*d.rc[c];g1.vib[c]=g.vib[c]+dt*d.vib[c];}
-    void_cells(g1); vonmises(g1); Lop(g1,d);   // clean the predictor's void cells so strength sees no near-vacuum velocity
+    void_cells(g1); vonmises(g1,false); Lop(g1,d);   // clean the predictor's void cells so strength sees no near-vacuum velocity (reg=false: provisional state, no vib regeneration)
     for(int c=0;c<n;c++){g.r[c]=0.5*(g.r[c]+g1.r[c]+dt*d.r[c]);g.mu[c]=0.5*(g.mu[c]+g1.mu[c]+dt*d.mu[c]);g.mv[c]=0.5*(g.mv[c]+g1.mv[c]+dt*d.mv[c]);g.mw[c]=0.5*(g.mw[c]+g1.mw[c]+dt*d.mw[c]);g.E[c]=0.5*(g.E[c]+g1.E[c]+dt*d.E[c]);
         g.Sxx[c]=0.5*(g.Sxx[c]+g1.Sxx[c]+dt*d.Sxx[c]);g.Syy[c]=0.5*(g.Syy[c]+g1.Syy[c]+dt*d.Syy[c]);g.Szz[c]=0.5*(g.Szz[c]+g1.Szz[c]+dt*d.Szz[c]);g.Sxy[c]=0.5*(g.Sxy[c]+g1.Sxy[c]+dt*d.Sxy[c]);g.Sxz[c]=0.5*(g.Sxz[c]+g1.Sxz[c]+dt*d.Sxz[c]);g.Syz[c]=0.5*(g.Syz[c]+g1.Syz[c]+dt*d.Syz[c]);g.D[c]=0.5*(g.D[c]+g1.D[c]+dt*d.D[c]);g.rc[c]=0.5*(g.rc[c]+g1.rc[c]+dt*d.rc[c]);g.vib[c]=0.5*(g.vib[c]+g1.vib[c]+dt*d.vib[c]);}
     implicit_visc(g,dt);   // Option C: operator-split implicit AF viscosity (no-op unless VISC_IMP)
@@ -541,9 +565,12 @@ int main(int argc,char**argv){
         double Rfac= argc>9?atof(argv[9]):30.0, Zfac=argc>10?atof(argv[10]):22.0;   // domain size in impactor radii (Rfac 30: keep undisturbed far-field so the datum isn't contaminated by the spreading rim)
         double dx=a/cppr; AXISYM=true; RHO_CFL=100.0; RHO_VAC=100.0; double CFL=0.4;
         C_ACT=(TDEC>0?0.5:0.0); P_COH=1.0e6; P_ACT=(TDEC>0?1.0e8:0.0);   // shock-gate AF activation (>100 MPa jump): the impact shock fluidizes, slow collapse flow does NOT re-fluidize Eulerian wall cells
-        { const char*e=getenv("AF_CACT"); if(e&&TDEC>0) C_ACT=atof(e);   // AF-seeding diagnostics (2026-07-08): override c_vib; literature (W&I/iSALE) ~0.1 vs our 0.5
-          if(getenv("AF_SEEDDP")) AF_SEEDDP=true;                         // seed from acoustic dP/(rho*cs) instead of flow |v|
-          if(getenv("AF_PREL"))  AF_PREL=true; }                          // W&I overburden-relief yield (replaces the (1-af) cut)
+        AF_SEEDDP=true; AF_PREL=true;   // crater defaults since 2026-07-10 (Greg-approved, R1-R4 verdicts): acoustic dP/(rho*cs) seeding + W&I overburden relief
+        { const char*e=getenv("AF_CACT"); if(e&&TDEC>0) C_ACT=atof(e);   // override c_vib (literature ~0.1 vs our 0.5)
+          if(getenv("AF_LEGACY_SEED"))  AF_SEEDDP=false;                  // A/B: legacy flow-speed seeding (the GPa-pipe artifact)
+          if(getenv("AF_LEGACY_AFCUT")) AF_PREL=false; }                  // A/B: legacy multiplicative (1-af) strength cut
+        if(argc>18){ C_REG=atof(argv[18]); AF_REG=(C_REG>=0); if(C_REG<0) C_REG=0; }   // arg18: block-model regeneration fraction; >=0 also enables saturation + decay-to-heat (0 = regen-off control); negative or absent = fully legacy
+        if(argc>19) AF_SAT=atof(argv[19]);                                // arg19: pvib saturation in units of overburden (default 1)
         ROCK=(argc>12?atoi(argv[12]):1);   // pressure-dependent friction yield (default on); arg 0 = old cohesion-only von Mises for A/B
         if(argc>13) Y_D0=atof(argv[13]);   // damaged residual cohesion (Pa); the key knob to arrest small-crater creep
         if(argc>14) VOID_AMB=atof(argv[14]);   // arg14>0 (e.g. 0.27): void cells reset to AMBIENT, not the lithostatic reference (A/B test of the below-surface refill artifact); default 0 = legacy
@@ -955,6 +982,49 @@ int main(int argc,char**argv){
         double drift=fabs(E1-E0)/KE0, keloss=(KE0-KE1)/KE0, heat=IE1/KE0;   // IE0=0 by construction
         printf("visc_energy: total E drift=%.2e of KE0; KE lost %.4f -> IE gained %.4f (of KE0); CG iters=%ld\n",drift,keloss,heat,VISC_IT);
         printf("GATE (viscous energy: |dE_tot|<1e-4*KE0 & heating==KE loss to 1e-4 & >50%% dissipated): %s\n",(drift<1e-4&&fabs(heat-keloss)<1e-4&&keloss>0.5)?"PASS":"CHECK");
+    } else if(mode=="vib_regen"){ // Block-model regeneration gate (2026-07-10): deformation SUSTAINS vibrations (fluidization
+        // lives while the flow lives), arrest RETURNS strength (sources stop -> decay wins), and the vibration-energy
+        // bookkeeping is exact: total KE + IE + rho*vib^2/2 conserved (dissipation splits C_REG -> E_vib, rest -> heat;
+        // decayed E_vib -> heat). A sheared fluidized slab (damped shear wave, viscous + plastic dissipation both active):
+        //   control C_REG=0 -> vib decays as exp(-t/TDEC); regen C_REG=1 -> vib sustained >>control at T1 while shearing,
+        //   then re-locks by T2 after the shear dies. Saturation subtest: pvib capped at AF_SAT*pov.
+        MAT=Material::basalt(); MAT.Y=1e6;   // yielding-soft: S stays << the elastic-ringing regime, where the (pre-existing,
+        // non-conservative) S discretization pumps energy in long pure-shear-wave setups -- found 2026-07-10 bisect; craters
+        // don't sit in that corner (short shocks, friction, voids), but this GATE must not either.
+        double dx=500.0,CFL=0.4; int N=256; double rho0=MAT.rho0;
+        VISC_IMP=true; ETA_AF=5e8; TDEC=2.0; C_ACT=0.5; P_ACT=1e30; P_COH=1e6;   // P_ACT huge: no re-seeding, isolates decay/regen
+        int m=24; double L=N*dx,kk=m*M_PI/L; double A0=10.0,vib0=10.0,T1=10.0,T2=40.0;
+        double v1[3],v2[3],drift[3];
+        for(int cs2=0;cs2<3;cs2++){
+            AF_REG=(cs2>0); C_REG=(cs2<2?0.0:1.0); AF_SAT=1e9;   // cs2=0: fully legacy; cs2=1: bookkeeping only; cs2=2: regen
+            Grid g(N,1,1,dx);
+            for(int i=0;i<N;i++){int c=g.idx(i,0,0); g.r[c]=rho0; g.vib[c]=vib0; g.Pmax[c]=1e30;
+                double vy=A0*cos(kk*(i+0.5)*dx); g.mv[c]=rho0*vy; g.E[c]=0.5*rho0*vy*vy; }
+            double E0=0; for(int i=0;i<N;i++){int c=g.idx(i,0,0); E0+=g.E[c]+0.5*g.r[c]*g.vib[c]*g.vib[c]; }
+            double t=0; bool got1=false; double vm1=0;
+            while(t<T2){ double dt=CFL*dx/maxspeed(g); if(t+dt>T2)dt=T2-t; step_rk2(g,dt); t+=dt;
+                if(!got1&&t>=T1){ double s=0; for(int i=0;i<N;i++)s+=g.vib[g.idx(i,0,0)]; vm1=s/N; got1=true; } }
+            double s=0,E1=0,KE1=0,EV1=0,SE1=0; for(int i=0;i<N;i++){int c=g.idx(i,0,0); s+=g.vib[c];
+                double ke=0.5*(g.mu[c]*g.mu[c]+g.mv[c]*g.mv[c]+g.mw[c]*g.mw[c])/g.r[c]; KE1+=ke; EV1+=0.5*g.r[c]*g.vib[c]*g.vib[c];
+                double J2b=0.5*(g.Sxx[c]*g.Sxx[c]+g.Syy[c]*g.Syy[c]+g.Szz[c]*g.Szz[c])+g.Sxy[c]*g.Sxy[c]+g.Sxz[c]*g.Sxz[c]+g.Syz[c]*g.Syz[c]; SE1+=J2b/(2*MAT.G);
+                E1+=g.E[c]+0.5*g.r[c]*g.vib[c]*g.vib[c]; }
+            double KE0=0.5*rho0*A0*A0*0.5, EV0=0.5*rho0*vib0*vib0;
+            v1[cs2]=vm1; v2[cs2]=s/N; drift[cs2]=(E1-E0)/(N*(KE0+EV0));
+            printf("vib_regen %s: vib(T1)=%.3f vib(T2)=%.3f  drift=%+.2e  [KE=%.3e IE=%.3e EV=%.3e SE=%.3e]/cell\n",
+                cs2==0?"legacy ":(cs2==1?"ctrl   ":"C_REG=1"),v1[cs2],v2[cs2],drift[cs2],KE1/N,(E1-KE1-EV1)/N,EV1/N,SE1/N); }
+        bool sat;
+        { AF_REG=true; C_REG=1.0; AF_SAT=1.0; Grid g(4,1,1,dx);   // saturation: huge vib must cap at pvib = AF_SAT*pov
+          for(int c=0;c<4;c++){ g.r[c]=rho0; g.vib[c]=1e3; g.Pmax[c]=1e30; g.E[c]=0; }
+          update_af(g,1e-9);
+          double cs3=MAT.sound_speed(rho0,0.0), pvib=rho0*cs3*g.vib[1];
+          sat=(pvib<=1.01*AF_SAT*P_COH && g.af[1]<=0.51);
+          printf("vib_regen saturation: pvib after cap=%.3e (AF_SAT*pov=%.3e)  af=%.3f\n",pvib,AF_SAT*P_COH,g.af[1]); }
+        AF_REG=false; C_REG=0.1; AF_SAT=1.0; VISC_IMP=false; ETA_AF=0; TDEC=0; C_ACT=0; P_ACT=0;
+        // tolerance 2e-2: the code's baseline (non-conservative S advection) drifts ~1% here; regen double-count
+        // bugs show as O(1) (4x-19x seen during development). Legacy case documents the old vib-decay energy
+        // deletion (drift ~ -EV0/(KE0+EV0) = -0.66) that AF_REG bookkeeping fixes.
+        bool ok=(fabs(drift[1])<2e-2&&fabs(drift[2])<2e-2 && v1[2]>3.0*v1[1] && v2[2]<0.3*v1[2] && sat);
+        printf("GATE (vib regeneration: sustained while shearing (>3x control), re-locks after arrest, energy exact, pvib saturates): %s\n",ok?"PASS":"CHECK");
     } else if(mode=="bingham_slope"){ // Option C gate 3.4d: Bingham arrest. A fluidized triangular HEAP on an intact flat
         // substrate (2D x-z). Driving basal shear tau ~ rho*g*h*|dh/dx|; the von Mises cap Y_B yields in shear at
         // Y_B/sqrt(3). Analytic arrest: a Bingham heap spreads until rho*g*h*|dh/dx| <= tau_y everywhere (parabolic
