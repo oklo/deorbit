@@ -47,14 +47,37 @@
 >   surface sinks 8-10 km. Amplitude can NEVER work: relieving the deep ring
 >   relieves the shallow crust everywhere more (P grows with z; pvib decays with
 >   spherical r). The (seed-amplitude x relief) plane is EXHAUSTED.
-> - IN FLIGHT (last principled corners): (i) SHORT-TDEC + regen + strong seed
->   (a=3000, TDEC=200 << crater time: TDEC as REGIONAL FILTER, regen carries the
->   active zone, rebound in the dynamic window) -- a3000_td200_ca10; (ii)
->   resolution discriminator cppr8 vs cppr5 at a=1000 (dynamic rebound exists but
->   is 1 km at cppr5; is it resolution-starved?) -- a1000_cppr8_ca10 + cppr5dyn.
-> If both negative: the AF model family as implementable in this code does not
-> reach the Garvin complex branch -- negative-result report to Greg (evidence
-> matrix: pipe / under-fluidized lock / arch-lock / regional meltdown).
+> - FINAL DISCRIMINATORS (2026-07-11, both NEGATIVE):
+>   (i) RESOLUTION: cppr8 vs cppr5 at a=1000, 100-s snapshots through the dynamic
+>       phase: axis floor 6.16 vs 6.10 km, both DEAD FLAT from t=100. Converged;
+>       no hidden/starved rebound. Grid exonerated.
+>   (ii) SHORT-TDEC (TDEC=200 as regional filter, regen carries the active zone,
+>       C_ACT=1.0 SAT=2 C_REG=0.3, a=3000): filter WORKS (no regional meltdown,
+>       crater af regen-sustained at 7+ decay times) -- and the floor sits at
+>       16.10 km from t=100 to t=2000. No rebound in the dynamic window either.
+>
+> ## VERDICT (2026-07-11): NEGATIVE RESULT, matrix complete
+> The AF model family as implementable in this code -- {(1-af) cut | P_eff
+> relief} x {flow-speed | acoustic seeding} x {one-shot | regenerated} x
+> amplitude ladder x TDEC regimes x resolution -- does NOT produce complex-crater
+> FLOOR REBOUND (stratigraphic uplift). Failure modes span: strengthless pipe /
+> under-fluidized lock / arch-lock (stable at transient depth, ratio 3.5-4x
+> Garvin) / regional meltdown. Wall slumping, transient craters, simple craters,
+> shock physics: all reproduced; stable complex arrest: NEW (regen).
+> ROOT CAUSES (vs community codes, iSALE/CMI-2004):
+>   1. TENSION-ONLY DAMAGE: grow_damage never damages the compressed sub-crater
+>      volume (D~0.04-0.10 in every run) -> the cavity is held open by INTACT
+>      Lundborg rock (arch ~2e8 Pa). iSALE targets are pervasively D=1
+>      (shear/plastic-strain damage, CMI 2004): cohesionless mu_d rubble BEFORE
+>      collapse. Their AF beats damaged friction; ours must beat intact rock.
+>   2. STRENGTHLESS VACUUM FACE: the free-surface flux carries no deviatoric
+>      stress; incipient uplift columns shed their crown into the void churn
+>      (voidrst ~1e9/run; same limitation as the Prater plateau-low).
+> RECOMMENDED NEXT (fresh scope, Greg to approve): implement CMI-2004
+> shear-strain damage growth (failure strain eps_f(P), compressive branch) --
+> well-scoped, directly attacks the arch with standard literature physics; all
+> Option C machinery (implicit viscosity, relief, regen, gates) sits ready on
+> top. Free-surface strength = the deeper follow-on surgery.
 
 Self-contained handoff for a fresh session. **This is the entry point for the
 next major effort on the euler code.** Repo: github.com/oklo/deorbit, code in
