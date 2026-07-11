@@ -14,9 +14,13 @@ tdec=${4:-$td}
 tend=${5:-$(( 4 * tdec ))}
 vc=${VC:-0}   # conservative void reset (arg17): OFF by default since 2026-07-09 (mass-only transfer = downward pump; sink was not the drain engine anyway)
 creg=${CREG:--1}   # block-model vibration-regeneration fraction (arg18); >=0 also enables saturation+decay-to-heat; -1 = legacy AF energetics
+sat=${SAT:-1}      # pvib saturation in overburden units (arg19)
+cact=${CACT:-}     # seed amplitude override (env AF_CACT; default 0.5); the LATERAL-extent knob (2026-07-10 arch finding)
 tag="a${a}_e${eta}_yb${yb}_td${tdec}"
 [ "$vc" = 1 ] && tag="${tag}_vc"
 [ "$creg" != "-1" ] && tag="${tag}_cr${creg}"
+[ "$sat" != "1" ] && tag="${tag}_sat${sat}"
+[ -n "$cact" ] && { tag="${tag}_ca${cact}"; export AF_CACT="$cact"; }
 mkdir -p state/optc
 if [ "${6:-}" = "trace" ]; then
   mkdir -p "state/optc/trace_${tag}"
@@ -24,5 +28,5 @@ if [ "${6:-}" = "trace" ]; then
 fi
 echo "[optc] $tag  TDEC=$tdec tend=$tend  trace=${6:-no} VOID_CONS=$vc"
 exec ./hydro_cpu crater "$a" 12000 "$tdec" "$eta" 3.71 5 "$tend" 30 22 \
-  "state/optc/${tag}_prof.txt" 1 5e6 0.27 "$yb" 1 "$vc" "$creg" \
+  "state/optc/${tag}_prof.txt" 1 5e6 0.27 "$yb" 1 "$vc" "$creg" "$sat" \
   > "state/optc/${tag}.out" 2> "state/optc/${tag}.log"
