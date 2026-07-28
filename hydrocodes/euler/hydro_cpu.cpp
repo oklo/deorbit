@@ -5,6 +5,7 @@
 //   ./hydro_cpu sod|sedov|surface|bshock   |   shear  (elastic shear-wave speed gate)
 #include <cstdio>
 #include <cstdlib>
+#include <cstdint>   // uint32_t (gcc-13+ no longer provides it transitively; Apple clang does -- CI portability)
 #include <cmath>
 #include <string>
 #include <vector>
