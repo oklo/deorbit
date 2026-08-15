@@ -6,4 +6,4 @@ cells done: 3600
 capture: 326  impact: 60  skip: 3214
 max v_inf with capture: 4.19 km/s
 widest peri window: 42.7 km @ v_inf=0.20 km/s
-updated: 2026-08-14 11:38:04
+updated: 2026-08-15 11:10:19
